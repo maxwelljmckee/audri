@@ -11,9 +11,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import bgStars from "../assets/images/bg-stars.png";
 import { GlassView } from "expo-glass-effect";
-import { Phone } from "lucide-react-native";
+import { PhoneCall } from "lucide-react-native";
 import { formatHex } from "culori";
-import { Notebook, Plus, Bot } from "lucide-react-native";
+import { Notebook, Plus, Bot, User } from "lucide-react-native";
 import Fontisto from "@expo/vector-icons/Fontisto";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
@@ -25,12 +25,13 @@ import { ActivityScreen } from "./plugins/ActivityScreen";
 import { NotesScreen } from "./plugins/NotesScreen";
 import { PodcastsScreen } from "./plugins/PodcastsScreen";
 import { GraphScreen } from "./plugins/GraphScreen";
+import * as Haptics from "expo-haptics";
 
-const iconColor = formatHex({ mode: "oklch", l: 0.705, c: 0.015, h: 286.067 });
+const iconColor = formatHex({ mode: "oklch", l: 0.92, c: 0.004, h: 286.32 });
 
 const NUM_COLS = 4;
 const SCREEN_PADDING = 16;
-const TILE_GAP = 12;
+const TILE_GAP = 20;
 
 type Plugin = {
   id: string;
@@ -73,9 +74,9 @@ const PLUGINS: Plugin[] = [
     component: PodcastsScreen,
   },
   {
-    id: "graph",
-    label: "Graph",
-    icon: <Fontisto name="graphql" size={40} color={iconColor} />,
+    id: "me",
+    label: "Me",
+    icon: <User size={40} color={iconColor} />,
     component: GraphScreen,
   },
   {
@@ -95,8 +96,8 @@ export function HomeScreen({ onGoLive }: Props) {
   );
 
   return (
-    <View style={{ flex: 1 }}>
-      <SafeAreaView style={{ flex: 1 }}>
+    <View className="flex-1">
+      <SafeAreaView className="flex-1">
         <Image
           source={bgStars}
           className="absolute inset-0 h-screen w-screen resize-cover"
@@ -128,33 +129,41 @@ export function HomeScreen({ onGoLive }: Props) {
                 <View style={{ height: TILE_GAP }} />
               )}
               renderItem={({ item, index }) => (
-                <Pressable
-                  ref={(el) => {
-                    pressableRefs.current[index] = el;
-                  }}
-                  onPress={() => {
-                    const ref = pressableRefs.current[index];
-                    if (item.component && ref) launch(item.component, ref);
-                  }}
-                  style={{ width: tileSize, height: tileSize }}
-                >
-                  <GlassView style={styles.pluginItem} glassEffectStyle="clear">
-                    {item.icon}
-                    {item.label && (
-                      <Text className="text-zinc-400 mt-1 font-bold">
-                        {item.label}
-                      </Text>
-                    )}
-                  </GlassView>
-                </Pressable>
+                <View className="flex flex-col items-center justify-start my-2">
+                  <Pressable
+                    ref={(el) => {
+                      pressableRefs.current[index] = el;
+                    }}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      const ref = pressableRefs.current[index];
+                      if (item.component && ref) launch(item.component, ref);
+                    }}
+                    style={{ width: tileSize, height: tileSize }}
+                  >
+                    <GlassView
+                      style={styles.pluginItem}
+                      glassEffectStyle="clear"
+                    >
+                      {item.icon}
+                    </GlassView>
+                  </Pressable>
+                  {item.label && (
+                    <Text className="text-zinc-200 mt-1 font-bold">
+                      {item.label}
+                    </Text>
+                  )}
+                </View>
               )}
             />
           </View>
 
           <Pressable onPress={onGoLive}>
-            <GlassView style={styles.glassView} glassEffectStyle="clear">
-              <Phone size={42} strokeWidth={2.5} color={iconColor} />
-            </GlassView>
+            <View className="bg-emerald-500/40" style={styles.glassView}>
+              <GlassView style={styles.glassViewInner} glassEffectStyle="clear">
+                <PhoneCall size={42} strokeWidth={2.5} style={{ opacity: 1 }} />
+              </GlassView>
+            </View>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -184,6 +193,13 @@ const styles = StyleSheet.create({
     height: buttonSize,
     width: buttonSize,
     borderRadius: buttonSize / 2,
-    opacity: 0.8,
+  },
+  glassViewInner: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: buttonSize,
+    width: buttonSize,
+    borderRadius: buttonSize / 2,
   },
 });
