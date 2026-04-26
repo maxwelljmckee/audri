@@ -173,7 +173,7 @@ The two writes are not literal copies. The `snippets` array on each section writ
 
 ### 4.4 Contradiction handling — *fully specified*
 
-This is where the Evergreen/Timeline behavior from `todos.md` §4 is operationalized.
+This is where the Timeline contradiction-handling behavior from `todos.md` §4 is operationalized. (The "Evergreen" half of the earlier Evergreen/Timeline dichotomy dissolved with the sectioned data model — default page shape is just ordinary sections; Timeline is only added when a contradiction arrives.)
 
 #### 4.4.1 What is a contradiction
 
@@ -291,3 +291,4 @@ Each example should show the full before-JSON and after-JSON so Pro can pattern-
 - `todos.md` §3 — sectioned page data model (makes this whole mechanism feasible)
 - `tradeoffs.md` — sectioned pages + `agent_abstract`/`abstract` naming
 - `notes/ingestion-pipeline.md` — full pipeline context for this prompt's role
+- `specs/agents-and-scope.md` — why Pro is user-scope-only and agent-scope writes run in a separate Flash-driven pass

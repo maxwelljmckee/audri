@@ -6,6 +6,8 @@ The ingestion pipeline turns a committed call transcript into structured updates
 
 This doc captures both the *conceptual* breakdown of the pipeline (granular, 8 stages) and the *MVP implementation* (2 LLM calls + mechanical DB writes), plus the tradeoffs involved and refactor paths if the simple version hits limits.
 
+**Scope note:** Everything below describes the **user-scope fan-out** — writes to the user's shared wiki. Agent-scope writes (each agent persona's private observational notes) run in a separate, lightweight Flash-driven pass documented in `specs/agents-and-scope.md` (and a forthcoming `specs/agent-scope-ingestion.md`). Pro's user-scope-only invariant is preserved; the two passes never commingle.
+
 ---
 
 ## Input / Output boundaries
@@ -56,7 +58,7 @@ Transcript
     │
     ▼
 [Flash] Candidate retrieval     — stage 1
-                                  Output: touched_pages (slug) + new_pages (title/type/parent)
+                                  Output: touched_pages ({slug}) + new_pages ({proposed_slug, proposed_title, type})
     │
     ▼
 [backend] Preload assembly      — fetch full content for every slug in touched_pages
@@ -89,10 +91,12 @@ Transcript
 
 ### Candidate retrieval (Flash)
 
+See `specs/flash-retrieval-prompt.md` for the authoritative contract. Summary:
+
 **Input:**
 
-- Transcript (turn-tagged)
-- Wiki index: `(slug, title, type, aliases, agent_abstract)` for every active page under the user's `user_id + scope='user'`
+- Transcript (turn-tagged, with explicit `User:` / `Muse:` speaker labels)
+- Wiki index: `(slug, title, type, parent_slug, agent_abstract)` for every active page under the user's `user_id + scope='user'`. No section content. No aliases column — aliases, if needed for recall, are inlined into `agent_abstract` at render time.
 - (KG candidate-retrieval system instruction — explicitly cached)
 
 **Output:**
@@ -100,14 +104,15 @@ Transcript
 ```json
 {
   "touched_pages": [
-    { "slug": "sarah-chen", "reason": "user mentioned her new job" }
+    { "slug": "sarah-chen" }
   ],
   "new_pages": [
-    { "title": "Consensus", "type": "project", "parent_slug": null,
-      "reason": "user discussed this as a major new project" }
+    { "proposed_slug": "consensus", "proposed_title": "Consensus", "type": "project" }
   ]
 }
 ```
+
+Slug only for touched (Pro re-derives the why from the joined page + transcript). For new pages: slug + title + type; no seed `agent_abstract` (Pro writes that with full context).
 
 An empty `touched_pages` AND empty `new_pages` means the transcript is not noteworthy; the pipeline short-circuits without invoking Pro.
 
@@ -337,6 +342,9 @@ Split out just the stages we're trying to eval. If contradiction detection is fl
 ## Related docs
 
 - `todos.md` §6 — pipeline sub-decisions tracked as TODOs
-- `todos.md` §4 — the Evergreen/Timeline heuristic that stage 5 implements
+- `todos.md` §4 — the Timeline contradiction-handling heuristic that stage 5 implements
 - `todos.md` §5 — the grounding principle that stage 8 implements
+- `specs/fan-out-prompt.md` — authoritative system-instruction rules for Pro
+- `specs/flash-retrieval-prompt.md` — authoritative system-instruction rules for Flash
+- `specs/agents-and-scope.md` — this pipeline is the **user-scope** fan-out. Agent-scope writes happen in a separate, lightweight Flash-driven pass; Pro's user-scope-only invariant is preserved.
 - `architecture.md` §Server-side transcript processing — the earlier rough-shape version (needs a sync pass per `todos.md` §23)
