@@ -5,7 +5,7 @@
 
 import { Logger } from '@nestjs/common';
 import { Type } from '@google/genai';
-import { getGeminiClient } from '../gemini/gemini.client.js';
+import { getGeminiClient } from '@audri/shared/gemini';
 import type { TranscriptTurn } from './transcript.types.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';

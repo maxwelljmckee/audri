@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { EndSensitivity, Modality, StartSensitivity } from '@google/genai';
-import { and, eq } from 'drizzle-orm';
-import { db } from '../db/client.js';
-import { agents, callTranscripts } from '../db/schema/index.js';
-import { LIVE_MODEL, getGeminiClient } from '../gemini/gemini.client.js';
+import { db, agents, callTranscripts, and, eq } from '@audri/shared/db';
+import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
 import { composeSystemPrompt } from './system-prompt.js';
 
 export interface StartCallArgs {

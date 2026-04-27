@@ -9,12 +9,10 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
-import { CurrentUser } from '../auth/user.decorator.js';
-import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
-import { db } from '../db/client.js';
-import { callTranscripts } from '../db/schema/index.js';
+import { db, callTranscripts, eq, sql } from '@audri/shared/db';
 import { getSupabaseAdmin } from '../auth/supabase.client.js';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
+import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
 import { generateTitleSummary } from './title-summary.js';
 import type { TranscriptTurn } from './transcript.types.js';
@@ -92,20 +90,44 @@ export class CallsController {
     }
 
     const transcript = Array.isArray(body.transcript) ? body.transcript : [];
+    const cancelled = body.cancelled ?? false;
 
-    await db
-      .update(callTranscripts)
-      .set({
-        content: transcript,
-        toolCalls: (body.tool_calls as object) ?? null,
-        endedAt: new Date(body.ended_at),
-        endReason: body.end_reason ?? 'user_ended',
-        cancelled: body.cancelled ?? false,
-        droppedTurnIds: body.dropped_turn_ids ?? [],
-      })
-      .where(eq(callTranscripts.sessionId, sessionId));
+    // Atomic transcript update + ingestion enqueue. If either fails the whole
+    // /end fails — no orphan rows or jobs. Cancelled calls skip the enqueue
+    // (per todos.md §3 call_transcripts.cancelled spec).
+    await db.transaction(async (tx) => {
+      await tx
+        .update(callTranscripts)
+        .set({
+          content: transcript,
+          toolCalls: (body.tool_calls as object) ?? null,
+          endedAt: new Date(body.ended_at),
+          endReason: body.end_reason ?? 'user_ended',
+          cancelled,
+          droppedTurnIds: body.dropped_turn_ids ?? [],
+        })
+        .where(eq(callTranscripts.sessionId, sessionId));
 
-    this.logger.log({ sessionId, userId: user.id }, 'call ended');
+      if (!cancelled && transcript.length > 0) {
+        const payload = JSON.stringify({
+          transcriptId: existing.id,
+          userId: user.id,
+          agentId: existing.agentId,
+        });
+        // Per-user FIFO via queue_name = `ingestion-${user_id}`. Different
+        // users' ingestion runs in parallel; same user is serialized.
+        await tx.execute(sql`
+          SELECT graphile_worker.add_job(
+            'ingestion',
+            ${payload}::json,
+            queue_name => ${`ingestion-${user.id}`},
+            max_attempts => 2
+          )
+        `);
+      }
+    });
+
+    this.logger.log({ sessionId, userId: user.id, cancelled }, 'call ended');
 
     // Title + summary via Flash, fire-and-forget. Don't block /end on it.
     // Slice 4 will move this into the Graphile worker alongside the
@@ -130,7 +152,6 @@ export class CallsController {
       })();
     }
 
-    // Slice 4: enqueue ingestion job here.
     return { status: 'ended', sessionId };
   }
 }

@@ -1,9 +1,7 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { db, agents, userSettings, eq } from '@audri/shared/db';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
-import { db } from '../db/client.js';
-import { agents, userSettings } from '../db/schema/index.js';
 
 @Controller('me')
 @UseGuards(SupabaseAuthGuard)

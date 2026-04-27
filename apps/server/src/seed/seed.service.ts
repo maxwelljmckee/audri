@@ -1,7 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
-import { db } from '../db/client.js';
-import { agents, userSettings, wikiPages } from '../db/schema/index.js';
+import { db, agents, userSettings, wikiPages, and, eq, sql } from '@audri/shared/db';
 import {
   AGENT_SCOPE_PAGES,
   ASSISTANT_AGENT,
