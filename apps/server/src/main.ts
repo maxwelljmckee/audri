@@ -10,7 +10,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
 
-  const port = Number(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT ?? 8080);
   await app.listen(port);
 
   app.get(Logger).log(`Audri server listening on :${port}`, 'Bootstrap');

@@ -14,9 +14,26 @@ import { CurrentUser } from '../auth/user.decorator.js';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { db } from '../db/client.js';
 import { callTranscripts } from '../db/schema/index.js';
+import { getSupabaseAdmin } from '../auth/supabase.client.js';
 import { CallsService } from './calls.service.js';
 import { generateTitleSummary } from './title-summary.js';
 import type { TranscriptTurn } from './transcript.types.js';
+
+// Pull a first name from Supabase Auth user_metadata (Google OAuth populates
+// given_name / full_name / name). Returns null if nothing usable found.
+async function fetchUserFirstName(userId: string): Promise<string | null> {
+  try {
+    const { data } = await getSupabaseAdmin().auth.admin.getUserById(userId);
+    const meta = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
+    const given = typeof meta.given_name === 'string' ? meta.given_name : null;
+    if (given) return given;
+    const full = typeof meta.full_name === 'string' ? meta.full_name : typeof meta.name === 'string' ? meta.name : null;
+    if (full) return full.split(' ')[0] ?? null;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 interface StartCallBody {
   agent_slug?: string;
@@ -90,17 +107,27 @@ export class CallsController {
 
     this.logger.log({ sessionId, userId: user.id }, 'call ended');
 
-    // Title + summary via Flash. Cancelled / empty calls skipped. Failure is
-    // non-fatal — row stays with null title/summary.
+    // Title + summary via Flash, fire-and-forget. Don't block /end on it.
+    // Slice 4 will move this into the Graphile worker alongside the
+    // ingestion job for durability + retries.
     if (!body.cancelled) {
-      const ts = await generateTitleSummary(transcript);
-      if (ts) {
-        await db
-          .update(callTranscripts)
-          .set({ title: ts.title || null, summary: ts.summary || null })
-          .where(eq(callTranscripts.sessionId, sessionId));
-        this.logger.log({ sessionId, title: ts.title }, 'title + summary saved');
-      }
+      void (async () => {
+        try {
+          const firstName = await fetchUserFirstName(user.id);
+          const ts = await generateTitleSummary(transcript, firstName);
+          if (!ts) return;
+          await db
+            .update(callTranscripts)
+            .set({ title: ts.title || null, summary: ts.summary || null })
+            .where(eq(callTranscripts.sessionId, sessionId));
+          this.logger.log({ sessionId }, 'title + summary saved');
+        } catch (err) {
+          this.logger.warn(
+            { sessionId, err: err instanceof Error ? err.message : err },
+            'title + summary post-call failed',
+          );
+        }
+      })();
     }
 
     // Slice 4: enqueue ingestion job here.

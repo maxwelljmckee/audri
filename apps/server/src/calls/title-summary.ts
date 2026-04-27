@@ -13,12 +13,20 @@ const MIN_CHARS_FOR_SUMMARY = 80;
 
 const logger = new Logger('title-summary');
 
-const PROMPT = `You will receive a turn-tagged transcript of a voice conversation between a user and "Audri", a personal assistant. Produce a concise title and one-paragraph summary.
+function buildPrompt(userFirstName: string | null): string {
+  const personRule = userFirstName
+    ? `When referring to the person Audri spoke with, use their first name ("${userFirstName}") OR first-person plural ("We discussed…", "We talked through…"). Vary between the two so it doesn't feel repetitive. NEVER use "The user" or "the user" or "they" as a generic stand-in.`
+    : `When referring to the person Audri spoke with, use first-person plural ("We discussed…", "We talked through…"). NEVER use "The user" or "the user" or "they" as a generic stand-in.`;
+
+  return `You will receive a turn-tagged transcript of a voice conversation between a person and "Audri", their personal assistant. Produce a concise title and one-paragraph summary.
 
 Rules:
-- Title: 4-8 words, no quotes, no trailing punctuation. Capture the gist of what the user came for.
-- Summary: 1-3 sentences, written in past tense from a third-party narrator perspective ("The user discussed…", "They explored…"). Don't address the user directly. Skip greetings, pleasantries, and meta-conversation.
+- Title: 4-8 words, no quotes, no trailing punctuation. Capture the gist of the conversation.
+- Summary: 1-3 sentences, past tense.
+- ${personRule}
+- Skip greetings, pleasantries, and meta-conversation.
 - If the transcript is too short or content-free, return both fields as empty strings.`;
+}
 
 export interface TitleSummaryResult {
   title: string;
@@ -27,6 +35,7 @@ export interface TitleSummaryResult {
 
 export async function generateTitleSummary(
   transcript: TranscriptTurn[],
+  userFirstName: string | null = null,
 ): Promise<TitleSummaryResult | null> {
   const totalChars = transcript.reduce((acc, t) => acc + (t.text?.length ?? 0), 0);
   if (totalChars < MIN_CHARS_FOR_SUMMARY) return null;
@@ -38,7 +47,7 @@ export async function generateTitleSummary(
   try {
     const resp = await getGeminiClient().models.generateContent({
       model: FLASH_MODEL,
-      contents: [{ role: 'user', parts: [{ text: `${PROMPT}\n\n---\n${flat}` }] }],
+      contents: [{ role: 'user', parts: [{ text: `${buildPrompt(userFirstName)}\n\n---\n${flat}` }] }],
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
