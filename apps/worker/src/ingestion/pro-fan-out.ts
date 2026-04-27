@@ -306,9 +306,89 @@ export async function runFanOut(
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          creates: { type: Type.ARRAY, items: { type: Type.OBJECT } },
-          updates: { type: Type.ARRAY, items: { type: Type.OBJECT } },
-          skipped: { type: Type.ARRAY, items: { type: Type.OBJECT } },
+          creates: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                slug: { type: Type.STRING },
+                title: { type: Type.STRING },
+                type: { type: Type.STRING },
+                parent_slug: { type: Type.STRING, nullable: true },
+                agent_abstract: { type: Type.STRING },
+                abstract: { type: Type.STRING, nullable: true },
+                sections: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING, nullable: true },
+                      content: { type: Type.STRING },
+                      snippets: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            turn_id: { type: Type.STRING },
+                            text: { type: Type.STRING },
+                          },
+                          required: ['turn_id', 'text'],
+                        },
+                      },
+                    },
+                    required: ['content', 'snippets'],
+                  },
+                },
+              },
+              required: ['slug', 'title', 'type', 'agent_abstract', 'sections'],
+            },
+          },
+          updates: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                slug: { type: Type.STRING },
+                agent_abstract: { type: Type.STRING },
+                abstract: { type: Type.STRING, nullable: true },
+                sections: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      id: { type: Type.STRING, nullable: true },
+                      title: { type: Type.STRING, nullable: true },
+                      content: { type: Type.STRING, nullable: true },
+                      snippets: {
+                        type: Type.ARRAY,
+                        nullable: true,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            turn_id: { type: Type.STRING },
+                            text: { type: Type.STRING },
+                          },
+                          required: ['turn_id', 'text'],
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              required: ['slug', 'agent_abstract', 'sections'],
+            },
+          },
+          skipped: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                claim: { type: Type.STRING, nullable: true },
+                reason: { type: Type.STRING },
+              },
+              required: ['reason'],
+            },
+          },
         },
         required: ['creates', 'updates', 'skipped'],
       },

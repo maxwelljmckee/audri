@@ -66,9 +66,34 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     'commit: pro fan-out output',
   );
 
+  // Validation set for page types — must match the page_type pgEnum in
+  // packages/shared/src/db/schema/enums.ts.
+  const VALID_PAGE_TYPES = new Set([
+    'person', 'concept', 'project', 'place', 'org', 'source',
+    'event', 'note', 'profile', 'todo',
+  ]);
+
   await db.transaction(async (tx) => {
     // ── CREATES ─────────────────────────────────────────────────────────────
     for (const create of fanOut.creates) {
+      // Defensive validation — Pro's responseSchema enforces these but real
+      // outputs occasionally omit fields anyway. Skip with warn rather than
+      // crashing the whole transaction.
+      if (!create.slug || !create.title || !create.type || !create.agent_abstract) {
+        logger.warn(
+          { create: JSON.stringify(create).slice(0, 300) },
+          'commit: create missing required field — skipping',
+        );
+        continue;
+      }
+      if (!VALID_PAGE_TYPES.has(create.type)) {
+        logger.warn(
+          { slug: create.slug, type: create.type },
+          'commit: create has invalid page type — skipping',
+        );
+        continue;
+      }
+
       // Resolve parent_slug → parent_page_id (best effort; null if not found).
       let parentPageId: string | null = null;
       if (create.parent_slug) {
@@ -142,6 +167,13 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
 
     // ── UPDATES ─────────────────────────────────────────────────────────────
     for (const update of fanOut.updates) {
+      if (!update.slug || !update.agent_abstract) {
+        logger.warn(
+          { update: JSON.stringify(update).slice(0, 300) },
+          'commit: update missing required field — skipping',
+        );
+        continue;
+      }
       const candidate = candidateBySlug.get(update.slug);
       if (!candidate) {
         logger.warn(
