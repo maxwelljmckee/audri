@@ -23,6 +23,7 @@ import {
   wikiSectionTranscripts,
   wikiSections,
 } from '@audri/shared/db';
+import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { ProFanOutResult } from './pro-fan-out.js';
 
@@ -52,6 +53,18 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     sectionsUpdated: 0,
     sectionsTombstoned: 0,
   };
+
+  // Diagnostic: dump Pro's exact output before applying so log mining can
+  // explain commit zero-counts. Strip later once stable.
+  logger.info(
+    {
+      creates: fanOut.creates.map((c) => ({ slug: c.slug, type: c.type, sectionCount: c.sections?.length ?? 0 })),
+      updates: fanOut.updates.map((u) => ({ slug: u.slug, sectionRefCount: u.sections?.length ?? 0 })),
+      skipped: fanOut.skipped,
+      candidateSlugs: [...candidateBySlug.keys()],
+    },
+    'commit: pro fan-out output',
+  );
 
   await db.transaction(async (tx) => {
     // ── CREATES ─────────────────────────────────────────────────────────────
@@ -130,7 +143,17 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     // ── UPDATES ─────────────────────────────────────────────────────────────
     for (const update of fanOut.updates) {
       const candidate = candidateBySlug.get(update.slug);
-      if (!candidate) continue; // Pro hallucinated a slug; skip.
+      if (!candidate) {
+        logger.warn(
+          {
+            updateSlug: update.slug,
+            availableSlugs: [...candidateBySlug.keys()],
+            updatePreview: JSON.stringify(update).slice(0, 300),
+          },
+          'commit: update slug not in candidate set — skipping',
+        );
+        continue;
+      }
 
       // Update page metadata (agent_abstract, abstract — re-generated).
       await tx
