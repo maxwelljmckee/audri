@@ -13,7 +13,9 @@ import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { IngestionTranscriptTurn, NewPage } from './flash-candidate-retrieval.js';
 
-const PRO_MODEL = 'gemini-2.5-pro';
+// Pro fan-out runs on gemini-3.1-pro-preview. Requires paid-tier GCP billing.
+// Override via env for development on Flash if billing's off.
+const PRO_MODEL = process.env.INGESTION_MODEL ?? 'gemini-3.1-pro-preview';
 
 export interface SnippetWrite {
   turn_id: string;
