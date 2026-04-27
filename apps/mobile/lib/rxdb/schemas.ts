@@ -44,8 +44,10 @@ export const wikiPageSchema: RxJsonSchema<WikiPageDoc> = {
   properties: {
     id: { type: 'string', maxLength: 36 },
     user_id: { type: 'string', maxLength: 36 },
-    scope: { type: 'string', enum: ['user', 'agent'] },
-    type: { type: 'string' },
+    scope: { type: 'string', enum: ['user', 'agent'], maxLength: 8 },
+    // Indexed string field — RxDB requires fixed maxLength so the indexer
+    // can binary-sort. Page-type values fit in 16 chars.
+    type: { type: 'string', maxLength: 16 },
     slug: { type: 'string' },
     parent_page_id: { type: ['string', 'null'] },
     title: { type: 'string' },
@@ -53,8 +55,9 @@ export const wikiPageSchema: RxJsonSchema<WikiPageDoc> = {
     abstract: { type: ['string', 'null'] },
     frontmatter: { type: 'object' },
     agent_id: { type: ['string', 'null'] },
-    created_at: { type: 'string' },
-    updated_at: { type: 'string' },
+    created_at: { type: 'string', maxLength: 32 },
+    // Indexed (in [type, updated_at]) — needs maxLength. ISO timestamp fits.
+    updated_at: { type: 'string', maxLength: 32 },
     tombstoned_at: { type: ['string', 'null'] },
   },
   required: [
@@ -82,8 +85,8 @@ export const wikiSectionSchema: RxJsonSchema<WikiSectionDoc> = {
     title: { type: ['string', 'null'] },
     content: { type: 'string' },
     sort_order: { type: 'number', minimum: 0, maximum: 99999, multipleOf: 1 },
-    created_at: { type: 'string' },
-    updated_at: { type: 'string' },
+    created_at: { type: 'string', maxLength: 32 },
+    updated_at: { type: 'string', maxLength: 32 },
     tombstoned_at: { type: ['string', 'null'] },
   },
   required: ['id', 'page_id', 'content', 'sort_order', 'created_at', 'updated_at'],

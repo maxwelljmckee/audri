@@ -24,8 +24,10 @@ interface StartCallResponse {
   expiresAt: string;
 }
 
+export type CallType = 'generic' | 'onboarding';
+
 export interface UseCallResult {
-  start: () => Promise<void>;
+  start: (opts?: { callType?: CallType }) => Promise<void>;
   end: () => Promise<void>;
   transcript: TranscriptTurn[];
   error: string | null;
@@ -62,8 +64,9 @@ export function useCall(): UseCallResult {
 
   useEffect(() => () => teardown(), [teardown]);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (opts?: { callType?: CallType }) => {
     const gen = ++generationRef.current;
+    const callType: CallType = opts?.callType ?? 'generic';
     setError(null);
     transcriptRef.current.reset();
     setTranscript([]);
@@ -79,7 +82,7 @@ export function useCall(): UseCallResult {
       const r = await fetch(`${API_URL}/calls/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ agent_slug: 'assistant', call_type: 'generic' }),
+        body: JSON.stringify({ agent_slug: 'assistant', call_type: callType }),
       });
       if (!r.ok) throw new Error(`start failed: ${r.status} ${await r.text()}`);
       const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
@@ -199,8 +202,14 @@ export function useCall(): UseCallResult {
         }
       });
 
-      // 7. Kick the model off with a greeting prompt.
-      session.sendText('Greet me now.');
+      // 7. Kick the model off. The cue routes through the system prompt — for
+      // onboarding it triggers the structured self-intro + opener; for generic
+      // it's just a casual greeting.
+      session.sendText(
+        callType === 'onboarding'
+          ? 'Begin the onboarding call now. Open with your self-introduction and the opener question, exactly as described in your scaffolding.'
+          : 'Greet me now.',
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       teardown();

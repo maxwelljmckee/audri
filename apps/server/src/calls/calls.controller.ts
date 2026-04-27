@@ -9,7 +9,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import { db, callTranscripts, eq, sql } from '@audri/shared/db';
+import { db, callTranscripts, eq, sql, userSettings } from '@audri/shared/db';
 import { getSupabaseAdmin } from '../auth/supabase.client.js';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
@@ -106,6 +106,15 @@ export class CallsController {
           droppedTurnIds: body.dropped_turn_ids ?? [],
         })
         .where(eq(callTranscripts.sessionId, sessionId));
+
+      // Onboarding completion: any non-cancelled onboarding call with content
+      // marks the user done. Resumption later goes through generic calls.
+      if (existing.callType === 'onboarding' && !cancelled && transcript.length > 0) {
+        await tx
+          .update(userSettings)
+          .set({ onboardingComplete: true, updatedAt: new Date() })
+          .where(eq(userSettings.userId, user.id));
+      }
 
       if (!cancelled && transcript.length > 0) {
         const ingestionPayload = JSON.stringify({

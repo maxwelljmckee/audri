@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PluginTile } from '../../components/PluginTile';
 import { useCallStore } from '../../lib/useCallStore';
@@ -26,6 +27,16 @@ export default function HomeScreen() {
   // Boot RxDB sync on home so the wiki overlay has data ready when opened.
   useRxdbReady();
 
+  // First-run redirect: if the user hasn't completed onboarding, send them to
+  // the onboarding screen. Once onboarding_complete flips, every subsequent
+  // load lands here normally.
+  useEffect(() => {
+    if (me.status !== 'ready') return;
+    if (me.data.userSettings && !me.data.userSettings.onboardingComplete) {
+      router.replace('/(app)/onboarding');
+    }
+  }, [me]);
+
   async function signOut() {
     await supabase.auth.signOut();
   }
@@ -36,47 +47,45 @@ export default function HomeScreen() {
   }
 
   return (
-    <View className="flex-1 bg-azure-bg">
-      <SafeAreaView edges={['top', 'bottom']} className="flex-1">
-        <View className="flex-row items-center justify-between px-6 pt-2">
-          <Text className="text-xl font-semibold text-azure-text">Audri</Text>
-          <Pressable onPress={signOut} className="rounded-full bg-azure-surface p-2 active:opacity-70">
+    <View style={styles.root}>
+      <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
+        <View style={styles.header}>
+          <Text style={styles.wordmark}>Audri</Text>
+          <Pressable onPress={signOut} style={styles.avatar}>
             <Ionicons name="person-outline" size={20} color="#e8f1ff" />
           </Pressable>
         </View>
 
-        <View className="mt-12 px-6">
-          <Text className="text-3xl font-medium text-azure-text">
+        <View style={styles.greetingBlock}>
+          <Text style={styles.greeting}>
             {greeting}
             {firstName ? `, ${firstName}` : ''}.
           </Text>
           {me.status === 'ready' && (
-            <Text className="mt-2 text-sm text-azure-text-muted">
-              {me.data.agents.length} agent · {me.data.userSettings?.enabledPlugins.length ?? 0} plugin
+            <Text style={styles.subtext}>
+              {me.data.agents.length} agent ·{' '}
+              {me.data.userSettings?.enabledPlugins.length ?? 0} plugin
               {(me.data.userSettings?.enabledPlugins.length ?? 0) === 1 ? '' : 's'}
             </Text>
           )}
           {me.status === 'error' && (
-            <Text className="mt-2 text-xs text-red-400">/me error: {me.error}</Text>
+            <Text style={styles.errorText}>/me error: {me.error}</Text>
           )}
         </View>
 
-        <View className="mt-10 flex-1 px-6">
-          <View className="flex-row gap-3">
-            <PluginTile label="Wiki" icon="library-outline" onPress={() => showOverlay('wiki')} />
-            <PluginTile label="Todos" icon="checkbox-outline" />
-          </View>
-          <View className="mt-3 flex-row gap-3">
-            <PluginTile label="Research" icon="search-outline" />
-            <PluginTile label="Profile" icon="person-circle-outline" />
-          </View>
+        <View style={styles.grid}>
+          <PluginTile
+            label="Wiki"
+            icon="library-outline"
+            onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
+          />
+          <PluginTile label="Todos" icon="checkbox-outline" />
+          <PluginTile label="Research" icon="search-outline" />
+          <PluginTile label="Profile" icon="person-circle-outline" />
         </View>
 
-        <View className="items-center pb-4">
-          <Pressable
-            onPress={openCall}
-            className="h-16 w-16 items-center justify-center rounded-full bg-azure-accent active:opacity-80"
-          >
+        <View style={styles.fabRow}>
+          <Pressable onPress={openCall} style={styles.fab}>
             <Ionicons name="call-outline" size={28} color="#fff" />
           </Pressable>
         </View>
@@ -84,3 +93,48 @@ export default function HomeScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#0a1628' },
+  safe: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 8,
+  },
+  wordmark: { color: '#e8f1ff', fontSize: 20, fontWeight: '600' },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#11203a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  greetingBlock: { marginTop: 48, paddingHorizontal: 24, gap: 8 },
+  greeting: { color: '#e8f1ff', fontSize: 28, fontWeight: '500' },
+  subtext: { color: '#7aa3d4', fontSize: 14 },
+  errorText: { color: '#f87171', fontSize: 12 },
+  grid: {
+    marginTop: 40,
+    paddingHorizontal: 24,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  fabRow: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingBottom: 16,
+  },
+  fab: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#4d8fdb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});

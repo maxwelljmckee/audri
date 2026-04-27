@@ -1,22 +1,65 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, Text, View } from 'react-native';
+import { useRef } from 'react';
+import { Pressable, type PressableProps, StyleSheet, Text, View } from 'react-native';
+import type { OriginRect } from '../lib/usePluginOverlay';
 
 interface Props {
   label: string;
   icon: React.ComponentProps<typeof Ionicons>['name'];
+  onPressWithOrigin?: (origin: OriginRect) => void;
   onPress?: () => void;
 }
 
-export function PluginTile({ label, icon, onPress }: Props) {
+// Tile = colored icon-card with label below (separate text). Press captures
+// own screen rect via measureInWindow → fed to overlay for scale animation.
+export function PluginTile({ label, icon, onPress, onPressWithOrigin }: Props) {
+  const ref = useRef<View>(null);
+
+  const handlePress: PressableProps['onPress'] = () => {
+    if (!onPressWithOrigin) {
+      onPress?.();
+      return;
+    }
+    if (!ref.current) {
+      onPress?.();
+      return;
+    }
+    ref.current.measureInWindow((x, y, width, height) => {
+      onPressWithOrigin({ x, y, width, height });
+    });
+  };
+
   return (
-    <Pressable
-      onPress={onPress}
-      className="flex-1 items-center justify-center gap-2 rounded-2xl bg-azure-surface px-4 py-6 active:opacity-70"
-    >
-      <View className="rounded-full bg-azure-bg p-3">
-        <Ionicons name={icon} size={24} color="#7aa3d4" />
+    <View style={styles.column}>
+      <View ref={ref} collapsable={false} style={styles.cardWrap}>
+        <Pressable
+          onPress={handlePress}
+          style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+        >
+          <Ionicons name={icon} size={26} color="#7aa3d4" />
+        </Pressable>
       </View>
-      <Text className="text-sm font-medium text-azure-text">{label}</Text>
-    </Pressable>
+      <Text style={styles.label} numberOfLines={1}>
+        {label}
+      </Text>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  column: { flex: 1, alignItems: 'center', gap: 6 },
+  cardWrap: { width: '100%', aspectRatio: 1 },
+  card: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: '#11203a',
+  },
+  pressed: { opacity: 0.7 },
+  label: {
+    color: '#e8f1ff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+});

@@ -23,42 +23,69 @@ export interface ReplicationHandle {
 }
 
 let _active: ReplicationHandle | null = null;
+// In-flight promise singleton: prevents a second concurrent startReplication()
+// (e.g. StrictMode double-mount, or home + onboarding both mounting
+// useRxdbReady) from spinning up duplicate Supabase realtime subscriptions
+// against the same channel name — which throws "cannot add postgres_changes
+// callbacks ... after subscribe()".
+let _starting: Promise<ReplicationHandle> | null = null;
 
-export async function startReplication(): Promise<ReplicationHandle> {
-  if (_active) return _active;
+export function startReplication(): Promise<ReplicationHandle> {
+  if (_active) return Promise.resolve(_active);
+  if (_starting) return _starting;
 
-  const db = await getDatabase();
+  _starting = (async () => {
+    const db = await getDatabase();
 
-  const wikiPagesRepl = new SupabaseReplication({
-    supabaseClient: supabase,
-    collection: db.collections.wiki_pages,
-    replicationIdentifier: `audri:wiki_pages:${REPLICATION_VERSION}`,
-    deletedField: '_deleted',
-    pull: { batchSize: 50, lastModifiedField: 'updated_at' },
-    push: {},
+    const wikiPagesRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.wiki_pages,
+      replicationIdentifier: `audri:wiki_pages:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 50, lastModifiedField: 'updated_at' },
+      push: {},
+    });
+
+    const wikiSectionsRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.wiki_sections,
+      replicationIdentifier: `audri:wiki_sections:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 100, lastModifiedField: 'updated_at' },
+      push: {},
+    });
+
+    _active = {
+      replications: [wikiPagesRepl, wikiSectionsRepl],
+      stop: async () => {
+        await Promise.all([wikiPagesRepl.cancel(), wikiSectionsRepl.cancel()]);
+        _active = null;
+      },
+    };
+
+    return _active;
+  })();
+
+  _starting.catch(() => {
+    // Allow a retry if the start failed.
+    _starting = null;
+  });
+  _starting.then(() => {
+    _starting = null;
   });
 
-  const wikiSectionsRepl = new SupabaseReplication({
-    supabaseClient: supabase,
-    collection: db.collections.wiki_sections,
-    replicationIdentifier: `audri:wiki_sections:${REPLICATION_VERSION}`,
-    deletedField: '_deleted',
-    pull: { batchSize: 100, lastModifiedField: 'updated_at' },
-    push: {},
-  });
-
-  _active = {
-    replications: [wikiPagesRepl, wikiSectionsRepl],
-    stop: async () => {
-      await Promise.all([wikiPagesRepl.cancel(), wikiSectionsRepl.cancel()]);
-      _active = null;
-    },
-  };
-
-  return _active;
+  return _starting;
 }
 
 export async function stopReplication(): Promise<void> {
+  // Wait for any in-flight start so we don't leak a half-started replication.
+  if (_starting) {
+    try {
+      await _starting;
+    } catch {
+      // start failed; nothing to stop
+    }
+  }
   if (_active) {
     await _active.stop();
   }

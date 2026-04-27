@@ -37,6 +37,7 @@ export class CallsService {
       agentName: agent.name,
       personaPrompt: agent.personaPrompt,
       userPromptNotes: agent.userPromptNotes,
+      callType,
     });
 
     const expireAt = new Date(Date.now() + 30 * 60 * 1000); // 30min

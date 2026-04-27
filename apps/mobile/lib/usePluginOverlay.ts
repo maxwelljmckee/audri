@@ -1,21 +1,27 @@
 // Single-slot plugin overlay state. Whichever plugin tile was last tapped
-// determines the overlay's content. Only one overlay open at a time.
-//
-// Origin-aware spring (overlay opens from the tile's screen position) is a
-// V1+ enhancement; MVP uses a slide-up animation.
+// determines the overlay's content + the origin rect it animates from.
 
 import { create } from 'zustand';
 
 export type PluginKind = 'wiki' | 'todos' | 'research' | 'profile';
 
+export interface OriginRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface PluginOverlayState {
   open: PluginKind | null;
-  show: (kind: PluginKind) => void;
+  origin: OriginRect | null;
+  show: (kind: PluginKind, origin: OriginRect) => void;
   hide: () => void;
 }
 
 export const usePluginOverlay = create<PluginOverlayState>((set) => ({
   open: null,
-  show: (kind) => set({ open: kind }),
+  origin: null,
+  show: (open, origin) => set({ open, origin }),
   hide: () => set({ open: null }),
 }));
