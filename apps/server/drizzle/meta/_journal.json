@@ -43,6 +43,13 @@
       "when": 1777500001000,
       "tag": "0005_research_citations_jsonb",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777500002000,
+      "tag": "0006_fix_todo_bucket_slugs",
+      "breakpoints": true
     }
   ]
 }

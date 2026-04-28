@@ -46,10 +46,12 @@ export const PROFILE_PAGES = [
 ] as const;
 
 // User-scope todo pages (5). Root + 4 status buckets, all `type='todo'`.
+// Slugs are path-style per specs/onboarding.md so server/worker code can
+// look up buckets by canonical slug (e.g. `todos/todo`, `todos/done`).
 export const TODO_PAGES = [
   { slug: 'todos', title: 'Todos', agentAbstract: "The user's todos.", isRoot: true },
-  { slug: 'todo', title: 'To do', agentAbstract: 'Todos that are pending.' },
-  { slug: 'in-progress', title: 'In progress', agentAbstract: 'Todos that are in-progress.' },
-  { slug: 'done', title: 'Done', agentAbstract: 'Todos that are done.' },
-  { slug: 'archived', title: 'Archived', agentAbstract: 'Todos that are archived.' },
+  { slug: 'todos/todo', title: 'To do', agentAbstract: 'Todos that are pending.' },
+  { slug: 'todos/in-progress', title: 'In progress', agentAbstract: 'Todos that are in-progress.' },
+  { slug: 'todos/done', title: 'Done', agentAbstract: 'Todos that are done.' },
+  { slug: 'todos/archived', title: 'Archived', agentAbstract: 'Todos that are archived.' },
 ] as const;
