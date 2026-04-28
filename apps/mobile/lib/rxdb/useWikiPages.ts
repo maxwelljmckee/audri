@@ -51,7 +51,7 @@ export function useWikiPages(): WikiPageDoc[] {
   return [...pages].sort((a, b) => {
     const countDiff = (sectionCounts.get(b.id) ?? 0) - (sectionCounts.get(a.id) ?? 0);
     if (countDiff !== 0) return countDiff;
-    return b.updated_at.localeCompare(a.updated_at);
+    return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
   });
 }
 
