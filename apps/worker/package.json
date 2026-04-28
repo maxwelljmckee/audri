@@ -16,7 +16,8 @@
     "graphile-worker": "^0.16.6",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
-    "postgres": "^3.4.5"
+    "postgres": "^3.4.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

@@ -80,7 +80,11 @@ export default function HomeScreen() {
             onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
           />
           <PluginTile label="Todos" icon="checkbox-outline" />
-          <PluginTile label="Research" icon="search-outline" />
+          <PluginTile
+            label="Research"
+            icon="search-outline"
+            onPressWithOrigin={(origin) => showOverlay('research', origin)}
+          />
           <PluginTile label="Profile" icon="person-circle-outline" />
         </View>
 

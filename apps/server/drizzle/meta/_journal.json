@@ -29,6 +29,20 @@
       "when": 1777400000000,
       "tag": "0003_realtime_publication",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777500000000,
+      "tag": "0004_research_rls_realtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777500001000,
+      "tag": "0005_research_citations_jsonb",
+      "breakpoints": true
     }
   ]
 }

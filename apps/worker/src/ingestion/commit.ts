@@ -10,6 +10,7 @@
 // Atomic — if anything fails, nothing commits.
 
 import {
+  agentTasks,
   and,
   callTranscripts,
   db,
@@ -40,6 +41,7 @@ export interface CommitResult {
   sectionsCreated: number;
   sectionsUpdated: number;
   sectionsTombstoned: number;
+  tasksCreated: number;
 }
 
 export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
@@ -52,6 +54,7 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     sectionsCreated: 0,
     sectionsUpdated: 0,
     sectionsTombstoned: 0,
+    tasksCreated: 0,
   };
 
   // Diagnostic: dump Pro's exact output before applying so log mining can
@@ -305,6 +308,78 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
       ref: sql`${JSON.stringify({ transcriptId, slugs: touchedSlugs })}::jsonb`,
       summary,
     });
+
+    // ── TASKS ───────────────────────────────────────────────────────────────
+    // Each extracted research-intent commitment becomes:
+    //   1. A tracking todo wiki page under todos/todo
+    //   2. An agent_tasks(kind='research') row
+    //   3. A Graphile job (added in same tx — no enqueue-before-commit race)
+    if (fanOut.tasks.length > 0) {
+      const [todoBucket] = await tx
+        .select({ id: wikiPages.id })
+        .from(wikiPages)
+        .where(
+          and(
+            eq(wikiPages.userId, userId),
+            eq(wikiPages.scope, 'user'),
+            eq(wikiPages.slug, 'todos/todo'),
+            isNull(wikiPages.tombstonedAt),
+          ),
+        )
+        .limit(1);
+
+      if (!todoBucket) {
+        logger.warn(
+          { userId, taskCount: fanOut.tasks.length },
+          'todos/todo bucket missing — skipping task creation',
+        );
+      } else {
+        for (const task of fanOut.tasks) {
+          if (task.kind !== 'research') continue;
+          const [todoRow] = await tx
+            .insert(wikiPages)
+            .values({
+              userId,
+              scope: 'user',
+              type: 'todo',
+              // Suffix with current ms + a random tail to avoid collisions when
+              // ingestion produces several research tasks in the same call.
+              slug: `todos/research-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+              parentPageId: todoBucket.id,
+              title: `Research: ${task.query.slice(0, 100)}`,
+              agentAbstract: `Research request: ${task.query}`,
+            })
+            .returning({ id: wikiPages.id });
+          if (!todoRow) continue;
+
+          const [taskRow] = await tx
+            .insert(agentTasks)
+            .values({
+              userId,
+              todoPageId: todoRow.id,
+              kind: 'research',
+              payload: {
+                query: task.query,
+                ...(task.context_summary ? { context_summary: task.context_summary } : {}),
+                source_transcript_id: transcriptId,
+              },
+              status: 'pending',
+            })
+            .returning({ id: agentTasks.id });
+          if (!taskRow) continue;
+
+          const dispatchPayload = JSON.stringify({ agentTaskId: taskRow.id });
+          await tx.execute(sql`
+            SELECT graphile_worker.add_job(
+              'agent_task_dispatch',
+              ${dispatchPayload}::json,
+              max_attempts => 2
+            )
+          `);
+          result.tasksCreated++;
+        }
+      }
+    }
 
     // Mirror onto call_transcripts for quick lookup if needed (no-op for now).
     void callTranscripts;

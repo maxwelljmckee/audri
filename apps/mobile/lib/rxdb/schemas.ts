@@ -92,3 +92,74 @@ export const wikiSectionSchema: RxJsonSchema<WikiSectionDoc> = {
   required: ['id', 'page_id', 'content', 'sort_order', 'created_at', 'updated_at'],
   indexes: ['page_id', ['page_id', 'sort_order']],
 };
+
+// Findings carry the citation_indices that point into the citations array
+// stored on the same row. Citations themselves are also written to
+// research_output_sources server-side but the wiki-rendering UI reads them
+// from this JSONB blob since it's a single-row fetch.
+export interface ResearchFindingDoc {
+  heading: string;
+  content: string;
+  citation_indices: number[];
+}
+
+export interface ResearchCitationDoc {
+  url: string;
+  title: string;
+  snippet: string;
+}
+
+export interface ResearchOutputDoc {
+  id: string;
+  user_id: string;
+  agent_tasks_id: string;
+  query: string;
+  summary: string;
+  findings: ResearchFindingDoc[];
+  citations: ResearchCitationDoc[];
+  follow_up_questions: string[];
+  notes_for_user: string | null;
+  model_used: string;
+  tokens_in: number;
+  tokens_out: number;
+  generated_at: string;
+  tombstoned_at: string | null;
+}
+
+export const researchOutputSchema: RxJsonSchema<ResearchOutputDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    user_id: { type: 'string', maxLength: 36 },
+    agent_tasks_id: { type: 'string', maxLength: 36 },
+    query: { type: 'string' },
+    summary: { type: 'string' },
+    findings: { type: 'array' },
+    citations: { type: 'array' },
+    follow_up_questions: { type: 'array' },
+    notes_for_user: { type: ['string', 'null'] },
+    model_used: { type: 'string' },
+    tokens_in: { type: 'number', minimum: 0 },
+    tokens_out: { type: 'number', minimum: 0 },
+    // Indexed for ORDER BY generated_at DESC.
+    generated_at: { type: 'string', maxLength: 32 },
+    tombstoned_at: { type: ['string', 'null'] },
+  },
+  required: [
+    'id',
+    'user_id',
+    'agent_tasks_id',
+    'query',
+    'summary',
+    'findings',
+    'citations',
+    'follow_up_questions',
+    'model_used',
+    'tokens_in',
+    'tokens_out',
+    'generated_at',
+  ],
+  indexes: ['generated_at'],
+};

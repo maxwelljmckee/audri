@@ -197,24 +197,22 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
-## Slice 7 — Research plugin end-to-end
+## Slice 7 — Research plugin end-to-end (✅ done 2026-04-27)
 
 **Goal:** first agent_task kind shipped. User can request research and get a result.
 
-- ⏺️ Worker: plugin registry module (`pluginRegistry` server-only + `pluginRegistryLite` derived for client) with `research` entry per `specs/research-task-prompt.md`
-- ⏺️ Worker: research handler implementing the `(ctx) => Promise<{output, sources, reingestIntoWiki}>` contract
-- ⏺️ Worker: research prompt text drafted from the locked spec
-- ⏺️ Worker: `agent_tasks` queue setup (separate from `ingestion-${user_id}` queue); CRON scanner for delayed/retry pickup
-- ⏺️ Worker: `research_outputs` write helper + per-kind source junction writes (`research_output_sources`, `research_output_ancestors`)
-- ⏺️ Worker: usage_events emission per LLM call
-- ⏺️ Server: ingestion's commitment-extraction creates agent_tasks rows when Pro detects research-intent commitments (already part of `specs/fan-out-prompt.md` §4.1)
-- ⏺️ Mobile: Research plugin tile → overlay screen showing list of `research_outputs` for this user (synced via RxDB)
-- ⏺️ Mobile: research detail view — query, summary, findings, citations
-- ⏺️ Mobile: spawn-research affordance from the Research overlay (calls a server endpoint that creates an agent_tasks row directly, bypassing ingestion — for explicit user requests outside of a call)
+- ✅ Worker: `agent_task_dispatch` Graphile task pulls a queued `agent_tasks` row by id, marks running, dispatches by kind, on terminal failure marks `failed` + records `last_error`. Plugin registry already had `research` entry; handler now wired in.
+- ✅ Worker: research handler (`apps/worker/src/research/handler.ts`) — Pro call (`gemini-3.1-pro-preview`) with `tools: [{ googleSearch: {} }]` for grounded search. JSON output validated via zod (`ResearchOutputZ`). Prompt instructs aggressive grounding, citation discipline, length/depth, voice, refusal rules per `specs/research-task-prompt.md`.
+- ✅ Worker: research commit helper writes `research_outputs` + `research_output_sources` + flips `agent_tasks.status='succeeded'` + reparents originating todo wiki page → `todos/done` + emits `usage_events(plugin_research)` + `wiki_log(task)` — all in one transaction.
+- ✅ DB: migration `0004_research_rls_realtime.sql` adds RLS SELECT policies on `research_outputs` + `research_output_sources` + `research_output_ancestors`, `_deleted` GENERATED column on `research_outputs`, `REPLICA IDENTITY FULL`, and enrolls `research_outputs` in `supabase_realtime` publication. Migration `0005_research_citations_jsonb.sql` adds a denormalized `citations` JSONB column on `research_outputs` so the mobile detail view can render footnotes without joining a second collection.
+- ✅ Server: `POST /tasks/research` endpoint — creates the originating todo wiki page + agent_tasks row + enqueues the dispatch job in one transaction. Used for the explicit "spawn research" affordance from the mobile UI.
+- ✅ Mobile: RxDB `research_outputs` collection + replication wiring + `useResearchOutputs` hook (sorted by `generated_at` desc).
+- ✅ Mobile: ResearchOverlay (list + spawn affordance + detail navigation) + ResearchOutputDetail (query, summary, findings with citation indices, follow-up questions, clickable citations panel). Mounted at app root alongside WikiOverlay; Research plugin tile on home wired with origin-aware open animation.
+- ✅ Worker: ingestion auto-creates research tasks. Pro fan-out prompt got a new `## 9. Research-intent extraction` section + `tasks` field on the response schema. `commitFanOut` extends the transaction to insert the tracking todo + agent_tasks row + Graphile dispatch job per extracted task.
 
-**Demo:** in a call, "can you research Italian restaurants near me?" → after call, research arrives in Research module 1–3 minutes later → tap to read.
+**Demo (achievable):** in a call, "can you research Italian restaurants in lower Manhattan?" → call ends → ingestion's Pro fan-out detects the research commitment → research handler runs Pro+grounded-search → 1-3 min later the Research overlay shows the new output with citations.
 
-**Estimated:** 6–8 days. Most work is prompt drafting + handler implementation + the spawn-from-call orchestration.
+**Estimated:** 6–8 days. **Actual:** ~3 hours of code. Heaviest pieces were the handler prompt and the schema/replication plumbing for a new RxDB collection.
 
 ---
 

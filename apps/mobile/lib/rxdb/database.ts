@@ -9,8 +9,10 @@ import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 import {
+  type ResearchOutputDoc,
   type WikiPageDoc,
   type WikiSectionDoc,
+  researchOutputSchema,
   wikiPageSchema,
   wikiSectionSchema,
 } from './schemas';
@@ -20,10 +22,12 @@ addRxPlugin(RxDBQueryBuilderPlugin);
 
 export type WikiPageCollection = RxCollection<WikiPageDoc>;
 export type WikiSectionCollection = RxCollection<WikiSectionDoc>;
+export type ResearchOutputCollection = RxCollection<ResearchOutputDoc>;
 
 export interface AudriCollections {
   wiki_pages: WikiPageCollection;
   wiki_sections: WikiSectionCollection;
+  research_outputs: ResearchOutputCollection;
 }
 
 export type AudriDatabase = RxDatabase<AudriCollections>;
@@ -41,6 +45,7 @@ export function getDatabase(): Promise<AudriDatabase> {
       await db.addCollections({
         wiki_pages: { schema: wikiPageSchema },
         wiki_sections: { schema: wikiSectionSchema },
+        research_outputs: { schema: researchOutputSchema },
       });
       return db;
     })();

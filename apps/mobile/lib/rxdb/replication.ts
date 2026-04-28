@@ -55,10 +55,24 @@ export function startReplication(): Promise<ReplicationHandle> {
       push: {},
     });
 
+    // research_outputs is read-only client-side (immutable artifact). No push.
+    // Sort by generated_at since updated_at isn't on this table.
+    const researchOutputsRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.research_outputs,
+      replicationIdentifier: `audri:research_outputs:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 50, lastModifiedField: 'generated_at' },
+    });
+
     _active = {
-      replications: [wikiPagesRepl, wikiSectionsRepl],
+      replications: [wikiPagesRepl, wikiSectionsRepl, researchOutputsRepl],
       stop: async () => {
-        await Promise.all([wikiPagesRepl.cancel(), wikiSectionsRepl.cancel()]);
+        await Promise.all([
+          wikiPagesRepl.cancel(),
+          wikiSectionsRepl.cancel(),
+          researchOutputsRepl.cancel(),
+        ]);
         _active = null;
       },
     };

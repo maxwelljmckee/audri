@@ -25,6 +25,7 @@ export const researchOutputs = pgTable(
     query: text('query').notNull(),
     summary: text('summary').notNull(),
     findings: jsonb('findings').notNull(),
+    citations: jsonb('citations').notNull().default(sql`'[]'::jsonb`),
     followUpQuestions: text('follow_up_questions')
       .array()
       .notNull()

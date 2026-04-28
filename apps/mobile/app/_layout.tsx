@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ResearchOverlay } from '../components/ResearchOverlay';
 import { WikiOverlay } from '../components/WikiOverlay';
 import '../global.css';
 
@@ -17,6 +18,7 @@ export default function RootLayout() {
           doesn't tear them down. Each handles its own visibility via the
           plugin-overlay store. */}
       <WikiOverlay />
+      <ResearchOverlay />
     </SafeAreaProvider>
   );
 }

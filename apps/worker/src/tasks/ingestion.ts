@@ -130,7 +130,7 @@ async function runUserScopePipeline(
     callTimestamp,
   });
   log(
-    `pro fan-out: creates=${fanOut.creates.length}, updates=${fanOut.updates.length}, skipped=${fanOut.skipped.length}`,
+    `pro fan-out: creates=${fanOut.creates.length}, updates=${fanOut.updates.length}, skipped=${fanOut.skipped.length}, tasks=${fanOut.tasks.length}`,
   );
 
   const commitResult = await commitFanOut({

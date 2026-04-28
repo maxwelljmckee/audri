@@ -63,10 +63,21 @@ export interface SkippedClaim {
   reason: string;
 }
 
+// Research-intent commitments that the user expressed during the call.
+// Each becomes an agent_tasks(kind='research') row at commit time, plus
+// a tracking todo wiki page under todos/todo. Audri stays silent until the
+// research arrives in the user's Research overlay.
+export interface ExtractedTask {
+  kind: 'research';
+  query: string;
+  context_summary?: string;
+}
+
 export interface ProFanOutResult {
   creates: PageCreate[];
   updates: PageUpdate[];
   skipped: SkippedClaim[];
+  tasks: ExtractedTask[];
 }
 
 const SYSTEM_PROMPT = `You are Audri, a disciplined maintainer of the user's personal knowledge wiki. You read a transcript of a voice conversation between the user and their assistant, alongside a candidate set of wiki pages that may need updating, and you produce a structured write plan.
@@ -335,7 +346,35 @@ Wiki content is written for the user, not about the user — so action-oriented 
   - ✅ "My role is technical co-founder; Sarah handles product." (first-person for the contrast)
   - ❌ "The user's role is technical co-founder while Sarah handles product."
 
-Apply the same voice to \`abstract\` and \`agent_abstract\` fields. Section titles stay declarative phrases ("Why consensus matters", "Current role"), unaffected.`;
+Apply the same voice to \`abstract\` and \`agent_abstract\` fields. Section titles stay declarative phrases ("Why consensus matters", "Current role"), unaffected.
+
+## 9. Research-intent extraction
+
+A separate output field, \`tasks\`, captures research-intent commitments the user made during the call. The handler dispatches each as a \`research\` agent task; the result lands in the user's Research surface 1–3 minutes later.
+
+A research-intent commitment is when the user explicitly asks Audri to look something up / research / find / dig into / investigate something. Phrasings to recognize:
+- "Can you research X for me?"
+- "Look up X."
+- "Find me Italian restaurants near…"
+- "I want to know more about X — can you dig in?"
+- "Pull together some info on X."
+- "What are people saying about X?"
+
+NOT research intent:
+- General curiosity or thinking-out-loud ("I wonder how X works…") unless they explicitly ask you to look into it.
+- Pure conversational questions you can answer directly without web grounding ("what's the capital of France?").
+- Hypotheticals ("if I were to research X…").
+
+For each detected research commitment, emit a task entry:
+\`\`\`
+{
+  "kind": "research",
+  "query": "<concise restatement of what they want researched, in their own framing if possible>",
+  "context_summary": "<1-2 sentences from the call that would help the researcher understand the ask — optional but encouraged>"
+}
+\`\`\`
+
+If no research commitments, emit \`"tasks": []\`. Most calls will have zero. A typical call with one research ask will have exactly one.`;
 
 export interface ProFanOutInput {
   transcript: IngestionTranscriptTurn[] & { id?: string }[];
@@ -450,8 +489,20 @@ export async function runFanOut(
               required: ['reason'],
             },
           },
+          tasks: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                kind: { type: Type.STRING },
+                query: { type: Type.STRING },
+                context_summary: { type: Type.STRING, nullable: true },
+              },
+              required: ['kind', 'query'],
+            },
+          },
         },
-        required: ['creates', 'updates', 'skipped'],
+        required: ['creates', 'updates', 'skipped', 'tasks'],
       },
       temperature: 0.3,
     },
@@ -460,21 +511,27 @@ export async function runFanOut(
   const text = resp.text;
   if (!text) {
     logger.warn('pro fan-out returned empty text');
-    return { creates: [], updates: [], skipped: [] };
+    return { creates: [], updates: [], skipped: [], tasks: [] };
   }
 
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end <= start) {
     logger.warn({ text: text.slice(0, 300) }, 'pro fan-out returned non-JSON');
-    return { creates: [], updates: [], skipped: [] };
+    return { creates: [], updates: [], skipped: [], tasks: [] };
   }
 
   const parsed = JSON.parse(text.slice(start, end + 1)) as Partial<ProFanOutResult>;
+  // Filter tasks defensively — drop unknown kinds; current MVP plugin set is
+  // research-only, so anything else is hallucinated.
+  const rawTasks = Array.isArray(parsed.tasks) ? (parsed.tasks as ExtractedTask[]) : [];
+  const tasks = rawTasks.filter((t) => t.kind === 'research' && typeof t.query === 'string' && t.query.trim().length > 0);
+
   return {
     creates: Array.isArray(parsed.creates) ? (parsed.creates as PageCreate[]) : [],
     updates: Array.isArray(parsed.updates) ? (parsed.updates as PageUpdate[]) : [],
     skipped: Array.isArray(parsed.skipped) ? (parsed.skipped as SkippedClaim[]) : [],
+    tasks,
   };
 }
 
