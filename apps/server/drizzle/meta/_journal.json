@@ -57,6 +57,13 @@
       "when": 1777583000000,
       "tag": "0007_research_title",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777670000000,
+      "tag": "0008_ingestion_status",
+      "breakpoints": true
     }
   ]
 }

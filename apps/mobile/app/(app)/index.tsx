@@ -8,6 +8,7 @@ import { useCallStore } from '../../lib/useCallStore';
 import { firstNameFromUser, timeAwareGreeting } from '../../lib/greeting';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { supabase } from '../../lib/supabase';
+import { useCallRecoverySweep } from '../../lib/useCallSweep';
 import { useMe } from '../../lib/useMe';
 import { usePluginOverlay } from '../../lib/usePluginOverlay';
 import { useSession } from '../../lib/useSession';
@@ -26,6 +27,10 @@ export default function HomeScreen() {
 
   // Boot RxDB sync on home so the wiki overlay has data ready when opened.
   useRxdbReady();
+
+  // Recover any orphaned call from a previous session (force-quit, network
+  // drop, backgrounded-but-failed-to-reach-server). Runs once per sign-in.
+  useCallRecoverySweep();
 
   // First-run redirect: if the user hasn't completed onboarding, send them to
   // the onboarding screen. Once onboarding_complete flips, every subsequent

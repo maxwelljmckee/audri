@@ -180,20 +180,23 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
-## Slice 6.5 — Resilience (call ingestion failure modes)
+## Slice 6.5 — Resilience (call ingestion failure modes) (✅ code done 2026-04-28; migration pending DNS)
 
 **Goal:** stop bleeding ingestion failures. Surface partial / failed state to the user + the conversational agent so dropped or broken calls don't disappear.
 
-- ⏺️ Server: any non-`user_ended` call ends still POST `/calls/:id/end` from the client (network drop, app backgrounded, force-quit recovery on next launch). Transcript flagged `incomplete=true` (or via `end_reason` enum) in `call_transcripts`.
-- ⏺️ Server: `call_transcripts.ingestion_status` enum (`pending` / `succeeded` / `failed` / `partial`) — worker writes back on success/fail; pre-fan-out reads it for retry visibility.
-- ⏺️ Mobile: app-launch sweep — any in-flight call_transcripts row with no `ended_at` whose session is older than threshold gets a "looks like your last call cut off — submit transcript anyway?" prompt; on confirm, POSTs the locally-cached transcript.
-- ⏺️ Server: preload module surfaces incomplete-but-ingested calls so the next generic call can offer "seems like we got cut off on our last call about X — do we need to wrap up?"
-- ⏺️ Mobile: Wiki/Activity surface shows ingestion-failed calls with a manual retry button → `POST /calls/:id/retry-ingest`.
-- ⏺️ Worker: more retry-tolerant Pro fan-out (idempotency keys to avoid duplicate sections on retry; bumped `max_attempts` once retries are safe).
+- ✅ Mobile: AsyncStorage-backed `CallSnapshot` written on every transcript change during a call (`apps/mobile/lib/callRecovery.ts`). Cleared on clean `/end`. Survives force-quit / crash.
+- ✅ Mobile: AppState `'background' | 'inactive'` handler in `useCall` — when iOS suspends a connected call, tear down audio + POST `/calls/:id/end` with `end_reason='app_backgrounded'` and the cached transcript. Snapshot stays on disk if the recover-POST fails so the launch sweep can retry.
+- ✅ Mobile: `useCallRecoverySweep` runs once per signed-in transition (mounted on the home screen). Reads any orphaned snapshot, POSTs `/end` with `end_reason='network_drop'` if stale (>5min since `lastTouched`), clears on success.
+- ✅ Schema: `ingestion_status` enum (`pending` / `running` / `succeeded` / `failed`) + `ingestion_error` text on `call_transcripts` (migration `0008_ingestion_status.sql` written; pending apply due to local DNS issue with the IPv6-only direct host).
+- ✅ Worker: ingestion writes 'running' at start, 'succeeded' / 'failed' at terminal state. Failed status carries `ingestion_error` for diagnostics.
+- ✅ Server: `POST /calls/:sessionId/retry-ingest` re-enqueues a failed transcript; idempotent — only fires when current status is 'failed'.
+- ✅ Server preload: `loadGenericCallContext` now surfaces the most recent non-user-ended call within 24h via a new "Last call cut off" section, with reason + previously touched slugs (read from `wiki_log`). Generic scaffolding gets a "open by briefly acknowledging this and offering to pick up — don't insist" guidance line.
+- ⏺️ Mobile: Wiki/Activity surface shows ingestion-failed calls with a manual retry button → `POST /calls/:id/retry-ingest`. **Punted to slice 8** since that's where the proper Activity / call-history UI lands.
+- ⏺️ Worker: more retry-tolerant Pro fan-out (idempotency keys to avoid duplicate sections on retry; bumped `max_attempts`). **Deferred** — only worth doing once we see retries actually causing duplicate sections in the wild; today's max_attempts=2 with the single-shot transient-error retry inside `runFanOut` is good enough.
 
-**Demo:** kill the app mid-call → relaunch → prompted to submit the transcript → ingestion runs → next call opens with "want to pick up where we left off?"
+**Demo (achievable once migration applies):** kill the app mid-call → relaunch → orphan sweep auto-submits the transcript → ingestion runs → next call opens with "looks like our last call got cut off — want to pick up?"
 
-**Estimated:** 1–2 days. Mostly client-side robustness + a small schema addition + a preload extension.
+**Estimated:** 1–2 days. **Actual:** ~2 hours of code; pending the migration apply.
 
 ---
 

@@ -60,8 +60,19 @@ export const ingestion: Task = async (payload, helpers) => {
   const transcript = (transcriptRow.content as IngestionTranscriptTurn[]) ?? [];
   if (transcript.length === 0) {
     log('empty transcript — skip');
+    // Empty transcript counts as a successful ingest (nothing to do).
+    await db
+      .update(callTranscripts)
+      .set({ ingestionStatus: 'succeeded', ingestionError: null })
+      .where(eq(callTranscripts.id, p.transcriptId));
     return;
   }
+
+  // Mark in-flight so retries can see the row is already being worked.
+  await db
+    .update(callTranscripts)
+    .set({ ingestionStatus: 'running', ingestionError: null })
+    .where(eq(callTranscripts.id, p.transcriptId));
 
   const callMetadata = {
     started_at: transcriptRow.startedAt.toISOString(),
@@ -94,10 +105,26 @@ export const ingestion: Task = async (payload, helpers) => {
     logger.error({ err: agentScopeResult.reason }, 'agent-scope pipeline failed');
   }
 
-  // If BOTH fail, throw so graphile retries.
+  // If BOTH fail, mark the transcript failed + throw so graphile retries.
+  // Anything less than both-failed is treated as a successful ingest — at
+  // least one of the two scopes wrote something.
   if (userScopeResult.status === 'rejected' && agentScopeResult.status === 'rejected') {
+    const isLastAttempt = (helpers.job.attempts ?? 1) >= (helpers.job.max_attempts ?? 1);
+    if (isLastAttempt) {
+      const reason = userScopeResult.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      await db
+        .update(callTranscripts)
+        .set({ ingestionStatus: 'failed', ingestionError: message })
+        .where(eq(callTranscripts.id, p.transcriptId));
+    }
     throw userScopeResult.reason;
   }
+
+  await db
+    .update(callTranscripts)
+    .set({ ingestionStatus: 'succeeded', ingestionError: null })
+    .where(eq(callTranscripts.id, p.transcriptId));
 };
 
 async function runUserScopePipeline(

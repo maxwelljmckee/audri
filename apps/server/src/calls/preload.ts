@@ -10,11 +10,12 @@
 // recently-updated wiki pages — those are richer than call summaries since
 // they reflect what was actually extracted and considered worth remembering.
 
-import { and, db, desc, eq, isNull, sql } from '@audri/shared/db';
-import { wikiPages, wikiSections } from '@audri/shared/db';
+import { and, db, desc, eq, isNull, ne, sql } from '@audri/shared/db';
+import { callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
 
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
+const INCOMPLETE_CALL_LOOKBACK_HOURS = 24;
 
 interface PageWithSections {
   slug: string;
@@ -32,20 +33,31 @@ interface RecentPage {
   agentAbstract: string;
 }
 
+interface IncompleteCall {
+  endedAt: Date;
+  endReason: string;
+  // Slugs of pages that ingestion touched on this transcript — useful for
+  // the agent to say "we were talking about X." Empty if nothing was
+  // extracted (the call ended before substantive content).
+  touchedSlugs: string[];
+}
+
 interface PreloadData {
   profile: PageWithSections[];
   agentNotes: PageWithSections[];
   recentPages: RecentPage[];
+  incompleteCall: IncompleteCall | null;
 }
 
 export async function loadGenericCallContext(userId: string): Promise<PreloadData> {
-  const [profile, agentNotes, recentPages] = await Promise.all([
+  const [profile, agentNotes, recentPages, incompleteCall] = await Promise.all([
     fetchPagesByPrefix(userId, 'user', 'profile'),
     fetchPagesByPrefix(userId, 'agent', 'assistant'),
     fetchRecentPages(userId),
+    fetchMostRecentIncompleteCall(userId),
   ]);
 
-  return { profile, agentNotes, recentPages };
+  return { profile, agentNotes, recentPages, incompleteCall };
 }
 
 async function fetchPagesByPrefix(
@@ -124,6 +136,66 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
   return rows as RecentPage[];
 }
 
+// Most recent non-user-ended call within the lookback window. Used to offer
+// "looks like we got cut off — want to wrap up?" in the next generic call.
+// Cancelled calls are excluded (the user explicitly killed them).
+async function fetchMostRecentIncompleteCall(userId: string): Promise<IncompleteCall | null> {
+  const cutoff = new Date(Date.now() - INCOMPLETE_CALL_LOOKBACK_HOURS * 60 * 60 * 1000);
+  const rows = await db
+    .select({
+      id: callTranscripts.id,
+      endedAt: callTranscripts.endedAt,
+      endReason: callTranscripts.endReason,
+    })
+    .from(callTranscripts)
+    .where(
+      and(
+        eq(callTranscripts.userId, userId),
+        eq(callTranscripts.cancelled, false),
+        ne(callTranscripts.endReason, 'user_ended'),
+        sql`${callTranscripts.endedAt} IS NOT NULL`,
+        sql`${callTranscripts.endedAt} >= ${cutoff.toISOString()}`,
+      ),
+    )
+    .orderBy(desc(callTranscripts.endedAt))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row || !row.endedAt) return null;
+
+  // Pull the touched-page slugs from this transcript's wiki_log row, if
+  // ingestion has run yet. If not, the agent will just have to ask "what
+  // were we talking about" the soft way.
+  const logRows = await db.execute<{ slugs: string[] }>(sql`
+    SELECT (ref->>'slugs')::jsonb #>> '{}' AS slugs
+    FROM wiki_log
+    WHERE user_id = ${userId}
+      AND kind = 'ingest'
+      AND ref->>'transcriptId' = ${row.id}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+  let touchedSlugs: string[] = [];
+  // biome-ignore lint/suspicious/noExplicitAny: postgres-driver row shape varies; defensive parse below
+  const rawSlugs = (logRows[0] as any)?.slugs;
+  if (typeof rawSlugs === 'string') {
+    try {
+      const parsed = JSON.parse(rawSlugs);
+      if (Array.isArray(parsed)) touchedSlugs = parsed.filter((s) => typeof s === 'string');
+    } catch {
+      /* ignore */
+    }
+  } else if (Array.isArray(rawSlugs)) {
+    touchedSlugs = rawSlugs.filter((s: unknown) => typeof s === 'string');
+  }
+
+  return {
+    endedAt: row.endedAt,
+    endReason: row.endReason ?? 'unknown',
+    touchedSlugs,
+  };
+}
+
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n).trimEnd()}…`;
 }
@@ -133,11 +205,20 @@ function truncate(s: string, n: number): string {
 // (profile = facts about the user, agent notes = your private observations,
 // recent pages = where activity has been concentrated).
 export function renderPreloadBlock(data: PreloadData): string {
-  if (data.profile.length === 0 && data.agentNotes.length === 0 && data.recentPages.length === 0) {
+  if (
+    data.profile.length === 0 &&
+    data.agentNotes.length === 0 &&
+    data.recentPages.length === 0 &&
+    !data.incompleteCall
+  ) {
     return '';
   }
 
   const parts: string[] = ['# What you know about the user'];
+
+  if (data.incompleteCall) {
+    parts.push('', '## Last call cut off', renderIncompleteCall(data.incompleteCall));
+  }
 
   if (data.profile.length > 0) {
     parts.push('', '## Profile', renderPages(data.profile));
@@ -162,7 +243,34 @@ export function renderPreloadBlock(data: PreloadData): string {
     'Use this context naturally. Don’t recite it back — but reference it when relevant ("you mentioned X last time…", "I know you’re working on Y…"). If something seems missing or stale, you can ask. Never tell the user "I don\'t know anything about you" — you do; it\'s above.',
   );
 
+  if (data.incompleteCall) {
+    parts.push(
+      '',
+      'Special: your last call ended unexpectedly (see "Last call cut off" above). Open this call by acknowledging that briefly and offering to pick up where you left off — but don\'t insist; let the user redirect if they\'ve moved on.',
+    );
+  }
+
   return parts.join('\n');
+}
+
+function renderIncompleteCall(c: IncompleteCall): string {
+  const when = formatRelative(c.endedAt);
+  const reasonLabel: Record<string, string> = {
+    silence_timeout: 'silence timeout',
+    network_drop: 'network dropped',
+    app_backgrounded: 'app went to background',
+    cancelled: 'cancelled',
+  };
+  const reason = reasonLabel[c.endReason] ?? c.endReason;
+  const lines = [`Ended ${when} — reason: ${reason}.`];
+  if (c.touchedSlugs.length > 0) {
+    lines.push(
+      `Topics covered before the cutoff: ${c.touchedSlugs.map((s) => `\`${s}\``).join(', ')}.`,
+    );
+  } else {
+    lines.push('No substantive topics had been extracted yet.');
+  }
+  return lines.join('\n');
 }
 
 function renderPages(pages: PageWithSections[]): string {

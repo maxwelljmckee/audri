@@ -57,3 +57,10 @@ export const endReasonEnum = pgEnum('end_reason', [
   'app_backgrounded',
   'cancelled',
 ]);
+
+export const ingestionStatusEnum = pgEnum('ingestion_status', [
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+]);

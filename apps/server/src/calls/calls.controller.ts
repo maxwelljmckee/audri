@@ -120,4 +120,49 @@ export class CallsController {
     this.logger.log({ sessionId, userId: user.id, cancelled }, 'call ended');
     return { status: 'ended', sessionId };
   }
+
+  // Re-enqueue ingestion for a transcript whose previous run failed. Idempotent
+  // by status: only re-fires when ingestion_status is currently 'failed' so a
+  // double-tap doesn't queue duplicate work.
+  @Post(':sessionId/retry-ingest')
+  async retryIngest(
+    @CurrentUser() user: { id: string },
+    @Param('sessionId') sessionId: string,
+  ) {
+    const [row] = await db
+      .select()
+      .from(callTranscripts)
+      .where(eq(callTranscripts.sessionId, sessionId))
+      .limit(1);
+    if (!row) throw new BadRequestException(`unknown session: ${sessionId}`);
+    if (row.userId !== user.id) throw new ConflictException('session does not belong to user');
+
+    if (row.ingestionStatus !== 'failed') {
+      return { status: 'noop', sessionId, ingestionStatus: row.ingestionStatus };
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(callTranscripts)
+        .set({ ingestionStatus: 'pending', ingestionError: null })
+        .where(eq(callTranscripts.id, row.id));
+
+      const ingestionPayload = JSON.stringify({
+        transcriptId: row.id,
+        userId: user.id,
+        agentId: row.agentId,
+      });
+      await tx.execute(sql`
+        SELECT graphile_worker.add_job(
+          'ingestion',
+          ${ingestionPayload}::json,
+          queue_name => ${`ingestion-${user.id}`},
+          max_attempts => 2
+        )
+      `);
+    });
+
+    this.logger.log({ sessionId, userId: user.id }, 'ingestion retry enqueued');
+    return { status: 'retry-enqueued', sessionId };
+  }
 }

@@ -10,7 +10,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
-import { callTypeEnum, endReasonEnum } from './enums.js';
+import { callTypeEnum, endReasonEnum, ingestionStatusEnum } from './enums.js';
 import { agents } from './identity.js';
 
 export const callTranscripts = pgTable(
@@ -37,6 +37,8 @@ export const callTranscripts = pgTable(
       .default(sql`ARRAY[]::text[]`),
     cancelled: boolean('cancelled').notNull().default(false),
     endReason: endReasonEnum('end_reason'),
+    ingestionStatus: ingestionStatusEnum('ingestion_status').notNull().default('pending'),
+    ingestionError: text('ingestion_error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

@@ -7,6 +7,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { AudioManager } from 'react-native-audio-api';
+import {
+  type CallSnapshot,
+  clearCallSnapshot,
+  recoverCall,
+  saveCallSnapshot,
+} from '../callRecovery';
 import { supabase } from '../supabase';
 import { useCallStore } from '../useCallStore';
 import { type AudioInputHandle, createAudioInput } from './audio-input';
@@ -43,12 +49,31 @@ export function useCall(): UseCallResult {
   const appStateSubRef = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
   const generationRef = useRef(0);
 
+  const callTypeRef = useRef<CallType>('generic');
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Persist a snapshot of the active call so a force-quit / network drop /
+  // background suspend can be recovered on next launch (or right now via
+  // the AppState 'background' handler below).
+  const persistSnapshot = useCallback(() => {
+    const sessionId = sessionIdRef.current;
+    const startedAt = startedAtRef.current;
+    if (!sessionId || !startedAt) return;
+    const snapshot: CallSnapshot = {
+      sessionId,
+      startedAt: startedAt.toISOString(),
+      lastTouched: new Date().toISOString(),
+      transcript: transcriptRef.current.getAll(),
+      callType: callTypeRef.current,
+    };
+    void saveCallSnapshot(snapshot);
+  }, []);
+
   const refreshTranscript = useCallback(() => {
     setTranscript(transcriptRef.current.getAll());
-  }, []);
+    persistSnapshot();
+  }, [persistSnapshot]);
 
   const teardown = useCallback(() => {
     inputRef.current?.stop();
@@ -67,6 +92,7 @@ export function useCall(): UseCallResult {
   const start = useCallback(async (opts?: { callType?: CallType }) => {
     const gen = ++generationRef.current;
     const callType: CallType = opts?.callType ?? 'generic';
+    callTypeRef.current = callType;
     setError(null);
     transcriptRef.current.reset();
     setTranscript([]);
@@ -88,6 +114,9 @@ export function useCall(): UseCallResult {
       const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
       sessionIdRef.current = sessionId;
       startedAtRef.current = new Date();
+      // Initial snapshot: now if the app dies before we ever get a transcript
+      // turn, we still have something to recover with.
+      persistSnapshot();
 
       if (gen !== generationRef.current) return; // stale
 
@@ -195,12 +224,36 @@ export function useCall(): UseCallResult {
       input.onFrame((b64) => session.sendAudio(b64));
       await input.start();
 
-      // 6. Resume hook for background → foreground transitions.
-      appStateSubRef.current = AppState.addEventListener('change', (state: AppStateStatus) => {
-        if (state === 'active' && outputRef.current) {
-          // No-op for now; AudioContext may need explicit resume in some cases.
-        }
-      });
+      // 6. AppState handler. When iOS suspends us the WebSocket is going to
+      // die anyway — get ahead of it: tear down cleanly and POST /end with
+      // end_reason='app_backgrounded' so the transcript is preserved and
+      // ingestion can run.
+      appStateSubRef.current = AppState.addEventListener(
+        'change',
+        (state: AppStateStatus) => {
+          if (state !== 'background' && state !== 'inactive') return;
+          if (useCallStore.getState().status !== 'connected') return;
+          const sessionId = sessionIdRef.current;
+          const startedAt = startedAtRef.current;
+          if (!sessionId || !startedAt) return;
+          const snapshot: CallSnapshot = {
+            sessionId,
+            startedAt: startedAt.toISOString(),
+            lastTouched: new Date().toISOString(),
+            transcript: transcriptRef.current.getAll(),
+            callType: callTypeRef.current,
+          };
+          generationRef.current++; // invalidate any in-flight start
+          teardown();
+          useCallStore.getState().reset();
+          void recoverCall(snapshot, 'app_backgrounded')
+            .then(() => clearCallSnapshot())
+            .catch((err) => {
+              console.warn('[useCall] background recovery failed', err);
+              // Snapshot stays on disk — the launch sweep will retry.
+            });
+        },
+      );
 
       // 7. Kick the model off. The cue routes through the system prompt — for
       // onboarding it triggers the structured self-intro + opener; for generic
@@ -215,7 +268,7 @@ export function useCall(): UseCallResult {
       teardown();
       useCallStore.getState().markDropped();
     }
-  }, [refreshTranscript, teardown]);
+  }, [persistSnapshot, refreshTranscript, teardown]);
 
   const end = useCallback(async () => {
     generationRef.current++; // invalidate any in-flight start
@@ -228,14 +281,17 @@ export function useCall(): UseCallResult {
 
     teardown();
 
-    if (!sessionId || !startedAt) return;
+    if (!sessionId || !startedAt) {
+      void clearCallSnapshot();
+      return;
+    }
 
     try {
       const { data } = await supabase.auth.getSession();
       const jwt = data.session?.access_token;
       if (!jwt) return;
 
-      await fetch(`${API_URL}/calls/${sessionId}/end`, {
+      const r = await fetch(`${API_URL}/calls/${sessionId}/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
         body: JSON.stringify({
@@ -245,9 +301,15 @@ export function useCall(): UseCallResult {
           end_reason: 'user_ended',
         }),
       });
+      // Only clear the snapshot once the server has accepted the close.
+      // If /end failed, the snapshot stays on disk so the launch sweep can
+      // retry next time.
+      if (r.ok) {
+        await clearCallSnapshot();
+      }
     } catch {
       // Server preserved the transcript at /start; failure here is non-fatal.
-      // Telemetry hookup pending dedicated observability service.
+      // Snapshot stays on disk for the launch sweep to retry.
     }
   }, [refreshTranscript, teardown]);
 
