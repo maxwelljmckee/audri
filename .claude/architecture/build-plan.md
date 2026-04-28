@@ -180,6 +180,23 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
+## Slice 6.5 — Resilience (call ingestion failure modes)
+
+**Goal:** stop bleeding ingestion failures. Surface partial / failed state to the user + the conversational agent so dropped or broken calls don't disappear.
+
+- ⏺️ Server: any non-`user_ended` call ends still POST `/calls/:id/end` from the client (network drop, app backgrounded, force-quit recovery on next launch). Transcript flagged `incomplete=true` (or via `end_reason` enum) in `call_transcripts`.
+- ⏺️ Server: `call_transcripts.ingestion_status` enum (`pending` / `succeeded` / `failed` / `partial`) — worker writes back on success/fail; pre-fan-out reads it for retry visibility.
+- ⏺️ Mobile: app-launch sweep — any in-flight call_transcripts row with no `ended_at` whose session is older than threshold gets a "looks like your last call cut off — submit transcript anyway?" prompt; on confirm, POSTs the locally-cached transcript.
+- ⏺️ Server: preload module surfaces incomplete-but-ingested calls so the next generic call can offer "seems like we got cut off on our last call about X — do we need to wrap up?"
+- ⏺️ Mobile: Wiki/Activity surface shows ingestion-failed calls with a manual retry button → `POST /calls/:id/retry-ingest`.
+- ⏺️ Worker: more retry-tolerant Pro fan-out (idempotency keys to avoid duplicate sections on retry; bumped `max_attempts` once retries are safe).
+
+**Demo:** kill the app mid-call → relaunch → prompted to submit the transcript → ingestion runs → next call opens with "want to pick up where we left off?"
+
+**Estimated:** 1–2 days. Mostly client-side robustness + a small schema addition + a preload extension.
+
+---
+
 ## Slice 7 — Research plugin end-to-end
 
 **Goal:** first agent_task kind shipped. User can request research and get a result.

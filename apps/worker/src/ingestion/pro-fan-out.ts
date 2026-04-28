@@ -319,7 +319,23 @@ If the user developed a framework over multiple turns, write a section that capt
 
 Every \`create\` section AND every \`update\` section that carries a content change MUST include a \`snippets\` array with one or more { turn_id, text } entries tying the write to a transcript passage. Sections kept-as-is (referenced only by id, no content change) do NOT require snippets.
 
-NEVER fabricate turn_ids — every turn_id MUST appear verbatim in the input transcript.`;
+NEVER fabricate turn_ids — every turn_id MUST appear verbatim in the input transcript.
+
+## 8. Writing voice
+
+Wiki content is written for the user, not about the user — so action-oriented prose, not 3rd-person narration. Specifically:
+- **Default to omitting pronouns.** Lead with verbs and noun phrases. "Founded Consensus in 2024 with Sarah Chen." NOT "He/they/the user founded Consensus in 2024 with Sarah Chen."
+- **Use first-person ("I", "my") only when needed for clarity** — e.g., when distinguishing the user from another entity in the same sentence, or where omitting the subject is genuinely ambiguous.
+- **NEVER use 3rd person ("the user", "they", "he/she") to refer to the user.** That voice belongs in agent-scope notes, not user-facing wiki content.
+- **Examples:**
+  - ✅ "Working on Consensus full-time since March 2025."
+  - ❌ "The user is working on Consensus full-time since March 2025."
+  - ✅ "Goal: scale human alignment via consensus-as-infrastructure."
+  - ❌ "Their goal is to scale human alignment via consensus-as-infrastructure."
+  - ✅ "My role is technical co-founder; Sarah handles product." (first-person for the contrast)
+  - ❌ "The user's role is technical co-founder while Sarah handles product."
+
+Apply the same voice to \`abstract\` and \`agent_abstract\` fields. Section titles stay declarative phrases ("Why consensus matters", "Current role"), unaffected.`;
 
 export interface ProFanOutInput {
   transcript: IngestionTranscriptTurn[] & { id?: string }[];

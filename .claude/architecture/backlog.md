@@ -33,6 +33,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Text mode (chat) | P0 | M | Feature | Text-based parallel to Call mode; same agent scaffolding, different I/O plumbing. Transcripts same shape as voice. Voice-first users can't always talk (meetings, noisy environments). Source: §9. |
 | Ask mode | P2 | M | Feature | Short-question/short-answer path, lighter than full Call. Entry from anywhere in the app. Source: §9. |
 | Note mode | P2 | M | Feature | Voice-to-transcript-to-KG bypassing dialogue. Shares ingestion pipeline. Source: §9. |
+| Onboarding modes (long vs short + expectation-setting phase) | P0 | L | Feature + UX | Today's onboarding has one track. Split based on the user's current context — limited time/patience vs. more time/patience. Short mode focuses on discovering immediate needs to deliver fast value, then queues an "incomplete" state so subsequent calls can backfill the rest. Long mode is today's life-history-first interview. Adds a 3rd phase to the onboarding flow: **Self-Introduction → Expectation-Setting → User Interview**. Expectation-Setting evaluates which mode fits + banks trust by giving the user agency. Tied to a fourth core UX principle: **Control / Confidence / Autonomy** (alongside Proactiveness + Transparency). Long-term: an "Onboarding Checklist" surface that nudges users to keep setting up (plugins installed, connectors connected) until a threshold is met. Source: post-slice-6 retrospective. |
 
 ### Plugin capabilities (beyond MVP `research`)
 
@@ -250,6 +251,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
 | Agent persona-editing UX | P1 | M | UX | Rename, voice picker, `user_prompt_notes` editor. Source: §15b. |
+| Agent-level config levers | P1 | L | UX + Infra | Per-agent overrides for prompt-influenced behavior — currently shipped as MVP defaults baked into the seed persona + scaffolding. Levers to expose: **writing voice** (3rd-person vs action-oriented; default action-oriented at MVP), **verbosity** (terse → verbose; default lightly terse with carve-out for explanatory contexts), **tone** (neutral → expressive; default mid-neutral, less "AI assistant cheery"), **voice** (Gemini voice id; column already exists, no UI), **persona prompt overrides** (`user_prompt_notes` already on schema). Stored on `agents` row; injected into composeSystemPrompt at call-start. Source: slice 6 prompt-tuning iterations. |
 
 ### Mobile-app polish (spawned from `specs/mobile-app.md`)
 
@@ -291,6 +293,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
+| Guardrails — defense-in-depth gating | P0 | XL | Security | All MVP design effort to date has been about what Audri *can* do. Companion track: defining what users **must not** be able to do. Multi-layer enforcement (model-side prompt restrictions + server-side validation + plugin-level allow/deny). No detail yet — track as a known gap to scope before public launch. Source: post-slice-6 retrospective. |
 | RLS policy set | P0 | M | Security | Write the actual policies per table including write paths. Source: §3. |
 | Agent-scope leak-prevention tests | P0 | M | Security | Test suite + audit trail for any endpoint that could return agent-scope content. Source: §3, §20. |
 | Cross-agent leakage tests | P1 | S | Security | Verify per-agent partitioning; agent A can't read agent B's subtree. Source: `specs/agents-and-scope.md`, §20. |
@@ -355,6 +358,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Artifact tombstone cascade for cited wiki sections | P3 | S | Tech debt | Wiki sections keep snippet + null the `ancestor_id`. Revisit if this causes UI weirdness. |
 | Abstract regeneration on cosmetic-only edits | P2 | S | Tech debt | Decide whether pure reorders/metadata edits trigger abstract regen. Cost-driven. Source: §4. |
 | Per-entity polymorphic artifact table | P3 | M | Tech debt | Reconsider if per-kind junction tables proliferate and share ~80% schema. Unlikely. Source: tradeoffs. |
+| Canonical conditional context / prompt-forking system | P2 | L | Tech debt | Today's `composeSystemPrompt` branches by `call_type` ('generic' \| 'onboarding') with hand-written scaffolding per branch. As more conditional contexts arrive (research-task spawn, todo-spawn, mid-call agent switch, onboarding-resumption, plugin-context overlays), the branching will outgrow the if/else shape. Revisit when there are ~3+ conditional contexts in production and the pain becomes concrete — likely a registry-style prompt-layer composer. Source: post-slice-6 retrospective. |
 
 ---
 
