@@ -2,7 +2,9 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ProfileOverlay } from '../components/ProfileOverlay';
 import { ResearchOverlay } from '../components/ResearchOverlay';
+import { TodosOverlay } from '../components/TodosOverlay';
 import { WikiOverlay } from '../components/WikiOverlay';
 import '../global.css';
 
@@ -19,6 +21,8 @@ export default function RootLayout() {
           plugin-overlay store. */}
       <WikiOverlay />
       <ResearchOverlay />
+      <ProfileOverlay />
+      <TodosOverlay />
     </SafeAreaProvider>
   );
 }

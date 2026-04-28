@@ -127,6 +127,77 @@ export interface ResearchOutputDoc {
   tombstoned_at: string | null;
 }
 
+// Mirrors the agent_tasks Postgres row. Sync exists primarily so plugin
+// overlays can render in-flight placeholders for queued / running tasks.
+// Once a task succeeds, its result_artifact lands in the corresponding
+// kind-specific collection (research_outputs today; podcasts / etc. V1+).
+export interface AgentTaskDoc {
+  id: string;
+  user_id: string;
+  todo_page_id: string;
+  agent_id: string | null;
+  kind: string;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  priority: number;
+  scheduled_for: string;
+  started_at: string | null;
+  completed_at: string | null;
+  retry_count: number;
+  last_error: string | null;
+  graphile_job_id: string | null;
+  result_artifact_kind: string | null;
+  result_artifact_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const agentTaskSchema: RxJsonSchema<AgentTaskDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    user_id: { type: 'string', maxLength: 36 },
+    todo_page_id: { type: 'string', maxLength: 36 },
+    agent_id: { type: ['string', 'null'] },
+    // Indexed for filtering by kind + status; bound length to keep the index
+    // bounded.
+    kind: { type: 'string', maxLength: 32 },
+    payload: { type: 'object' },
+    status: {
+      type: 'string',
+      enum: ['pending', 'running', 'succeeded', 'failed', 'cancelled'],
+      maxLength: 16,
+    },
+    priority: { type: 'number', minimum: 0, maximum: 10, multipleOf: 1 },
+    scheduled_for: { type: 'string', maxLength: 32 },
+    started_at: { type: ['string', 'null'] },
+    completed_at: { type: ['string', 'null'] },
+    retry_count: { type: 'number', minimum: 0 },
+    last_error: { type: ['string', 'null'] },
+    graphile_job_id: { type: ['string', 'null'] },
+    result_artifact_kind: { type: ['string', 'null'] },
+    result_artifact_id: { type: ['string', 'null'] },
+    created_at: { type: 'string', maxLength: 32 },
+    updated_at: { type: 'string', maxLength: 32 },
+  },
+  required: [
+    'id',
+    'user_id',
+    'todo_page_id',
+    'kind',
+    'payload',
+    'status',
+    'priority',
+    'scheduled_for',
+    'retry_count',
+    'created_at',
+    'updated_at',
+  ],
+  indexes: ['kind', 'status', ['kind', 'status', 'updated_at']],
+};
+
 export const researchOutputSchema: RxJsonSchema<ResearchOutputDoc> = {
   version: 0,
   primaryKey: 'id',

@@ -84,13 +84,21 @@ export default function HomeScreen() {
             icon="library-outline"
             onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
           />
-          <PluginTile label="Todos" icon="checkbox-outline" />
+          <PluginTile
+            label="Todos"
+            icon="checkbox-outline"
+            onPressWithOrigin={(origin) => showOverlay('todos', origin)}
+          />
           <PluginTile
             label="Research"
             icon="search-outline"
             onPressWithOrigin={(origin) => showOverlay('research', origin)}
           />
-          <PluginTile label="Profile" icon="person-circle-outline" />
+          <PluginTile
+            label="Profile"
+            icon="person-circle-outline"
+            onPressWithOrigin={(origin) => showOverlay('profile', origin)}
+          />
         </View>
 
         <View style={styles.fabRow}>

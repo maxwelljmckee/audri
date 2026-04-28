@@ -219,27 +219,32 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
-## Slice 8 — Todos + Profile plugin surfaces
+## Slice 8 — Todos + Profile plugin surfaces (✅ done 2026-04-28)
 
 **Goal:** all 4 MVP plugin tiles functional.
 
-- ⏺️ **Decision point: introduce `todos` sidecar table** (per backlog "First-class entity sidecars" — typed columns for `due_date`, `priority`, `recurrence_rule`, `completed_at` joined 1:1 to `wiki_pages` on `page_id`). Triggered by the first feature here that needs an indexed query against a typed column (e.g. "due this week" filtering). Until then todos can ride pure wiki_pages + frontmatter; the moment that breaks, land the sidecar.
-- ⏺️ Mobile: Todos plugin overlay
-  - Projection over `wiki_pages WHERE type='todo'` joined with `agent_tasks` (and `todos` sidecar once it exists)
-  - Status tabs (todo / in-progress / done / archived)
-  - Check-off → reparent to `done` bucket (write to `wiki_pages.parent_page_id`)
-  - Show agent-task status for agent-assigned todos (running / succeeded / failed)
-  - Sub-tasks via hierarchy
-  - Manual create-todo affordance
-- ⏺️ Mobile: Profile plugin overlay
-  - Browse profile root + 9 children
-  - Render section content as markdown
-  - Edit affordance on user-scope pages
-- ⏺️ Mobile: greeting subtext updated to reflect actual user activity if appropriate (or omitted, per design decision)
+- ✴️ **Decision point: introduce `todos` sidecar table** — not triggered yet; current Todos overlay rides pure wiki_pages without typed columns. Land when the first feature needs an indexed query against `due_date`/`priority`/etc.
+- ✅ Mobile: Todos plugin overlay (`components/todos/TodosNavigation.tsx`)
+  - Projection over `wiki_pages WHERE type='todo'` joined live with active `agent_tasks`
+  - Status tabs (To do / In progress / Done / Archived) with per-bucket counts
+  - Check-off → reparent via direct RxDB `.patch()` on `parent_page_id` (RLS already permits user-scope page UPDATEs)
+  - **Running** agent_task status surfaced inline: row checkbox swaps for a spinner + "Researching now / Queued · usually 1–3 min" subtext
+  - Manual create-todo affordance via new `POST /todos` endpoint (RLS gates client INSERT on wiki_pages)
+- ✅ Mobile: Profile plugin overlay (`components/profile/ProfileNavigation.tsx`) — browse profile root + 9 children, markdown render via `WikiPageDetail`, edit affordance on user-scope pages
+- ✅ Bonus (P0 backlog item, landed proactively): **Pending-artifact placeholders pattern**
+  - Migration `0009_agent_tasks_rls_realtime.sql` enables RLS + realtime + `_deleted` on `agent_tasks` (applied 2026-04-28 via pooler)
+  - New `agent_tasks` RxDB collection + replication + `useActiveAgentTasks(kind)` hook
+  - Research overlay shows pending tasks pinned at top of list with spinner; Todos overlay shows live state on the matching todo row
 
-**Demo:** finish a call with commitments → see todos appear in Todos overlay → check one off, persists. View profile pages and edit.
+**Punted to V1+ (logged in `backlog.md`):**
+- Sub-tasks via hierarchy rendering (P2)
+- Failed agent_task surfacing on todo rows (P1)
+- Failed-ingestion retry UI button (P1; endpoint exists)
+- Greeting-subtext live-activity reflection (P3)
 
-**Estimated:** 4–6 days. Todos UX has surprising complexity (status transitions, agent-task display); Profile is simpler.
+**Demo:** finish a call with commitments → see the in-flight research as a pending row in Research overlay AND as a spinner on the matching Todos row → research completes → row swaps to checkbox + research artifact appears in Research overlay. View profile pages and edit.
+
+**Estimated:** 4–6 days. **Actual:** ~3 hours. The pending-placeholder pattern was the most interesting design moment — tied agent_tasks sync to the existing RxDB infra cleanly.
 
 ---
 

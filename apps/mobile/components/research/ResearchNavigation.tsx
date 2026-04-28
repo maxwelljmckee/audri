@@ -17,6 +17,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { AgentTaskDoc, ResearchOutputDoc } from '../../lib/rxdb/schemas';
+import { useActiveAgentTasks } from '../../lib/rxdb/useAgentTasks';
 import { useResearchOutputs } from '../../lib/rxdb/useResearchOutputs';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { spawnResearch } from '../../lib/spawnResearch';
@@ -41,9 +43,17 @@ export function ResearchStack() {
   );
 }
 
+// Discriminated row data so a single FlatList can render both pending tasks
+// (queued/running, no artifact yet) and completed outputs without two parallel
+// lists (which would each have their own scrolling region — bad UX).
+type RowData =
+  | { kind: 'pending'; task: AgentTaskDoc }
+  | { kind: 'output'; output: ResearchOutputDoc };
+
 function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamList, 'List'>) {
   const ready = useRxdbReady();
   const outputs = useResearchOutputs();
+  const pendingTasks = useActiveAgentTasks('research');
 
   if (!ready) {
     return (
@@ -53,6 +63,14 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
     );
   }
 
+  // Pending rows always pin to the top so users can see queued work without
+  // scrolling. Once a task succeeds it falls out of pendingTasks (terminal
+  // statuses excluded) and the matching research_output appears in `outputs`.
+  const rows: RowData[] = [
+    ...pendingTasks.map((task) => ({ kind: 'pending' as const, task })),
+    ...outputs.map((output) => ({ kind: 'output' as const, output })),
+  ];
+
   return (
     <View style={styles.flex}>
       <Pressable style={styles.spawnRow} onPress={() => navigation.push('Spawn')}>
@@ -60,8 +78,8 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
         <Text style={styles.spawnRowLabel}>New research</Text>
       </Pressable>
       <FlatList
-        data={outputs}
-        keyExtractor={(o) => o.id}
+        data={rows}
+        keyExtractor={(r) => (r.kind === 'pending' ? `task:${r.task.id}` : `out:${r.output.id}`)}
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -70,28 +88,52 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
             </Text>
           </View>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.row}
-            onPress={() => navigation.push('Detail', { researchOutputId: item.id })}
-          >
-            <View style={styles.rowMain}>
-              <Text style={styles.rowTitle} numberOfLines={2}>
-                {item.title || item.query}
-              </Text>
-              <Text style={styles.rowQuery} numberOfLines={2}>
-                {item.query}
-              </Text>
-              <Text style={styles.rowMeta}>
-                {new Date(item.generated_at).toLocaleDateString()} · {item.findings.length}{' '}
-                finding{item.findings.length === 1 ? '' : 's'} · {item.citations.length} source
-                {item.citations.length === 1 ? '' : 's'}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#3f5a83" />
-          </Pressable>
-        )}
+        renderItem={({ item }) =>
+          item.kind === 'pending' ? (
+            <PendingRow task={item.task} />
+          ) : (
+            <Pressable
+              style={styles.row}
+              onPress={() => navigation.push('Detail', { researchOutputId: item.output.id })}
+            >
+              <View style={styles.rowMain}>
+                <Text style={styles.rowTitle} numberOfLines={2}>
+                  {item.output.title || item.output.query}
+                </Text>
+                <Text style={styles.rowQuery} numberOfLines={2}>
+                  {item.output.query}
+                </Text>
+                <Text style={styles.rowMeta}>
+                  {new Date(item.output.generated_at).toLocaleDateString()} ·{' '}
+                  {item.output.findings.length} finding
+                  {item.output.findings.length === 1 ? '' : 's'} · {item.output.citations.length}{' '}
+                  source{item.output.citations.length === 1 ? '' : 's'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#3f5a83" />
+            </Pressable>
+          )
+        }
       />
+    </View>
+  );
+}
+
+function PendingRow({ task }: { task: AgentTaskDoc }) {
+  const query =
+    typeof task.payload?.query === 'string' ? (task.payload.query as string) : '(unknown)';
+  const label = task.status === 'running' ? 'Researching now' : 'Queued';
+  return (
+    <View style={[styles.row, styles.pendingRow]}>
+      <View style={styles.pendingSpinner}>
+        <ActivityIndicator color="#4d8fdb" />
+      </View>
+      <View style={styles.rowMain}>
+        <Text style={styles.rowTitle} numberOfLines={2}>
+          {query}
+        </Text>
+        <Text style={styles.rowMeta}>{label} · usually 1–3 min</Text>
+      </View>
     </View>
   );
 }
@@ -207,6 +249,14 @@ const styles = StyleSheet.create({
   rowTitle: { color: '#e8f1ff', fontSize: 15, fontWeight: '600' },
   rowQuery: { color: '#7aa3d4', fontSize: 12, lineHeight: 16, fontStyle: 'italic' },
   rowMeta: { color: '#7aa3d4', fontSize: 12, marginTop: 2 },
+  pendingRow: { backgroundColor: '#0e1c30' },
+  pendingSpinner: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
   spawnBody: { padding: 16, gap: 12, flex: 1 },
   spawnTitle: { color: '#e8f1ff', fontSize: 18, fontWeight: '600' },
   spawnHint: { color: '#7aa3d4', fontSize: 13, lineHeight: 18 },

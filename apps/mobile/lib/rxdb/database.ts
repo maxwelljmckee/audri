@@ -9,9 +9,11 @@ import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 import {
+  type AgentTaskDoc,
   type ResearchOutputDoc,
   type WikiPageDoc,
   type WikiSectionDoc,
+  agentTaskSchema,
   researchOutputSchema,
   wikiPageSchema,
   wikiSectionSchema,
@@ -23,11 +25,13 @@ addRxPlugin(RxDBQueryBuilderPlugin);
 export type WikiPageCollection = RxCollection<WikiPageDoc>;
 export type WikiSectionCollection = RxCollection<WikiSectionDoc>;
 export type ResearchOutputCollection = RxCollection<ResearchOutputDoc>;
+export type AgentTaskCollection = RxCollection<AgentTaskDoc>;
 
 export interface AudriCollections {
   wiki_pages: WikiPageCollection;
   wiki_sections: WikiSectionCollection;
   research_outputs: ResearchOutputCollection;
+  agent_tasks: AgentTaskCollection;
 }
 
 export type AudriDatabase = RxDatabase<AudriCollections>;
@@ -46,6 +50,7 @@ export function getDatabase(): Promise<AudriDatabase> {
         wiki_pages: { schema: wikiPageSchema },
         wiki_sections: { schema: wikiSectionSchema },
         research_outputs: { schema: researchOutputSchema },
+        agent_tasks: { schema: agentTaskSchema },
       });
       return db;
     })();

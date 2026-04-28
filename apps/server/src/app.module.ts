@@ -6,6 +6,7 @@ import { HealthModule } from './health/health.module.js';
 import { MeModule } from './me/me.module.js';
 import { SeedModule } from './seed/seed.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
+import { TodosModule } from './todos/todos.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
 
 @Module({
@@ -39,6 +40,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
     MeModule,
     CallsModule,
     TasksModule,
+    TodosModule,
   ],
 })
 export class AppModule {}

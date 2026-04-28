@@ -65,13 +65,25 @@ export function startReplication(): Promise<ReplicationHandle> {
       pull: { batchSize: 50, lastModifiedField: 'generated_at' },
     });
 
+    // agent_tasks is read-only too. Drives the in-flight placeholder UX in
+    // each plugin overlay (research / podcast / etc.) so users see queued
+    // work instead of a blank list while their task generates.
+    const agentTasksRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.agent_tasks,
+      replicationIdentifier: `audri:agent_tasks:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 100, lastModifiedField: 'updated_at' },
+    });
+
     _active = {
-      replications: [wikiPagesRepl, wikiSectionsRepl, researchOutputsRepl],
+      replications: [wikiPagesRepl, wikiSectionsRepl, researchOutputsRepl, agentTasksRepl],
       stop: async () => {
         await Promise.all([
           wikiPagesRepl.cancel(),
           wikiSectionsRepl.cancel(),
           researchOutputsRepl.cancel(),
+          agentTasksRepl.cancel(),
         ]);
         _active = null;
       },
