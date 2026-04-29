@@ -19,6 +19,7 @@
 // commit + the at-least-once semantics being acceptable for MVP.
 
 import { callTranscripts, db, eq } from '@audri/shared/db';
+import { capture, isFeatureEnabled } from '@audri/shared/posthog';
 import type { Task } from 'graphile-worker';
 import { logger } from '../logger.js';
 import { runAgentScopeIngestion } from '../ingestion/agent-scope.js';
@@ -41,6 +42,25 @@ export const ingestion: Task = async (payload, helpers) => {
   const p = payload as IngestionPayload;
   const log = (msg: string, extra: Record<string, unknown> = {}) =>
     logger.info({ jobId: helpers.job.id, transcriptId: p.transcriptId, ...extra }, msg);
+
+  // ── KILL SWITCH ─────────────────────────────────────────────────────────
+  // PostHog feature flag `ingestion_enabled`. Defaults to enabled on flag
+  // resolution failure (network down, key missing, flag undefined) — the
+  // switch is for explicit disable, not for accidentally bricking the
+  // pipeline. Throws so graphile retries; if you really want to stop
+  // ingestion, leave the flag off and the retries will burn through their
+  // attempts harmlessly (or pause the queue another way).
+  const ingestEnabled = await isFeatureEnabled('ingestion_enabled', p.userId);
+  if (ingestEnabled === false) {
+    log('ingestion disabled by feature flag — skip');
+    capture(p.userId, 'ingestion.skipped_by_flag', { transcriptId: p.transcriptId });
+    return;
+  }
+
+  capture(p.userId, 'ingestion.started', {
+    transcriptId: p.transcriptId,
+    jobId: helpers.job.id,
+  });
 
   // 1. Fetch transcript.
   const [transcriptRow] = await db
@@ -117,6 +137,11 @@ export const ingestion: Task = async (payload, helpers) => {
         .update(callTranscripts)
         .set({ ingestionStatus: 'failed', ingestionError: message })
         .where(eq(callTranscripts.id, p.transcriptId));
+      capture(p.userId, 'ingestion.failed', {
+        transcriptId: p.transcriptId,
+        attempts: helpers.job.attempts ?? 1,
+        error: message.slice(0, 200),
+      });
     }
     throw userScopeResult.reason;
   }
@@ -125,6 +150,12 @@ export const ingestion: Task = async (payload, helpers) => {
     .update(callTranscripts)
     .set({ ingestionStatus: 'succeeded', ingestionError: null })
     .where(eq(callTranscripts.id, p.transcriptId));
+
+  capture(p.userId, 'ingestion.succeeded', {
+    transcriptId: p.transcriptId,
+    userScope: userScopeResult.status,
+    agentScope: agentScopeResult.status,
+  });
 };
 
 async function runUserScopePipeline(

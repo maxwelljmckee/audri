@@ -15,6 +15,7 @@
     "preview": {
       "distribution": "store",
       "channel": "preview",
+      "autoIncrement": true,
       "ios": {
         "resourceClass": "m-medium"
       },

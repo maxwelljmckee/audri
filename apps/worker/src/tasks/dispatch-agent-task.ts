@@ -10,6 +10,7 @@
 //   - On success → commit handler result + mark status='succeeded'
 
 import { agentTasks, db, eq, sql } from '@audri/shared/db';
+import { capture, isFeatureEnabled } from '@audri/shared/posthog';
 import type { Task } from 'graphile-worker';
 import { logger } from '../logger.js';
 import { commitResearchOutput } from '../research/commit.js';
@@ -39,11 +40,32 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
     return;
   }
 
+  // ── KILL SWITCH ─────────────────────────────────────────────────────────
+  // Per-kind feature flag: `research_enabled` for research, etc. Keeps the
+  // task in 'pending' so a re-enable resumes work — we don't mark cancelled
+  // since the user didn't ask to cancel. Throws so graphile retries; the
+  // retries will bounce off the same flag check until it flips on.
+  const flagKey = `${task.kind}_enabled`;
+  const kindEnabled = await isFeatureEnabled(flagKey, task.userId);
+  if (kindEnabled === false) {
+    log('agent_task kind disabled by feature flag — skip', { kind: task.kind });
+    capture(task.userId, 'agent_task.skipped_by_flag', {
+      kind: task.kind,
+      agentTaskId: task.id,
+    });
+    return;
+  }
+
   // Mark in-flight.
   await db
     .update(agentTasks)
     .set({ status: 'running', startedAt: new Date(), updatedAt: new Date() })
     .where(eq(agentTasks.id, task.id));
+
+  capture(task.userId, 'agent_task.started', {
+    kind: task.kind,
+    agentTaskId: task.id,
+  });
 
   try {
     if (task.kind === 'research') {
@@ -63,6 +85,12 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
         result,
       });
       log('research commit complete');
+      capture(task.userId, 'agent_task.succeeded', {
+        kind: task.kind,
+        agentTaskId: task.id,
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+      });
     } else {
       throw new Error(`unknown agent_task kind: ${task.kind}`);
     }
@@ -81,6 +109,12 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
           updatedAt: new Date(),
         })
         .where(eq(agentTasks.id, task.id));
+      capture(task.userId, 'agent_task.failed', {
+        kind: task.kind,
+        agentTaskId: task.id,
+        attempts: helpers.job.attempts ?? 1,
+        error: message.slice(0, 200),
+      });
     } else {
       await db
         .update(agentTasks)

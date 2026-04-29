@@ -24,18 +24,19 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 
 ---
 
-## Currently outstanding (slice-9 close-out — 2026-04-28)
+## Currently outstanding (post-MVP-launch — 2026-04-29)
 
-Open carry-overs at end of MVP code-complete:
+MVP is on TestFlight. Closed beta begins from this build. Items remaining:
 
-- **Manual: slice 6.5 resilience flow validation** — kill-app-mid-call + AppState-background recovery paths. Code shipped, unverified on device. Needs Max + a phone.
-- **Manual: Sentry smoke test** — DSNs added for all three projects (`audri-server`, `audri-worker`, `audri-mobile`); verify capture by hitting `/health/sentry-test` with `X-Sentry-Test: $SUPABASE_WEBHOOK_SECRET` once redeploys are in.
-- **EAS Build + TestFlight** — blocked on Apple Developer enrollment.
-- **Mobile Sentry source-map upload** — gated on EAS, see "Environments" subsection.
-- **PostHog feature flags** — needs PostHog project key to wire; see "Observability expansion" subsection.
-- **Render staging environment** — see "Environments" subsection.
+- ✅ **Slice 6.5 resilience flow validation** — verified on device 2026-04-29.
+- ✅ **Sentry smoke test (all 3 projects)** — verified 2026-04-29 (server, worker via organic capture, mobile).
+- ✅ **EAS Build + TestFlight** — first build live 2026-04-29 (`com.talktoaudri.audri` 0.1.0).
+- ⏺️ **Mobile Sentry source-map upload** — secrets set, not yet validated end-to-end (will confirm on first prod crash).
+- 🔵 **PostHog feature flags** — wiring in progress 2026-04-29.
 
-These are all dashboards / external-account / on-device tasks. None require additional code work to begin (PostHog will need code once the key arrives).
+**Punted explicitly to V1+ (per Max 2026-04-29):**
+- **All service environment splits** (Supabase dev/prod, Render staging) — single-environment MVP for closed beta. V1 brings env split as part of opening to non-Max users. See "Environments" subsection.
+- **Vitest test runner + cross-agent leakage tests** — scaffolds exist (`apps/server/src/__tests__/rls-leakage.test.ts`); install + wire in V1. Manual smoke tests + service_role bypass architecture mean leakage is structurally hard at MVP scale.
 
 ---
 

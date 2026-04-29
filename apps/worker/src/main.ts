@@ -1,3 +1,4 @@
+import { shutdownPosthog } from '@audri/shared/posthog';
 import { run } from 'graphile-worker';
 import { logger } from './logger.js';
 import { initSentry } from './observability/sentry.js';
@@ -41,6 +42,9 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'shutdown received — stopping');
     clearInterval(interval);
     await runner.stop();
+    // Flush any buffered PostHog events before exit so we don't drop the
+    // last batch on graceful restart.
+    await shutdownPosthog();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
