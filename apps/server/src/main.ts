@@ -1,13 +1,13 @@
+// MUST be the very first import. Sentry SDK v8 requires init before any
+// other instrumented modules (Express, http, undici, …) are loaded.
+import './instrument.js';
 import 'reflect-metadata';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 import { SentryExceptionFilter } from './observability/sentry-exception.filter.js';
-import { initSentry } from './observability/sentry.js';
 
 async function bootstrap() {
-  initSentry();
-
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
 

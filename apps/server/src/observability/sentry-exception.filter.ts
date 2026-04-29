@@ -14,7 +14,13 @@ export class SentryExceptionFilter extends BaseExceptionFilter implements Except
     const status =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     if (status >= 500) {
-      Sentry.captureException(exception);
+      const eventId = Sentry.captureException(exception);
+      // Diagnostic log — confirms the filter ran AND the SDK accepted the
+      // event. If you see this in Render logs but no event in Sentry, the
+      // problem is between the SDK and Sentry's ingest endpoint (network,
+      // DSN project mismatch, inbound filters, project-level rules).
+      // eslint-disable-next-line no-console
+      console.log('[sentry-filter] captured exception, event id:', eventId, 'status:', status);
     }
     super.catch(exception, host);
   }
