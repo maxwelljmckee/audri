@@ -8,6 +8,7 @@ import { useCallStore } from '../../lib/useCallStore';
 import { firstNameFromUser, timeAwareGreeting } from '../../lib/greeting';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { supabase } from '../../lib/supabase';
+import { Sentry } from '../../lib/sentry';
 import { useCallRecoverySweep } from '../../lib/useCallSweep';
 import { useMe } from '../../lib/useMe';
 import { usePluginOverlay } from '../../lib/usePluginOverlay';
@@ -46,6 +47,17 @@ export default function HomeScreen() {
     await supabase.auth.signOut();
   }
 
+  // Dev-only smoke test for the mobile Sentry wiring. Long-press the avatar
+  // to fire a deliberate exception that should land in the audri-mobile
+  // Sentry project. Stripped from production builds via the __DEV__ guard
+  // (Metro replaces __DEV__ with `false` in release bundles, dead-code-
+  // eliminating the handler).
+  function maybeSentrySmokeTest() {
+    if (!__DEV__) return;
+    Sentry.captureMessage('Sentry mobile smoke test (manual)', 'info');
+    throw new Error('Sentry mobile smoke test — intentional throw');
+  }
+
   function openCall() {
     startCall();
     router.push('/call');
@@ -56,7 +68,7 @@ export default function HomeScreen() {
       <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
         <View style={styles.header}>
           <Text style={styles.wordmark}>Audri</Text>
-          <Pressable onPress={signOut} style={styles.avatar}>
+          <Pressable onPress={signOut} onLongPress={maybeSentrySmokeTest} style={styles.avatar}>
             <Ionicons name="person-outline" size={20} color="#e8f1ff" />
           </Pressable>
         </View>

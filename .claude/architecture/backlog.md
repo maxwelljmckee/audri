@@ -24,6 +24,21 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 
 ---
 
+## Currently outstanding (slice-9 close-out — 2026-04-28)
+
+Open carry-overs at end of MVP code-complete:
+
+- **Manual: slice 6.5 resilience flow validation** — kill-app-mid-call + AppState-background recovery paths. Code shipped, unverified on device. Needs Max + a phone.
+- **Manual: Sentry smoke test** — DSNs added for all three projects (`audri-server`, `audri-worker`, `audri-mobile`); verify capture by hitting `/health/sentry-test` with `X-Sentry-Test: $SUPABASE_WEBHOOK_SECRET` once redeploys are in.
+- **EAS Build + TestFlight** — blocked on Apple Developer enrollment.
+- **Mobile Sentry source-map upload** — gated on EAS, see "Environments" subsection.
+- **PostHog feature flags** — needs PostHog project key to wire; see "Observability expansion" subsection.
+- **Render staging environment** — see "Environments" subsection.
+
+These are all dashboards / external-account / on-device tasks. None require additional code work to begin (PostHog will need code once the key arrives).
+
+---
+
 ## Features
 
 ### Interaction modes
@@ -67,6 +82,8 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Upload sources pipeline | P1 | XL | Feature | URLs, files (PDF/markdown/text), images (OCR + vision), audio. Mirrors transcript flow. Requires Supabase Storage + per-type extraction. Source: features.md, §3, §6. |
 | Feeds as sources (content partnerships) | P2 | XL | Feature | RSS/equivalent ingestion on schedule. Partner revenue-share accounting. Source: §5. |
 | Email ingest (received email as context) | P2 | L | Feature | Inbox as a source stream. Requires Gmail connector read scope. Source: §6, §15. |
+| **Subtree-scoped ingestion** | **P1** | **M** | **Feature + Infra** | Today ingestion's Flash candidate retrieval scans the entire wiki index for the user. For uploads / pasted documents that the user explicitly attaches to a particular project (or any subtree), restrict candidate retrieval + Pro fan-out's writeable surface to that subtree's pages. Avoids: (a) noise (a research paper attached to "Consensus" shouldn't update the user's `profile/health` page just because it touched on biology), (b) cross-project contamination, (c) unnecessary token spend on irrelevant candidates. Implementation sketch: ingestion job payload gains optional `scope_root_page_id`; `fetchUserWikiIndex` filters to descendants of that root; Pro prompt instructed that creates/updates outside the scope are skipped. Pairs with the upload-sources pipeline (above) and the explicit-attach UX. Source: post-slice-8 review. |
+| **Noteworthiness criterion: ephemerality** | **P1** | **S** | **Feature (prompt)** | Pro fan-out's noteworthiness filter currently catches volume noise (single-mention claims, pure speculation) but doesn't gate on **how long the claim matters**. Add an explicit ephemerality dimension to the §2 noteworthiness section: claims should be evaluated on "does this matter in a few hours? tomorrow? next week?" Examples to bake into the prompt: ✅ "I dream of visiting Thailand someday" (durable interest, weeks/months/years horizon) → write to `profile/interests`. ❌ "I'm hungry for a hamburger right now" (ephemeral state, hours horizon) → skip with reason="ephemeral state". Edge cases: a strong feeling tied to an upcoming event ("I'm dreading Monday's review") may straddle — let the prompt note that ephemeral *current state* is skip-worthy but ephemeral *anchored to a durable concern* deserves capture against the relevant durable page (in this case `profile/work`). Source: post-slice-9 review. |
 
 ### Notifications + engagement
 
@@ -103,6 +120,8 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Call resumption after network drop | P2 | L | Feature | Resume or start fresh on reconnect. Source: §8. |
 | Audio retention policy | P2 | M | Data model + Infra | MVP keeps transcript-only. Reconsider raw audio retention if (a) transcript quality issues warrant source-review, (b) users want to replay calls, (c) compliance/audit requires it. Adds Supabase Storage bucket per user, retention policy, playback UI. Source: §8 Chunk 5. |
 | Reconsider "Audri's speech is not a claim source" invariant | P2 | S | Tech debt | MVP excludes agent turns from commitment extraction (per `specs/fan-out-prompt.md` §4.1) to prevent closed-loop hallucination. Reconsider when: Audri's clarifying restatements ("so you mean X?") followed by user confirmation are losing useful claim signal, OR a confirmation-aware extraction policy ("treat agent turn as claim source if explicitly user-confirmed in next turn") becomes worth the complexity. Source: §8 Chunk 5. |
+| **Proactive call-end (anti-addiction guardrail)** | **P1** | **M** | **Feature + Guardrail** | Audri proactively wraps the call after a configurable interval (default ~20 min? — to be tuned) with a graceful exit: "I've got plenty to work on — let's pick this up later." Prevents addictive engagement loops where the agent stays available indefinitely. Implementation: scaffolding gets a soft cap that nudges toward wrap-up at threshold, and a hard cap that triggers a definitive close-out turn. Per-user override possible (V1+ for users who genuinely need long sessions, e.g. extended onboarding). Falls under the broader **Guardrails** entry in Security + Compliance — this is the first concrete guardrail feature; track related ones (e.g. content guardrails, action guardrails) under that umbrella. Source: post-slice-8 UX principle: "friction proportional to addiction risk." |
+| **Live-agent abort tool (mid-action cancellation)** | **P1** | **M** | **Feature + Infra** | Tool the agent can invoke mid-call to cleanly cancel an in-progress operation when the user pivots ("actually, never mind, let's talk about X instead"). Today the agent has no way to roll back: if it kicked off a research task or opened a UI surface and the user changes subject, the spawned action proceeds to completion. The abort tool gives the agent an explicit "drop what we were doing" affordance: cancel the agent_task (status='cancelled'), close any open in-call UI (Interactive Call Surface — see Interaction modes), un-stage any draft writes, free the conversational thread. Pairs tightly with **Interactive Call Surface (ICS)** since most cancel-able operations will live there. Without it, the user has to wait for completion + then dismiss results — bad UX. Source: post-slice-9 review. |
 
 ---
 
@@ -125,6 +144,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Handler checkpointing for long tasks | P2 | L | Infra | If LLM retry cost on crashes becomes material, add phased progress + partial-result caching. Source: §11, tradeoffs. |
 | Reprocessing flows (transcript re-ingestion) | P2 | L | Infra | Prompt updates warrant re-running old transcripts. Requires dedup strategy (`(user_id, kind, stable_payload_fingerprint)` hash or `pipeline_version` tag). Source: §11. |
 | Aggregate failure-rate alerts | P2 | M | Observability | Beyond Sentry per-error alerts, "failure rate > 5% in 5 min" style. Source: §11. |
+| **Transactional email service** | **P0 (V1 prereq for waitlist)** | **S** | **Infra** | Outbound system email — distinct from the Gmail *connector* under "Connectors" (which is the user's own outbound). Use cases: waitlist invitation emails, password reset, account deletion confirmation, weekly-digest opt-ins (V1+). Provider: Resend or Postmark (both have ~$0–20/mo at our scale). Set up sending domain (DKIM/SPF/DMARC) for `talktoaudri.com` or whatever the prod domain ends up. Single helper `sendEmail({ to, subject, react|html })` that the admin interface + auth flows call. Source: post-slice-9 review (paired with waitlist + admin entries). |
 
 ### Connectors (all V1+)
 
@@ -159,9 +179,10 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
 | PostHog server-side events for metrics | P1 | S | Observability | Instrument task-lifecycle events. Dashboards follow. Source: Chunk 5 decisions, tradeoffs. |
+| **PostHog feature-flag wiring (kill-switches)** | **P1** | **S** | **Observability + Infra** | Slice-9 ask: kill-switch flags for ingestion + research-task spawning so we can shut off either pipeline without redeploying. Needs: (1) PostHog account + project + API key; (2) `posthog-node` SDK in `@audri/server` + `@audri/worker`; (3) two flag checks at ingestion entry + agent-task dispatch entry; (4) optional `posthog-react-native` for client-side rollout flags later. Carried from slice 9; deferred at close-out 2026-04-28 pending account setup. Drop me the project key when you create it and I'll wire the SDK. |
 | Dedicated log aggregator | P2 | M | Observability | Datadog / Logtail / Axiom / Grafana Loki. Replaces Render built-in when query needs or volume demand it. Source: §11, Chunk 5. |
 | Distributed tracing (OpenTelemetry) | P3 | L | Observability | When correlation IDs in logs aren't enough. Source: §11, Chunk 5. |
-| Admin triage dashboard | P1 | M | Observability | Failed-task list + aggregate metrics + bulk retry actions. MVP uses Sentry + SQL. Source: §11, Chunk 5. |
+| **Admin interface** (consolidated) | **P0 (V1 prereq)** | **L** | **Observability + Feature** | Internal-only web surface combining: (1) **Failed-task triage** — list of failed agent_tasks + ingestion runs, bulk retry, per-row error inspection (today: Sentry + ad-hoc SQL); (2) **Spend + usage dashboard** — reads `usage_daily_per_user` + `usage_daily_by_kind` views (already exist, migration `0011`), shows top spenders, daily trendlines, alert thresholds; (3) **Waitlist management** — list signups, promote-to-active, send invite emails, per-cohort throttle controls; (4) **User management** — find user, view their wiki overview, tombstone if needed, export their data (V1+). Auth: Supabase admin role gating + IP allowlist. Stack TBD — likely a small Next.js or NestJS+Vite app served separately from the public API. Replaces today's "log into Render + run psql" admin experience. Source: §11, Chunk 5 + post-slice-9 review. |
 
 ### Storage
 
@@ -181,6 +202,9 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
 | Split dev / prod Supabase projects | P1 | S | Infra | MVP runs against a single Supabase project. Before opening up to non-Max users, split into dedicated dev + prod projects so schema iteration, seeded test data, and RLS experiments can't touch real user data. Includes: separate Supabase URLs/keys per env, Render env-var wiring, Drizzle migration runner pointed at the right project per env. Decided 2026-04-26 to defer. |
+| **Render staging environment** | **P1** | **S** | **Infra** | Duplicate the existing `audri-server` + `audri-worker` services in Render with a `-staging` suffix. Point their `DATABASE_URL` at the staging Supabase project (depends on the dev/prod split above). All other env vars need to be filled in on the staging services (Gemini keys, Sentry DSNs, webhook secrets, etc.). Goal: migration runs + new-feature smoke tests don't hit prod. Listed in slice 9 build-plan; deferred at slice-9 close-out 2026-04-28. |
+| **EAS Build configuration + TestFlight pipeline** | **P0 (blocked on Apple Developer enrollment)** | **M** | **Infra** | Once Apple Dev enrollment is approved: (1) create `apps/mobile/eas.json` with build profiles (development / preview / production); (2) configure Apple credentials via `eas credentials`; (3) run `eas build --platform ios --profile preview` for first TestFlight build; (4) set up `eas submit` for app-store delivery. Listed in slice 9 build-plan. Currently blocked on Apple support per memory `project_apple_dev_blocking_scope.md`. |
+| **Mobile Sentry source-map upload via EAS** | **P1 (gated on EAS)** | **S** | **Infra** | When EAS Build lands (above), set three EAS secrets so the `@sentry/react-native` Expo plugin can auto-upload source maps during prod builds: `SENTRY_AUTH_TOKEN` (org-level token with `project:releases` + `project:read` + `org:read` scopes), `SENTRY_ORG`, `SENTRY_PROJECT=audri-mobile`. Until then production stack traces show minified line/col only — Sentry capture works, but frames are unreadable. Local dev builds resolve via Metro and don't need any of this. Slice-9 close-out 2026-04-28. |
 
 ---
 
@@ -249,6 +273,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Notifications UI | P1 | M | UX | In-app screen + push payload shape (once push lands). Source: §19. |
 | Call-history UI | P1 | M | UX | Listing, filtering, linking back to spawned artifacts. Source: §19. |
 | Pending-artifact placeholders in plugin overlays | P0 | M | UX + Infra | All artifact UIs (Research today; Podcast / Email-draft / Brief in V1+) should show in-flight artifacts as pending entries — not invisible-until-complete. User taps the Research tile mid-generation and sees "Researching: Italian restaurants in lower Manhattan… (~2 min)" with a spinner; row hydrates to the full output when ready. Big confidence win — proves the system is working without requiring users to wait blind. Generic pattern: any plugin overlay reads BOTH the artifact collection AND a "pending tasks" view (agent_tasks where status in ('pending','running') AND kind matches), unions them with kind-specific placeholder rendering. Requires syncing agent_tasks to mobile (currently server-only — would need RLS + realtime publication migration like research_outputs got). Source: post-slice-7 UX feedback. |
+| **Notification badges on home plugin tiles** | **P1** | **S** | **UX** | Per-tile "red dot" indicator (optionally with a count) showing new/unread activity for that plugin since last viewed. Sample triggers: Research = newly-completed research outputs you haven't opened; Todos = new agent-spawned todos in any non-archived bucket; Wiki = pages updated by ingestion since last visit. Implementation needs a per-tile "last viewed" timestamp (AsyncStorage initially; cloud-synced later) + reactive comparison against the live RxDB collections. Cleared when the user opens the overlay. Source: post-slice-8 UX request. |
 
 ### Contextual affordances
 
@@ -343,6 +368,7 @@ Each entry is sortable by **Priority**, **Effort**, and **Type**. Not a commitme
 | Regeneration debouncing | P2 | S | Cost-Business | Summary + index regen triggered on write but coalesced. Source: §17. |
 | Per-agent cost attribution | P2 | S | Cost-Business | `agent_id` on usage_events already carries this; surface V1+. Source: §15b. |
 | Gemini explicit caching for ingestion scaffolding | P1 | M | Cost-Business + Infra | Cache the Flash candidate retrieval, Pro fan-out, agent-scope, and onboarding scaffolding prompts via Gemini's explicit caching API. Recurring Graphile job refreshes TTL. Per-prompt-version cache namespace. Estimated savings ~75% on input-token cost for ingestion (largest cost line). Worth doing once daily call volume crosses ~50/day OR monthly Gemini bill crosses ~$50. Deferred from slice 4 (2026-04-27) — at MVP volume the savings is cents per day vs. ~1-2 hours of infra to wire correctly. |
+| **Waitlist + invite-driven user onboarding** | **P0 (V1 entry-gate)** | **L** | **Cost-Business + Feature** | **MVP gates users via TestFlight email allowlist** — no waitlist needed. **V1 introduces a waitlist** to control runaway cost while building toward cash-flow positive (or independent funding). Components: (a) public waitlist signup form (email-only, low friction); (b) `waitlist` table (`email`, `signed_up_at`, `invited_at`, `activated_at`, `referrer`, `notes`); (c) admin promote-from-waitlist flow → triggers invite email + supabase auth pre-registration; (d) per-cohort throttling so we don't onboard faster than budget allows. Pairs with the admin-interface entry below (where promotion happens) and the email-service entry (delivery infrastructure). Pricing-model decision (`Subscription tiers + pricing model` above) is upstream — waitlist gates against pricing tiers when those land. Source: post-slice-9 review. |
 
 ---
 

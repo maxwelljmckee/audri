@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { getDatabase } from '../lib/rxdb/database';
 import type { WikiSectionDoc } from '../lib/rxdb/schemas';
+import { captureClientError } from '../lib/sentry';
 
 interface Props {
   section: WikiSectionDoc;
@@ -31,7 +32,7 @@ export function WikiSectionEditor({ section, onClose }: Props) {
       }
       onClose();
     } catch (err) {
-      console.warn('[wiki-editor] save failed', err);
+      captureClientError('wiki-editor-save', err, { sectionId: section.id });
       setSaving(false);
     }
   }

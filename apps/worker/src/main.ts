@@ -1,6 +1,7 @@
 import { run } from 'graphile-worker';
 import { logger } from './logger.js';
 import { initSentry } from './observability/sentry.js';
+import { withSentry } from './observability/wrap-task.js';
 import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { ingestion } from './tasks/ingestion.js';
@@ -19,8 +20,8 @@ async function main(): Promise<void> {
     pollInterval: 1000,
     taskList: {
       heartbeat,
-      ingestion,
-      agent_task_dispatch: dispatchAgentTask,
+      ingestion: withSentry('ingestion', ingestion),
+      agent_task_dispatch: withSentry('agent_task_dispatch', dispatchAgentTask),
     },
   });
 

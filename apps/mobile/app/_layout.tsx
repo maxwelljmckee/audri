@@ -6,9 +6,15 @@ import { ProfileOverlay } from '../components/ProfileOverlay';
 import { ResearchOverlay } from '../components/ResearchOverlay';
 import { TodosOverlay } from '../components/TodosOverlay';
 import { WikiOverlay } from '../components/WikiOverlay';
+import { Sentry, initSentry } from '../lib/sentry';
 import '../global.css';
 
-export default function RootLayout() {
+// Init Sentry as early as possible at module load so any error during the
+// React render path is captured. DSN-gated so local dev w/o EXPO_PUBLIC_SENTRY_DSN
+// is a quiet no-op.
+initSentry();
+
+function RootLayout() {
   return (
     <SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }}>
@@ -26,3 +32,8 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
+// Wraps the root with Sentry's error boundary so render-path exceptions get
+// captured along with component-stack info. Shows the default fallback (a
+// blank screen) on crash; we'll polish this later if it ever fires in prod.
+export default Sentry.wrap(RootLayout);

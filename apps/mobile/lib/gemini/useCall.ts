@@ -13,6 +13,7 @@ import {
   recoverCall,
   saveCallSnapshot,
 } from '../callRecovery';
+import { captureClientError } from '../sentry';
 import { supabase } from '../supabase';
 import { useCallStore } from '../useCallStore';
 import { type AudioInputHandle, createAudioInput } from './audio-input';
@@ -249,7 +250,10 @@ export function useCall(): UseCallResult {
           void recoverCall(snapshot, 'app_backgrounded')
             .then(() => clearCallSnapshot())
             .catch((err) => {
-              console.warn('[useCall] background recovery failed', err);
+              captureClientError('call-background-recovery', err, {
+                sessionId: snapshot.sessionId,
+                turnCount: snapshot.transcript.length,
+              });
               // Snapshot stays on disk — the launch sweep will retry.
             });
         },

@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A single concurrent run per ref. Cancel earlier runs on push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        # Worker + server depend on @audri/shared compiled output. Build it
+        # first so subsequent typecheck commands can resolve the types.
+        run: pnpm --filter @audri/shared build
+
+      - name: Typecheck (all workspaces)
+        run: pnpm typecheck
+
+      - name: Biome lint
+        run: pnpm lint
+
+      - name: Drizzle migrations sanity check
+        # Verify the migration journal references files that actually exist.
+        # Real apply tests require a live Postgres; that lives in a separate
+        # workflow we'll add when staging is live.
+        run: |
+          for entry in $(cat apps/server/drizzle/meta/_journal.json | grep -oE '"tag": *"[^"]+"' | sed 's/"tag": *"\([^"]*\)"/\1/'); do
+            if [ ! -f "apps/server/drizzle/${entry}.sql" ]; then
+              echo "::error::Missing migration file: apps/server/drizzle/${entry}.sql"
+              exit 1
+            fi
+          done
+          echo "All journal entries have matching SQL files."

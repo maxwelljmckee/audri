@@ -13,6 +13,7 @@ import {
   readCallSnapshot,
   recoverCall,
 } from './callRecovery';
+import { captureClientError } from './sentry';
 import { useSession } from './useSession';
 
 export function useCallRecoverySweep() {
@@ -47,7 +48,10 @@ export function useCallRecoverySweep() {
           'turns',
         );
       } catch (err) {
-        console.warn('[call-sweep] recovery failed; will retry next launch', err);
+        captureClientError('call-sweep-recovery', err, {
+          sessionId: snapshot.sessionId,
+          turnCount: snapshot.transcript.length,
+        });
       }
     })();
   }, [session.status]);

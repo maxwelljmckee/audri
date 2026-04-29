@@ -3,6 +3,7 @@
 // replication are live so screens can render loading state until ready.
 
 import { useEffect, useState } from 'react';
+import { captureClientError } from '../sentry';
 import { useSession } from '../useSession';
 import { startReplication, stopReplication } from './replication';
 
@@ -23,7 +24,7 @@ export function useRxdbReady(): boolean {
         if (!cancelled) setReady(true);
       })
       .catch((err) => {
-        console.warn('[rxdb] replication start failed', err);
+        captureClientError('rxdb-replication-start', err);
       });
 
     return () => {

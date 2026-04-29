@@ -12,6 +12,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import {
   agentTasks,
   and,
@@ -43,6 +44,9 @@ function truncateForTitle(s: string, max = 60): string {
 export class TasksController {
   private readonly logger = new Logger(TasksController.name);
 
+  // Research is the most expensive single endpoint (Pro + grounded search).
+  // Cap to 20/hour and 80/day per user.
+  @Throttle({ short: { limit: 20, ttl: 60 * 60_000 }, long: { limit: 80, ttl: 24 * 60 * 60_000 } })
   @Post('research')
   async spawnResearch(
     @CurrentUser() user: { id: string },

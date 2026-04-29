@@ -9,6 +9,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { TranscriptTurn } from './gemini/transcript';
+import { captureClientError } from './sentry';
 import { supabase } from './supabase';
 
 const STORAGE_KEY = 'audri:active-call-snapshot:v1';
@@ -27,7 +28,7 @@ export async function saveCallSnapshot(snapshot: CallSnapshot): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
   } catch (err) {
-    console.warn('[call-recovery] saveCallSnapshot failed', err);
+    captureClientError('call-recovery-save', err);
   }
 }
 
@@ -35,6 +36,8 @@ export async function clearCallSnapshot(): Promise<void> {
   try {
     await AsyncStorage.removeItem(STORAGE_KEY);
   } catch (err) {
+    // Swallow + console only — clear-after-success failure is harmless;
+    // next launch's sweep will tidy up any orphan.
     console.warn('[call-recovery] clearCallSnapshot failed', err);
   }
 }
@@ -45,7 +48,7 @@ export async function readCallSnapshot(): Promise<CallSnapshot | null> {
     if (!raw) return null;
     return JSON.parse(raw) as CallSnapshot;
   } catch (err) {
-    console.warn('[call-recovery] readCallSnapshot failed', err);
+    captureClientError('call-recovery-read', err);
     return null;
   }
 }

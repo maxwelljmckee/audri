@@ -14,7 +14,9 @@
       "appleTeamId": "ZKPW88L5T6",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Audri needs microphone access so you can talk with it during voice calls.",
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -45,7 +47,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -40,4 +40,8 @@ export const userSettings = pgTable('user_settings', {
   onboardingComplete: boolean('onboarding_complete').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  // Account tombstone. Set by DELETE /me. Auth guard rejects authenticated
+  // requests when this is non-null. Data stays intact; hard-delete + export
+  // are V1+.
+  tombstonedAt: timestamp('tombstoned_at', { withTimezone: true }),
 });

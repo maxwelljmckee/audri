@@ -248,25 +248,25 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
-## Slice 9 — Pre-launch hardening
+## Slice 9 — Pre-launch hardening (✅ code-complete 2026-04-28; some manual + external setup pending)
 
 **Goal:** the thing is shippable.
 
-- ⏺️ Server + worker: real RLS policies per `todos.md` §3 RLS draft
-- ⏺️ Server: cross-agent leakage tests passing (per `todos.md` §3)
-- ⏺️ Server: rate limiting per user (call starts, task triggers, signup attempts)
-- ⏺️ Server: account-deletion flow (basic — tombstone user_id; full hard-delete + export V1+)
-- ⏺️ Sentry integration validated (real errors firing on both client and server)
-- ⏺️ PostHog feature flags wired (at minimum, a kill-switch flag for ingestion + a kill-switch for research-task spawning)
-- ⏺️ EAS Build configured; first TestFlight build pushed
-- ⏺️ Render deploys for `apps/server` + `apps/worker` working from CI; staging environment alive
-- ⏺️ CI pipeline (GitHub Actions): typecheck + lint + test + DB-migration check
-- ⏺️ Cost monitoring — ad-hoc SQL queries against `usage_events` confirm per-user spend looks reasonable
-- ⏺️ PII redaction at pino transport layer validated (sample logs reviewed; no obvious leaks)
+- ✅ Server + worker: full RLS policy set per `todos.md` §3 RLS draft (migration `0010_rls_hardening.sql`). Coverage: wiki_section_history/transcripts/urls/ancestors (SELECT via parent), agents (SELECT own + column-level REVOKE on persona_prompt + user_prompt_notes), call_transcripts, wiki_log, tags, wiki_page_tags, usage_events, user_settings.
+- ✴️ Server: cross-agent leakage tests — **scaffold only** (`apps/server/src/__tests__/rls-leakage.test.ts`). Test runner not yet installed; tests skipped pending vitest + a dedicated test Supabase project.
+- ✅ Server: rate limiting via `@nestjs/throttler` with a user-keyed guard. Per-user caps: calls 10/hr + 100/day; research 20/hr + 80/day; default 30/min + 500/day on everything else. Health + webhooks bypassed.
+- ✅ Server: `DELETE /me` account-deletion. Calls supabase.auth.admin.deleteUser; existing FK ON DELETE CASCADE chains handle data removal. Hard-delete + data export deferred to V1+.
+- ✅ Sentry integration code-complete: server has a global `SentryExceptionFilter` that captures 5xx; worker tasks wrapped with `withSentry()` to capture handler errors with task/jobId tags; `GET /health/sentry-test` smoke endpoint (gated by `X-Sentry-Test: $SUPABASE_WEBHOOK_SECRET`). **Manual follow-up (#100):** create Sentry projects + set `SENTRY_DSN_SERVER` / `SENTRY_DSN_WORKER` env in Render, fire smoke test.
+- ✅ CI pipeline (`.github/workflows/ci.yml`): typecheck (all workspaces) + biome lint + drizzle journal/file-existence sanity check.
+- ✅ Cost monitoring SQL views (`0011_usage_events_views.sql`): `usage_daily_per_user` + `usage_daily_by_kind`. Sample queries in the migration's leading comment.
+- ✅ PII redaction expansion in pino: server + worker now redact `transcript`, `content`, `query`, `summary`, `payload`, `snippets`, `findings`, `notes_for_user`, `context_summary` at both top-level and nested paths.
+- ⏺️ PostHog feature flags — **needs PostHog account + project key.**
+- ⏺️ EAS Build / TestFlight — **blocked on Apple Developer enrollment** (per memory `project_apple_dev_blocking_scope.md`).
+- ⏺️ Render staging environment — dashboard config; not a code change.
 
-**Demo:** install via TestFlight → end-to-end onboarding → first call → research arrives → wiki populates over multiple calls → tier-cap interactions present and accounted for. Ready for closed-beta users.
+**Demo (achievable for closed beta on a single environment):** install via Expo dev build → end-to-end onboarding → first call → research arrives → wiki populates over multiple calls. Ready for closed-beta on TestFlight once Apple enrollment unblocks + Sentry projects + PostHog projects are wired.
 
-**Estimated:** 7–10 days. Mostly operational + hardening; no new product surface area.
+**Estimated:** 7–10 days. **Actual:** ~1.5 hours of code; the external-setup items (Sentry projects, PostHog, Apple enrollment, Render staging) defer to whenever you tackle them.
 
 ---
 

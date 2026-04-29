@@ -9,6 +9,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { db, callTranscripts, eq, sql, userSettings } from '@audri/shared/db';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
@@ -37,6 +38,10 @@ export class CallsController {
 
   constructor(@Inject(CallsService) private readonly calls: CallsService) {}
 
+  // Calls are expensive (Gemini Live tokens, audio bandwidth). Cap to
+  // ~10/hour and ~100/day per user — generous for legitimate use, hard
+  // ceiling on runaway loops.
+  @Throttle({ short: { limit: 10, ttl: 60 * 60_000 }, long: { limit: 100, ttl: 24 * 60 * 60_000 } })
   @Post('start')
   async start(
     @CurrentUser() user: { id: string },

@@ -71,6 +71,27 @@
       "when": 1777680000000,
       "tag": "0009_agent_tasks_rls_realtime",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777750000000,
+      "tag": "0010_rls_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777750001000,
+      "tag": "0011_usage_events_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777750002000,
+      "tag": "0012_user_tombstone",
+      "breakpoints": true
     }
   ]
 }
