@@ -1134,7 +1134,7 @@ Use this to order the spec-writing passes. Items listed here are the critical pa
     - Log of decisions made without explicit user confirmation during the autonomous spec-completion phase. Worth reviewing before code starts.
 23. ✅ **Mobile-app SPEC** at `specs/mobile-app.md`
     - Project structure (`apps/mobile/`), Expo Router layout, NativeWind theming with Azure default + tokened Liquid Glass variants, Apple+Google auth, four screens (Auth / Onboarding / Home / Call), reusable component primitives, Zustand + RxDB state model, full-screen edge-to-edge content discipline, speaking-orb call-session UI, network-drop UX. Spawned V1+ backlog items for theme switcher, avatar account menu, mic-mute UI, transcript feed.
-24. ✅ **Build plan** at `build-plan.md`
+24. ✅ **Build plans** at `build-phases/` — `mvp.md` shipped 2026-04-29; future phases named by semver (e.g. `0.1.1.md`).
     - 10-slice execution roadmap (slice 0 bootstrap through slice 9 pre-launch hardening). Each slice is a runnable end-to-end demo. Estimates ~50–75 days of focused work. Pre-flight checklist (Supabase / Gemini / EAS / Render / Sentry / PostHog / Apple Dev / Google OAuth) gates slice 0.
 
 ---

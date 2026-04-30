@@ -248,25 +248,55 @@ Roughly half-day of admin work, mostly waiting on confirmation emails.
 
 ---
 
-## Slice 9 — Pre-launch hardening (✅ code-complete 2026-04-28; some manual + external setup pending)
+## Slice 9 — Pre-launch hardening (✅ done 2026-04-29)
 
 **Goal:** the thing is shippable.
 
 - ✅ Server + worker: full RLS policy set per `todos.md` §3 RLS draft (migration `0010_rls_hardening.sql`). Coverage: wiki_section_history/transcripts/urls/ancestors (SELECT via parent), agents (SELECT own + column-level REVOKE on persona_prompt + user_prompt_notes), call_transcripts, wiki_log, tags, wiki_page_tags, usage_events, user_settings.
-- ✴️ Server: cross-agent leakage tests — **scaffold only** (`apps/server/src/__tests__/rls-leakage.test.ts`). Test runner not yet installed; tests skipped pending vitest + a dedicated test Supabase project.
+- ✴️ Server: cross-agent leakage tests — **scaffold only** (`apps/server/src/__tests__/rls-leakage.test.ts`). Vitest install + wired test Supabase punted to V1 per `backlog.md > Currently outstanding`.
 - ✅ Server: rate limiting via `@nestjs/throttler` with a user-keyed guard. Per-user caps: calls 10/hr + 100/day; research 20/hr + 80/day; default 30/min + 500/day on everything else. Health + webhooks bypassed.
-- ✅ Server: `DELETE /me` account-deletion. Calls supabase.auth.admin.deleteUser; existing FK ON DELETE CASCADE chains handle data removal. Hard-delete + data export deferred to V1+.
-- ✅ Sentry integration code-complete: server has a global `SentryExceptionFilter` that captures 5xx; worker tasks wrapped with `withSentry()` to capture handler errors with task/jobId tags; `GET /health/sentry-test` smoke endpoint (gated by `X-Sentry-Test: $SUPABASE_WEBHOOK_SECRET`). **Manual follow-up (#100):** create Sentry projects + set `SENTRY_DSN_SERVER` / `SENTRY_DSN_WORKER` env in Render, fire smoke test.
-- ✅ CI pipeline (`.github/workflows/ci.yml`): typecheck (all workspaces) + biome lint + drizzle journal/file-existence sanity check.
+- ✅ Server: `DELETE /me` account tombstone. Sets `user_settings.tombstoned_at`, revokes Supabase sessions globally; auth guard rejects subsequent requests with 403. Data left intact; hard-delete + data export V1+.
+- ✅ Sentry integration **fully validated 2026-04-29** across all three projects: server (NestJS `SentryExceptionFilter` global filter, smoke-tested via `/health/sentry-test`), worker (graphile tasks wrapped with `withSentry()`, organic capture validated), mobile (`@sentry/react-native` with DSN-gated init, smoke-tested via long-press handler that was later removed). `instrument.ts` ordering fix on server per Sentry SDK v8 requirements. Mobile source-map upload via EAS secrets `SENTRY_AUTH_TOKEN` / `SENTRY_ORG` / `SENTRY_PROJECT`; end-to-end source-map verification still pending first organic prod crash.
+- ✅ CI pipeline (`.github/workflows/ci.yml`): typecheck (all workspaces) + biome lint + drizzle journal/file-existence sanity check. Manual-only EAS builds per `feedback_eas_builds_manual_only.md` memory.
 - ✅ Cost monitoring SQL views (`0011_usage_events_views.sql`): `usage_daily_per_user` + `usage_daily_by_kind`. Sample queries in the migration's leading comment.
 - ✅ PII redaction expansion in pino: server + worker now redact `transcript`, `content`, `query`, `summary`, `payload`, `snippets`, `findings`, `notes_for_user`, `context_summary` at both top-level and nested paths.
-- ⏺️ PostHog feature flags — **needs PostHog account + project key.**
-- ⏺️ EAS Build / TestFlight — **blocked on Apple Developer enrollment** (per memory `project_apple_dev_blocking_scope.md`).
-- ⏺️ Render staging environment — dashboard config; not a code change.
+- ✅ **PostHog wiring + kill switches** (2026-04-29): `posthog-node` singleton in `@audri/shared/posthog` with fail-open `isFeatureEnabled()` semantics. Kill-switch flag checks at ingestion entry (`ingestion_enabled`) + agent-task dispatch entry (`<kind>_enabled`, e.g. `research_enabled` — extensible to future plugin kinds). Lifecycle events captured: `ingestion.started/succeeded/failed/skipped_by_flag` + `agent_task.started/succeeded/failed/skipped_by_flag`. SIGTERM handler flushes the buffer on graceful shutdown. Verified end-to-end via PostHog Live Events.
+- ✅ **EAS Build configured + first TestFlight release live (2026-04-29)** — bundle ID `com.talktoaudri.audri`, build `0.1.0 (1)` via `pnpm testflight`. App Store Connect API key auto-managed by EAS. Production build uses background-audio entitlement (`UIBackgroundModes: ["audio"]`) so calls continue when the device is locked / app backgrounded — the user-facing phone-call model.
+- ✴️ Render staging environment — punted to V1 per Max 2026-04-29; single environment for closed beta. See `backlog.md > Environments`.
+- ✴️ Supabase dev/prod project split — punted to V1 per Max 2026-04-29; same source as above.
 
-**Demo (achievable for closed beta on a single environment):** install via Expo dev build → end-to-end onboarding → first call → research arrives → wiki populates over multiple calls. Ready for closed-beta on TestFlight once Apple enrollment unblocks + Sentry projects + PostHog projects are wired.
+**Demo (validated 2026-04-29):** TestFlight install → onboarding flow → first generic call → research auto-spawns from in-call request → wiki populates over multiple calls → resilience flow recovers force-quit calls (manual test 2026-04-29 confirmed: kill app mid-call → relaunch → snapshot recovery → next call references prior topic). All four MVP plugin tiles functional (Wiki, Research, Profile, Todos). Sentry capturing all three platforms; PostHog capturing lifecycle events and gating kill switches.
 
-**Estimated:** 7–10 days. **Actual:** ~1.5 hours of code; the external-setup items (Sentry projects, PostHog, Apple enrollment, Render staging) defer to whenever you tackle them.
+**Estimated:** 7–10 days. **Actual:** ~3 hours of code spread across two days; the long pole was external setup (Apple Developer enrollment, Sentry project DSN debugging, EAS Build flow, App Store Connect auth).
+
+---
+
+## MVP code-complete (2026-04-29)
+
+**Status: closed.** The full slice 0–9 plan landed end-to-end in roughly two weeks of focused work. Audri is on TestFlight (`com.talktoaudri.audri` 0.1.0), every demo path validated on real hardware, telemetry flowing on three platforms.
+
+**What shipped:**
+- Voice-first call experience (Gemini Live, barge-in, transcription, lock-screen-persistent calls)
+- Onboarding flow with life-history-first opener, askable/emergent topic split, ~10-min good-enough heuristic
+- Ingestion pipeline (Flash candidate retrieval → Pro fan-out → transactional commit → agent-scope side pass) with per-user FIFO graphile queue
+- Generic-call context preload (profile + agent notes + recently-active wiki pages + incomplete-call hint)
+- Four plugin surfaces: Wiki (folders + page detail + raw-markdown editor), Research (Pro + Google grounded search, citations, hyperlinks), Profile (sectioned overview), Todos (status-bucket tabs, check-off, manual create)
+- Per-plugin React Navigation stack with native push/pop + slide animations
+- Pending-artifact placeholder pattern (in-flight agent_tasks render as live rows)
+- Resilience layer: AsyncStorage-backed call snapshot, app-launch orphan sweep, ingestion_status enum, retry endpoint
+- Hardening: full RLS coverage with column-level redaction on agents, per-user rate limiting, account tombstone, PII-redacted logs, cost-monitoring views
+- Telemetry: Sentry on server/worker/mobile, PostHog with kill-switch feature flags
+- Distribution: TestFlight build with background-audio entitlement, source-map upload wired
+
+**What's V1 (carried in `backlog.md > Currently outstanding`):**
+- Apple Sign-in (deferred from slice 1 during enrollment block — now unblocked, V1 task)
+- Mobile Sentry source-map upload validation (waiting on first organic prod crash)
+- Vitest test runner + cross-agent leakage tests
+- Render staging environment + Supabase dev/prod split
+- WYSIWYG section editor
+- Plugin overlay swipe-up gesture handling
+
+**The build-plan doc is now an artifact, not a todo list.** Refer to `backlog.md` for the V1+ horizon.
 
 ---
 
