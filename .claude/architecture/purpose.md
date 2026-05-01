@@ -33,3 +33,13 @@ We need a "glue" product. Something that sits in the middle of all the fragments
 ### Deep Integration
 
 ### Always picks up where you left off
+
+## Core UX Principles
+
+### Transparency
+
+### Continuity
+
+### Proactiveness
+
+### Autonomy

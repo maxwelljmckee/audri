@@ -128,7 +128,7 @@ const styles = StyleSheet.create({
   wordmark: {
     color: "#e8f1ff",
     fontSize: 24,
-    fontFamily: "Sniglet_400Regular",
+    fontFamily: "Comfortaa_400Regular",
   },
   avatar: {
     width: 36,

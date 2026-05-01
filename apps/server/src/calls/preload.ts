@@ -10,7 +10,7 @@
 // recently-updated wiki pages — those are richer than call summaries since
 // they reflect what was actually extracted and considered worth remembering.
 
-import { and, db, desc, eq, inArray, isNull, ne, sql } from '@audri/shared/db';
+import { and, db, desc, eq, inArray, isNull, sql } from '@audri/shared/db';
 import { callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
 
 const RECENT_PAGES_LIMIT = 8;
@@ -141,9 +141,11 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
   return rows as RecentPage[];
 }
 
-// Most recent non-user-ended call within the lookback window. Used to offer
-// "looks like we got cut off — want to wrap up?" in the next generic call.
-// Cancelled calls are excluded (the user explicitly killed them).
+// Surface a dropped call ONLY when it is the user's most recent transcript.
+// Any subsequent clean (`user_ended`) or user-cancelled call means the user
+// has moved on, and the prior drop is no longer relevant — we'd rather stay
+// silent than keep nagging about a stale drop. Lookback still applies so a
+// dropped call from weeks ago doesn't resurface for a returning user.
 async function fetchMostRecentIncompleteCall(userId: string): Promise<IncompleteCall | null> {
   const cutoff = new Date(Date.now() - INCOMPLETE_CALL_LOOKBACK_HOURS * 60 * 60 * 1000);
   const rows = await db
@@ -151,13 +153,12 @@ async function fetchMostRecentIncompleteCall(userId: string): Promise<Incomplete
       id: callTranscripts.id,
       endedAt: callTranscripts.endedAt,
       endReason: callTranscripts.endReason,
+      cancelled: callTranscripts.cancelled,
     })
     .from(callTranscripts)
     .where(
       and(
         eq(callTranscripts.userId, userId),
-        eq(callTranscripts.cancelled, false),
-        ne(callTranscripts.endReason, 'user_ended'),
         sql`${callTranscripts.endedAt} IS NOT NULL`,
         sql`${callTranscripts.endedAt} >= ${cutoff.toISOString()}`,
       ),
@@ -167,6 +168,9 @@ async function fetchMostRecentIncompleteCall(userId: string): Promise<Incomplete
 
   const row = rows[0];
   if (!row || !row.endedAt) return null;
+  // If the most recent call ended cleanly or was user-cancelled, the user
+  // has moved on — suppress any prior-drop context.
+  if (row.cancelled || row.endReason === 'user_ended') return null;
 
   // Pull the touched-page slugs from this transcript's wiki_log row, if
   // ingestion has run yet. If not, the agent will just have to ask "what

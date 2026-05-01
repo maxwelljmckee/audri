@@ -15,4 +15,9 @@
   --color-azure-text: #e8f1ff;
   --color-azure-text-muted: #7aa3d4;
   --color-azure-accent: #4d8fdb;
+
+  /* Application backdrop — visible only during stack-nav / overlay
+     transitions. Token-wrapped so the eventual swap to gradient or
+     lavalamp is a one-line change. v0.1.1 starts at true black. */
+  --color-app-backdrop: #000000;
 }

@@ -40,6 +40,59 @@ MVP is on TestFlight. Closed beta begins from this build. Items remaining:
 
 ---
 
+## Prompt engineering (near-term, high-priority)
+
+A focused tranche of prompt + ingestion-logic changes queued up for the next pass after the v0.1.1 UX patch. Grouped by which prompt is being touched. Items here should be promoted into a build phase (`build-phases/<semver>.md`) when they're ready to be executed; they're parked here to keep the design surface visible.
+
+### Architectural note — consider conditional prompt routing before scoping this tranche
+
+As this list grows (conversational modes, research modes, ingestion-mode hints, principle-naming, hierarchy clauses), the temptation will be to keep stacking everything into the single 7-layer system prompt the composer assembles at call start. That's a path to a bloated, contradictory mega-prompt where every clause has to caveat itself for every other situation, and where caching efficiency degrades because every variant lives in one big string.
+
+**Before promoting this tranche to a build phase, decide whether to introduce a conditional prompt routing layer first.** The shape might look like one of (or a combination of):
+
+1. **Predicated prompt clauses** — each layer in `composeSystemPrompt` declares a condition predicate; the composer evaluates predicates at compose time and includes only matching clauses. Today's layers are unconditionally included. Cheap to introduce; works for static conditions (call_type, agent persona, presence of incomplete-call context). Doesn't help with mid-call shifts.
+2. **Pre-classifier pass at session start** — a fast Flash call before composing the prompt classifies the situation (mode, user state, likely intent, maybe even "this looks like brainstorm vs dictation"). Composer reads the classification and assembles a tighter, mode-specific prompt. Costs an extra LLM hop; saves tokens on every subsequent turn; pairs with explicit caching.
+3. **Per-mode cached prompt prefixes** — each mode (call_type × conversational mode × scope) is its own pre-baked, cached prompt prefix. Switching modes = switching cache prefixes, paying re-prime cost once. Cleanest cache story but combinatorial explosion of variants if not bounded.
+4. **Tool-driven mid-flight shifts** — agent invokes a `set_mode(mode)` tool when it senses a context change; runtime swaps in the matching scaffolding chunk for the next turn. Works mid-call but introduces mode-flapping risk + observability complexity.
+5. **Hybrid (likely answer)** — universal top-level scaffolding (always-on), predicated modules (loaded by condition at compose time per #1), per-mode cache prefixes for the heavy seed modes per #3, tool-driven shifts per #4 only where mid-call mode change is genuinely useful (e.g. brainstorm ↔ dictation).
+
+**Open questions to resolve before any code:**
+- Cache TTL impact — explicit caching is already core to cost strategy; routing changes affect cache hit rate.
+- Classifier cost vs. mega-prompt token cost — break-even point depends on session length.
+- Deterministic vs probabilistic mode choice — if the classifier or the model itself picks the mode, how do we make that visible/auditable to the user (Transparency principle)?
+- Debug/observability — at MVP we can read the composed prompt off the call_transcripts row; routed prompts need similar logging without leaking persona-prompt-protected fields.
+
+This note should be revisited *before* the items below are promoted into a build phase. If the answer is "yes, route first," the routing infra becomes the first item in that phase and the prompt-content items hang off it. If the answer is "no, lump it for now," fine — but capture the rationale + the trigger condition that would make us reconsider.
+
+### Live Agent prompt
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **Conversational modes (fluid mode-shifting)** | **P0** | **M** | **Feature (prompt)** | Agent should fluidly shift between conversational styles based on the current conversation's context and tone — not as a hard switch, but as a posture the model picks up on its own. **Seed modes:** (a) **Brainstorm Mode** — Audri is a thought-partner helping the user explore a new idea. Rather than just reflecting back what the user said, or asking thin questions inviting deeper detail, Audri introduces *new/related context*; helps the thought grow and progress outside the scope of what the user has stated. KG context is used when relevant but not forced. (b) **Dictation Mode** — Audri quietly takes notes while the user speaks; minimal interjection, no follow-up questions, just listening and absorbing. **Open question at design time:** are these stable modes the agent enters and stays in (state-like), or postures it adopts turn-by-turn (style-like)? Probably the latter for MVP — embed mode-recognition cues in the scaffolding rather than adding state to call_transcripts. Pairs with the "Generic-call scaffolding clause: Expectation Setting / Control / Autonomy" entry in Call mode expansion (both ask the agent to be more attuned to what kind of session the user wants). Source: post-MVP review 2026-05-01. |
+| **Explicit UX core principles in scaffolding** | **P0** | **S** | **Feature (prompt)** | Explicitly identify the four core UX principles — **Proactiveness**, **Transparency**, **Continuity**, **Autonomy** — by name in the live-agent scaffolding, with concrete guidance on how each weaves into conversational flow. Today the principles are honored implicitly (via behavior tuning across many prompt clauses) but not named — making it harder for the model to apply them coherently in novel situations. Examples to bake in: *Proactiveness* — offer follow-ups + capture context unprompted, but never override the user's direction. *Transparency* — when you do something behind the scenes (note a fact, queue a research), say so briefly. *Continuity* — reference past calls / wiki state when relevant; the user shouldn't have to re-establish context. *Autonomy* — when the conversation's intent is ambiguous, ask rather than assume; let the user redirect freely. Pairs with the existing "Generic-call scaffolding clause: Expectation Setting / Control / Autonomy" entry — that one is a specific prompt clause; this is the broader principle-naming pass. Source: post-MVP review 2026-05-01. |
+
+### Ingestion Prefilter prompt (Flash candidate retrieval)
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **New-page suggestion: better hierarchy logic** | **P0** | **M** | **Feature (prompt)** | Improve the Flash prefilter's logic around when to propose `new_pages` vs route into existing pages. Today new-page suggestions land flat — without strong guidance about *where* in the wiki hierarchy they should sit relative to existing pages. Pro fan-out then has to reason about parent placement after the fact, which produces inconsistent nesting. Sketch: prefilter emits `new_pages` with a `proposed_parent_slug` (or hierarchy hint) so the structural decision is made at retrieval time, not at write time. Pairs with the ingestion-prompt items below (favor page hierarchy when inserting). Source: post-MVP review 2026-05-01. |
+| **Refactor handling of page types** | **P1** | **M** | **Tech debt + Feature (prompt)** | Page types (`person`, `concept`, `project`, `place`, `org`, `source`, `event`, `note`, `profile`, `todo`) are not intended to map 1:1 to the top-level buckets in the wiki UI, but the prefilter currently leans on `type` as if it were the routing signal. Decouple the two: type stays a semantic label (drives prompt expectations + UI affordances), but routing/hierarchy is decided independently. Likely couples with the new-page-suggestion item above — both are about getting structural decisions right at retrieval time. Open at design time: how much of this is prompt-only vs. requires schema/index work. Source: post-MVP review 2026-05-01. |
+
+### Research handler prompt
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **Research modes (multiple paths for a research task)** | **P0** | **M** | **Feature (prompt)** | Today the research handler runs a single execution shape regardless of what kind of question the user asked. Introduce **modes** that identify multiple paths a research background task can take, so the handler can choose (or be told) how to approach the work. **Seed modes (to be refined at design time):** (a) **Discovery** — open-ended "tell me about X" where the goal is breadth + structure; output favors organized findings + categories + follow-up questions. (b) **Comparison** — "X vs Y" where the goal is structured side-by-side analysis; output favors a comparison matrix or pros/cons rather than narrative findings. (c) **Verification** — "is it true that …" where the goal is evidence-checking; output favors citations + confidence + counter-evidence. (d) **Recommendation** — "what should I do about X" where the goal is a ranked decision frame. **Open at design time:** is the mode chosen by the call-agent at task-spawn time (encoded in `agent_tasks.payload`), inferred by the research handler's pre-pass, or selected by the user via UI? Likely the call-agent picks a default at spawn time and the user can override post-hoc. **Strong pairing with the conversational-modes work** — both are mode-style prompt routing; resolve the conditional-routing architectural question (above) before scoping either. Source: post-MVP review 2026-05-01. |
+
+### Ingestion Pro fan-out prompt
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **Favor page hierarchy when inserting new pages** | **P0** | **S** | **Feature (prompt)** | Pro fan-out, when creating new pages, should default to placing them under a sensible parent in the existing hierarchy rather than at root or under a generic bucket. Concretely: a new `concept` page mentioned in the context of an existing `project` should default to being a child of that project; a new `person` mentioned in the context of `work` should default under `profile/work/people` (or equivalent) rather than at top level. Prompt clause: when creating a page, the model must choose a parent and justify it briefly. Empty-parent (root) is allowed only when no existing page reasonably claims the new one. Pairs with the prefilter's new-page-suggestion improvement (which feeds the Pro prompt with a proposed parent already). Source: post-MVP review 2026-05-01. |
+| **Reflection pass at execution time** | **P1** | **S** | **Tech debt** | Placeholder note: there were additional ingestion-prompt improvements identified post-MVP that weren't captured here. When this tranche is promoted to a build phase, do a focused re-review of the Pro fan-out prompt and `specs/fan-out-prompt.md` against recent transcripts — surface any prompt smells that have been bugging us in practice and add them to this entry before scoping. Source: post-MVP review 2026-05-01 (incomplete capture). |
+
+---
+
 ## Features
 
 ### Interaction modes

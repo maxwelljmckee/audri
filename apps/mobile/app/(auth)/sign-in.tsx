@@ -67,7 +67,7 @@ export default function SignInScreen() {
     <View className="flex-1 items-center justify-center gap-8 bg-azure-bg px-8">
       <Text
         className="text-azure-text"
-        style={{ fontSize: 36, fontFamily: 'Sniglet_400Regular' }}
+        style={{ fontSize: 36, fontFamily: 'Comfortaa_400Regular' }}
       >
         Audri
       </Text>

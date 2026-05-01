@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@audri/shared": "workspace:*",
-    "@expo-google-fonts/sniglet": "^0.4.1",
+    "@expo-google-fonts/comfortaa": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@google/genai": "^1.50.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
