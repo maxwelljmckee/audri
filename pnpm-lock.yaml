@@ -23,9 +23,9 @@ importers:
       '@audri/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@expo-google-fonts/sniglet':
-        specifier: ^0.4.1
-        version: 0.4.1
+      '@expo-google-fonts/comfortaa':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@expo/vector-icons':
         specifier: ^15.0.3
         version: 15.1.1(expo-font@14.0.11(expo@54.0.33)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -1373,8 +1373,8 @@ packages:
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
-  '@expo-google-fonts/sniglet@0.4.1':
-    resolution: {integrity: sha512-QLX5IK/YQnBDwE0KJXWfWcWfJzUVTL+dZxaTrLXo3EyTKm313uvYKsbUwET9q9cjH8mkl+NxwCTnrX2i6H2LJA==}
+  '@expo-google-fonts/comfortaa@0.4.2':
+    resolution: {integrity: sha512-eGz3aw5gQ4NA/saaiMv5CH709vB5tG+puP9vy+rFX3XXc20JQ0A/qeBiCH+J8enPvXDi0rXyG3EgqbJ4Er2htg==}
 
   '@expo/cli@54.0.23':
     resolution: {integrity: sha512-km0h72SFfQCmVycH/JtPFTVy69w6Lx1cHNDmfLfQqgKFYeeHTjx7LVDP4POHCtNxFP2UeRazrygJhlh4zz498g==}
@@ -7948,7 +7948,7 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
-  '@expo-google-fonts/sniglet@0.4.1': {}
+  '@expo-google-fonts/comfortaa@0.4.2': {}
 
   '@expo/cli@54.0.23(expo-router@6.0.23)(expo@54.0.33)(graphql@15.8.0)(react-native@0.81.5(@babel/core@7.29.0)(@types/react@19.1.17)(react@19.1.0))(typescript@5.9.3)':
     dependencies:
