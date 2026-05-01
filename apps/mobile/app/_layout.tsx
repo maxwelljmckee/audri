@@ -1,11 +1,14 @@
 import { Comfortaa_400Regular, useFonts } from '@expo-google-fonts/comfortaa';
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { View } from 'react-native';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ProfileOverlay } from '../components/ProfileOverlay';
 import { ResearchOverlay } from '../components/ResearchOverlay';
+import { SplashAnimation } from '../components/SplashAnimation';
 import { TodosOverlay } from '../components/TodosOverlay';
 import { WikiOverlay } from '../components/WikiOverlay';
 import { Sentry, initSentry } from '../lib/sentry';
@@ -16,11 +19,29 @@ import '../global.css';
 // is a quiet no-op.
 initSentry();
 
+// Hold the native splash visible until our JS-side <SplashAnimation /> is
+// mounted and ready to paint — otherwise the native splash hides on Expo's
+// default timing and we'd see a frame of empty black before the wordmark
+// appears. We hide it manually below once fonts are loaded.
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // ignore — can fail in fast-refresh / hot-reload paths
+});
+
 function RootLayout() {
   // Load Comfortaa for the Audri wordmark. useFonts gates render until the
   // typeface is ready so we never see a fallback-flash. Reference in styles
   // via fontFamily: 'Comfortaa_400Regular'.
   const [fontsLoaded] = useFonts({ Comfortaa_400Regular });
+
+  // Once fonts are ready, hide the native splash. The JS-side SplashAnimation
+  // is mounted below and will paint immediately on first frame, so the
+  // handoff is seamless (both surfaces are black with the wordmark).
+  useEffect(() => {
+    if (!fontsLoaded) return;
+    SplashScreen.hideAsync().catch(() => {
+      // ignore — already hidden, fast-refresh, etc.
+    });
+  }, [fontsLoaded]);
 
   if (!fontsLoaded) return null;
 
@@ -52,6 +73,9 @@ function RootLayout() {
         <ResearchOverlay />
         <ProfileOverlay />
         <TodosOverlay />
+        {/* Launch animation — mounted last so it sits above all overlays. Plays
+            once per cold start, then unmounts itself. */}
+        <SplashAnimation />
       </SafeAreaProvider>
     </View>
   );
