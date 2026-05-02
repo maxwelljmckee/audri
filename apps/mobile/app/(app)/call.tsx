@@ -42,12 +42,17 @@ export default function CallScreen() {
     return () => clearInterval(i);
   }, [status]);
 
-  // Hang-up: ending → tear down + return home.
+  // Hang-up: ending → tear down + return home. If end() returns false the
+  // /calls/:id/end post failed and end() has already flipped the store to
+  // 'dropped' — DON'T auto-route home; the dropped-call screen will render
+  // and the user gets retry/dismiss control. The launch sweep will retry
+  // recovery on next app start.
   useEffect(() => {
     if (status !== 'ending') return;
     let cancelled = false;
-    void end().then(() => {
+    void end().then((ok) => {
       if (cancelled) return;
+      if (!ok) return;
       setTimeout(() => {
         reset();
         setElapsed(0);

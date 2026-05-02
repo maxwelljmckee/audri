@@ -12,6 +12,7 @@ import {
   clearCallSnapshot,
   saveCallSnapshot,
 } from '../callRecovery';
+import { captureClientError } from '../sentry';
 import { supabase } from '../supabase';
 import { useCallStore } from '../useCallStore';
 import { type AudioInputHandle, createAudioInput } from './audio-input';
@@ -33,7 +34,11 @@ export type CallType = 'generic' | 'onboarding';
 
 export interface UseCallResult {
   start: (opts?: { callType?: CallType }) => Promise<void>;
-  end: () => Promise<void>;
+  // Returns true if /calls/:id/end posted successfully (or there was nothing
+  // to post). False means the post failed; the call has been marked dropped
+  // and the caller should NOT auto-route home — let the user see the error
+  // and decide. Snapshot stays on disk for the launch sweep on next start.
+  end: () => Promise<boolean>;
   transcript: TranscriptTurn[];
   error: string | null;
 }
@@ -245,13 +250,20 @@ export function useCall(): UseCallResult {
           : 'Greet me now.',
       );
     } catch (e) {
+      // Surface to Sentry — silent setError-only handling meant connection
+      // failures were invisible. The dropped-call screen still shows the
+      // user the error message via `error` state; this just adds a server-
+      // side trail.
+      captureClientError('call-start-failed', e, {
+        sessionId: sessionIdRef.current,
+      });
       setError(e instanceof Error ? e.message : String(e));
       teardown();
       useCallStore.getState().markDropped();
     }
   }, [persistSnapshot, refreshTranscript, teardown]);
 
-  const end = useCallback(async () => {
+  const end = useCallback(async (): Promise<boolean> => {
     generationRef.current++; // invalidate any in-flight start
     transcriptRef.current.finalizeAgentTurn();
     refreshTranscript();
@@ -264,33 +276,62 @@ export function useCall(): UseCallResult {
 
     if (!sessionId || !startedAt) {
       void clearCallSnapshot();
-      return;
+      return true; // nothing to post → treat as ok
     }
 
     try {
       const { data } = await supabase.auth.getSession();
       const jwt = data.session?.access_token;
-      if (!jwt) return;
+      if (!jwt) throw new Error('not signed in');
 
-      const r = await fetch(`${API_URL}/calls/${sessionId}/end`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({
-          transcript: finalTranscript,
-          started_at: startedAt.toISOString(),
-          ended_at: new Date().toISOString(),
-          end_reason: 'user_ended',
-        }),
-      });
+      // 10s timeout on the post. Without this, RN's fetch will sit on a
+      // dead connection (e.g. WebSocket killed during screen lock) for
+      // 60s+ before iOS gives up — that's the "thread-locking task" feel
+      // we hit on 2026-05-01. Fail fast, surface to the user, fall back to
+      // the launch sweep on next app start.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+      let r: Response;
+      try {
+        r = await fetch(`${API_URL}/calls/${sessionId}/end`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            transcript: finalTranscript,
+            started_at: startedAt.toISOString(),
+            ended_at: new Date().toISOString(),
+            end_reason: 'user_ended',
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        throw new Error(`end failed: ${r.status} ${body.slice(0, 200)}`);
+      }
+
       // Only clear the snapshot once the server has accepted the close.
       // If /end failed, the snapshot stays on disk so the launch sweep can
       // retry next time.
-      if (r.ok) {
-        await clearCallSnapshot();
-      }
-    } catch {
-      // Server preserved the transcript at /start; failure here is non-fatal.
-      // Snapshot stays on disk for the launch sweep to retry.
+      await clearCallSnapshot();
+      return true;
+    } catch (err) {
+      // Surface to Sentry + the user. Silent failures here meant orphan
+      // call_transcripts rows + lost transcripts (see incident 2026-05-01).
+      // Snapshot stays on disk for the launch sweep on next app start.
+      captureClientError('call-end-post-failed', err, {
+        sessionId,
+        turnCount: finalTranscript.length,
+      });
+      setError(err instanceof Error ? err.message : String(err));
+      useCallStore.getState().markDropped();
+      return false;
     }
   }, [refreshTranscript, teardown]);
 

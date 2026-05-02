@@ -26,7 +26,7 @@ const FADE_MS = 300;
 const BREATH_MAX_SCALE = 1.05;
 
 const FONT_FAMILY = "Comfortaa_400Regular";
-const FONT_SIZE = 60;
+const FONT_SIZE = 48;
 const TEXT_COLOR = "#e8f1ff"; // azure-text
 const BG_COLOR = "#0a1628"; // azure-bg
 
