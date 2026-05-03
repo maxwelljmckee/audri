@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRef } from 'react';
-import { Pressable, type PressableProps, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { OriginRect } from '../lib/usePluginOverlay';
+import { GlassButton } from './buttons';
 
 interface Props {
   label: string;
@@ -10,12 +11,15 @@ interface Props {
   onPress?: () => void;
 }
 
-// Tile = colored icon-card with label below (separate text). Press captures
-// own screen rect via measureInWindow → fed to overlay for scale animation.
+// Tile = glass icon-card with label below (separate text). Press captures
+// the card's own screen rect via measureInWindow → fed to the plugin
+// overlay for the scale-from-tile launch animation. The wrapping View
+// holds the ref since GlassButton's hit-target is the right surface to
+// measure from.
 export function PluginTile({ label, icon, onPress, onPressWithOrigin }: Props) {
   const ref = useRef<View>(null);
 
-  const handlePress: PressableProps['onPress'] = () => {
+  const handlePress = () => {
     if (!onPressWithOrigin) {
       onPress?.();
       return;
@@ -32,12 +36,9 @@ export function PluginTile({ label, icon, onPress, onPressWithOrigin }: Props) {
   return (
     <View style={styles.column}>
       <View ref={ref} collapsable={false} style={styles.cardWrap}>
-        <Pressable
-          onPress={handlePress}
-          style={({ pressed }) => [styles.card, pressed && styles.pressed]}
-        >
+        <GlassButton onPress={handlePress} style={styles.card}>
           <Ionicons name={icon} size={26} color="#7aa3d4" />
-        </Pressable>
+        </GlassButton>
       </View>
       <Text style={styles.label} numberOfLines={1}>
         {label}
@@ -49,14 +50,7 @@ export function PluginTile({ label, icon, onPress, onPressWithOrigin }: Props) {
 const styles = StyleSheet.create({
   column: { flex: 1, alignItems: 'center', gap: 6 },
   cardWrap: { width: '100%', aspectRatio: 1 },
-  card: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-    backgroundColor: '#11203a',
-  },
-  pressed: { opacity: 0.7 },
+  card: { flex: 1, borderRadius: 16 },
   label: {
     color: '#e8f1ff',
     fontSize: 12,

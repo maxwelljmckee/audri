@@ -3,6 +3,7 @@ import { router } from "expo-router";
 import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { CallButton } from "../../components/buttons";
 import { PluginTile } from "../../components/PluginTile";
 import { useCallStore } from "../../lib/useCallStore";
 import { firstNameFromUser, timeAwareGreeting } from "../../lib/greeting";
@@ -106,9 +107,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.fabRow}>
-          <Pressable onPress={openCall} style={styles.fab}>
-            <Ionicons name="call-outline" size={28} color="#fff" />
-          </Pressable>
+          <CallButton mode="start" onPress={openCall} />
         </View>
       </SafeAreaView>
     </View>
@@ -153,13 +152,5 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     paddingBottom: 16,
-  },
-  fab: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#4d8fdb",
-    alignItems: "center",
-    justifyContent: "center",
   },
 });

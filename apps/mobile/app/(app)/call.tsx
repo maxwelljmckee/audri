@@ -1,8 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { CallButton } from '../../components/buttons';
 import { CallEndedDropped } from '../../components/CallEndedDropped';
 import { Orb } from '../../components/Orb';
 import { useCall } from '../../lib/gemini/useCall';
@@ -93,18 +93,11 @@ export default function CallScreen() {
           <Orb />
         </View>
 
-        <Pressable
+        <CallButton
+          mode="end"
           onPress={endCall}
           disabled={status !== 'connected'}
-          style={[styles.hangup, { opacity: status === 'connected' ? 1 : 0.5 }]}
-        >
-          <Ionicons
-            name="call"
-            size={26}
-            color="#fff"
-            style={{ transform: [{ rotate: '135deg' }] }}
-          />
-        </Pressable>
+        />
 
         {error && (
           <Text style={styles.errorText} numberOfLines={2}>
@@ -121,13 +114,5 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, alignItems: 'center', paddingBottom: 48 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28 },
   timer: { color: '#e4e4e7', fontSize: 32, fontWeight: '600' },
-  hangup: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ef4444',
-  },
   errorText: { color: '#f87171', fontSize: 12, marginTop: 8, paddingHorizontal: 24, textAlign: 'center' },
 });

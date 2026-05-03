@@ -14,16 +14,24 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSplashAnimation } from "../lib/useSplashAnimation";
 
-// Choreography (ms). Hold → collapse → settle → fade → complete.
-const HOLD_MS = 700;
+// Choreography (ms). Pre-roll → hold (with breath+lift) → collapse → settle
+// → fade → complete. Pre-roll is a static beat at rest before any motion
+// starts, so the wordmark registers before it begins to move.
+const PRE_ROLL_MS = 200;
+const HOLD_MS = 800;
 const COLLAPSE_MS = 200;
-const SETTLE_MS = 400;
+const SETTLE_MS = 500;
 const FADE_MS = 300;
 
 // Breath (one-way scale-up during the hold — grows gently, then stays at
 // peak through collapse + settle + fade). Amplitude kept small so it reads
 // as "alive" rather than "moving."
-const BREATH_MAX_SCALE = 1.05;
+const BREATH_MAX_SCALE = 1.08;
+
+// Subtle upward drift paired with the breath — the wordmark gently lifts
+// during the hold, then stays at peak Y through the collapse + settle + fade.
+// Negative Y in RN coordinate space = up.
+const LIFT_MAX_Y = -4;
 
 const FONT_FAMILY = "Comfortaa_400Regular";
 const FONT_SIZE = 48;
@@ -44,30 +52,44 @@ export function SplashAnimation() {
   const collapse = useSharedValue(1);
   const overlayOpacity = useSharedValue(1);
   const breathe = useSharedValue(1);
+  const lift = useSharedValue(0);
+  // Wordmark opacity during the intro. Starts at 0 (invisible during the
+  // pre-roll beat), fades to 1 paired with breath + lift, stays at 1 through
+  // collapse + settle. Distinct from `overlayOpacity` which fades the whole
+  // overlay out at the very end of the choreography.
+  const textOpacity = useSharedValue(0);
 
-  // Start the breath as soon as the component mounts — independent of the
-  // udr-width measurement, so the wordmark is "alive" from the first frame.
-  // Single one-way grow timed to the hold so the peak coincides with the
-  // collapse start; ease-out so growth decelerates into rest. Stays at
-  // peak scale through collapse + settle + fade.
+  // After the pre-roll: opacity + breath + lift all kick off together so
+  // the wordmark fades in while it grows + lifts. One-way, timed to the
+  // hold so the peak coincides with the collapse start; ease-out so growth
+  // decelerates into rest. Stays at peak through collapse + settle + fade.
   useEffect(() => {
     if (done) return;
-    breathe.value = withTiming(BREATH_MAX_SCALE, {
-      duration: HOLD_MS,
-      easing: Easing.out(Easing.cubic),
-    });
-  }, [done, breathe]);
+    const easing = Easing.out(Easing.cubic);
+    textOpacity.value = withDelay(
+      PRE_ROLL_MS,
+      withTiming(1, { duration: HOLD_MS, easing }),
+    );
+    breathe.value = withDelay(
+      PRE_ROLL_MS,
+      withTiming(BREATH_MAX_SCALE, { duration: HOLD_MS, easing }),
+    );
+    lift.value = withDelay(
+      PRE_ROLL_MS,
+      withTiming(LIFT_MAX_Y, { duration: HOLD_MS, easing }),
+    );
+  }, [done, textOpacity, breathe, lift]);
 
   useEffect(() => {
     if (done) return;
     if (middleWidth === null) return;
 
     collapse.value = withDelay(
-      HOLD_MS,
+      PRE_ROLL_MS + HOLD_MS,
       withTiming(0, { duration: COLLAPSE_MS, easing: EASE }),
     );
 
-    const fadeStart = HOLD_MS + COLLAPSE_MS + SETTLE_MS;
+    const fadeStart = PRE_ROLL_MS + HOLD_MS + COLLAPSE_MS + SETTLE_MS;
     overlayOpacity.value = withDelay(
       fadeStart,
       withTiming(0, { duration: FADE_MS, easing: EASE }, (finished) => {
@@ -92,11 +114,13 @@ export function SplashAnimation() {
     opacity: overlayOpacity.value,
   }));
 
-  // Apply the breath to the row so all three letters scale together from
-  // the row's center. Layout-frame dimensions captured by onLayout are
-  // pre-transform, so the udr-width measurement stays valid throughout.
+  // Apply the breath + lift + intro opacity to the row so all three letters
+  // fade in, scale, and rise together. Layout-frame dimensions captured by
+  // onLayout are pre-transform, so the udr-width measurement stays valid
+  // throughout.
   const rowStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: breathe.value }],
+    opacity: textOpacity.value,
+    transform: [{ translateY: lift.value }, { scale: breathe.value }],
   }));
 
   if (done) return null;

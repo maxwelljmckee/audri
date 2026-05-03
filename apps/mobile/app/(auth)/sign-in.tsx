@@ -1,7 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { GlassButton } from '../../components/buttons';
 import { supabase } from '../../lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -63,31 +65,95 @@ export default function SignInScreen() {
     }
   }
 
+  // Stub handlers — Apple, Facebook, email come online one at a time as
+  // their backends are wired. Today: Google only; the others render but
+  // no-op so the layout is locked in.
+  const noop = () => {};
+
   return (
-    <View className="flex-1 items-center justify-center gap-8 bg-azure-bg px-8">
+    <View className="flex-1 items-center justify-center gap-10 bg-azure-bg px-8">
       <Text
         className="text-azure-text"
         style={{ fontSize: 36, fontFamily: 'Comfortaa_400Regular' }}
       >
         Audri
       </Text>
-      <Text className="text-center text-sm text-azure-text-muted">Sign in to continue.</Text>
 
-      <Pressable
-        onPress={signInWithGoogle}
-        disabled={busy}
-        className="w-full rounded-xl bg-azure-accent px-6 py-4 active:opacity-80"
-        style={{ opacity: busy ? 0.5 : 1 }}
-      >
-        <Text className="text-center text-base font-medium text-white">
-          {busy ? 'Opening Google…' : 'Continue with Google'}
-        </Text>
-      </Pressable>
+      <View style={styles.providerRow}>
+        <ProviderButton
+          label="Google"
+          icon="logo-google"
+          onPress={signInWithGoogle}
+          busy={busy}
+          disabled={busy}
+        />
+        <ProviderButton
+          label="Apple"
+          icon="logo-apple"
+          onPress={noop}
+          disabled={busy}
+        />
+        <ProviderButton
+          label="Facebook"
+          icon="logo-facebook"
+          onPress={noop}
+          disabled={busy}
+        />
+        <ProviderButton
+          label="Email"
+          icon="mail-outline"
+          onPress={noop}
+          disabled={busy}
+        />
+      </View>
 
       {err && <Text className="text-center text-xs text-red-400">{err}</Text>}
     </View>
   );
 }
+
+interface ProviderButtonProps {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  busy?: boolean;
+  disabled?: boolean;
+}
+
+function ProviderButton({ label, icon, onPress, busy, disabled }: ProviderButtonProps) {
+  return (
+    <GlassButton
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityLabel={`Sign in with ${label}`}
+      style={styles.providerButton}
+    >
+      <Ionicons name={icon} size={26} color="#e8f1ff" />
+      {busy ? <View style={styles.busyDot} /> : null}
+    </GlassButton>
+  );
+}
+
+const styles = StyleSheet.create({
+  providerRow: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  providerButton: {
+    flex: 1,
+    aspectRatio: 1,
+    borderRadius: 14,
+  },
+  busyDot: {
+    position: 'absolute',
+    bottom: 8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#4d8fdb', // azure-accent
+  },
+});
 
 function parseAuthUrl(url: string): Record<string, string> {
   // PKCE flow: ?code=... in query string. Implicit flow: #...tokens in fragment.

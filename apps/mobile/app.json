@@ -56,6 +56,10 @@
       "router": {},
       "eas": {
         "projectId": "2db2f14b-4d3b-448b-acba-9144450f3eeb"
+      },
+      "sentry": {
+        "organization": "audri-g4",
+        "project": "audri-mobile"
       }
     },
     "runtimeVersion": {
