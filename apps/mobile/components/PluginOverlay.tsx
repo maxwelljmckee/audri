@@ -1,6 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
-import { Dimensions, Pressable, StyleSheet, View } from 'react-native';
+import { Ionicons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
+import { useEffect, useState } from "react";
+import { Dimensions, Pressable, StyleSheet, View } from "react-native";
 import Animated, {
   Easing,
   interpolate,
@@ -8,11 +9,11 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
-} from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { type PluginKind, usePluginOverlay } from '../lib/usePluginOverlay';
+} from "react-native-reanimated";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { type PluginKind, usePluginOverlay } from "../lib/usePluginOverlay";
 
-const { width: SW, height: SH } = Dimensions.get('window');
+const { width: SW, height: SH } = Dimensions.get("window");
 const ANIM_DURATION = 320;
 
 interface Props {
@@ -64,9 +65,9 @@ export function PluginOverlay({ kind, title, children }: Props) {
     const w = interpolate(t.value, [0, 1], [fromW, SW]);
     const h = interpolate(t.value, [0, 1], [fromH, SH]);
     const radius = interpolate(t.value, [0, 1], [16, 0]);
-    const opacity = interpolate(t.value, [0, 0.15, 1], [0, 1, 1], 'clamp');
+    const opacity = interpolate(t.value, [0, 0.15, 1], [0, 1, 1], "clamp");
     return {
-      position: 'absolute',
+      position: "absolute",
       left: x,
       top: y,
       width: w,
@@ -77,20 +78,31 @@ export function PluginOverlay({ kind, title, children }: Props) {
   });
 
   const contentStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(t.value, [0.4, 1], [0, 1], 'clamp'),
+    opacity: interpolate(t.value, [0.4, 1], [0, 1], "clamp"),
   }));
 
   if (!mounted && !isOpen) return null;
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents={isOpen ? 'auto' : 'none'}>
+    <View
+      style={StyleSheet.absoluteFillObject}
+      pointerEvents={isOpen ? "auto" : "none"}
+    >
       <Animated.View style={[styles.backdrop, backdropStyle]}>
         <Pressable style={StyleSheet.absoluteFillObject} onPress={hide} />
       </Animated.View>
 
       <Animated.View style={[styles.sheet, sheetStyle]}>
+        {/* Gentle frosted-glass effect — blurs the LavaLamp showing through
+            the sheet's translucent azure tint. Sits as the first child so
+            it paints behind everything else inside the sheet. */}
+        <BlurView
+          intensity={30}
+          tint="dark"
+          style={StyleSheet.absoluteFillObject}
+        />
         <Animated.View style={[styles.fill, contentStyle]}>
-          <SafeAreaView edges={['top']} style={styles.fill}>
+          <SafeAreaView edges={["top"]} style={styles.fill}>
             <View style={styles.header}>
               <View style={styles.headerSpacer} />
               <View style={styles.titleWrap}>
@@ -112,29 +124,31 @@ const styles = StyleSheet.create({
   fill: { flex: 1 },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#000',
+    backgroundColor: "#000",
   },
   sheet: {
-    backgroundColor: '#0a1628',
-    overflow: 'hidden',
+    // Desaturated variant of azure-bg to match the LavaLamp's post-blur
+    // surface (which the user sees as muted, not the saturated #0a1628).
+    backgroundColor: "rgba(12, 19, 32, 0.8)",
+    overflow: "hidden",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#1f2f4d',
+    borderBottomColor: "#1f2f4d",
   },
   headerSpacer: { width: 32 },
-  titleWrap: { flex: 1, alignItems: 'center' },
-  title: { color: '#e8f1ff', fontSize: 17, fontWeight: '600' },
+  titleWrap: { flex: 1, alignItems: "center" },
+  title: { color: "#e8f1ff", fontSize: 17, fontWeight: "600" },
   close: {
     width: 32,
     height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 16,
-    backgroundColor: '#11203a',
+    backgroundColor: "#11203a",
   },
 });

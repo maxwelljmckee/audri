@@ -36,7 +36,11 @@ const LIFT_MAX_Y = -4;
 const FONT_FAMILY = "Comfortaa_400Regular";
 const FONT_SIZE = 48;
 const TEXT_COLOR = "#e8f1ff"; // azure-text
-const BG_COLOR = "#0a1628"; // azure-bg
+// Slightly desaturated + darker than azure-bg (#0a1628) so the surface
+// reads similarly to the LavaLamp's post-blur output, which the splash
+// fades onto. Tweak knob if it drifts: keep R/G close together, B only
+// modestly higher → muted-blue.
+const BG_COLOR = "#0c1320"; // rgb(12, 19, 32) — desat azure
 
 // Fast-out-slow-in cubic. Standard Material curve for "expressive" motion.
 const EASE = Easing.bezier(0.4, 0, 0.2, 1);

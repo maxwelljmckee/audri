@@ -14,7 +14,9 @@ import {
   isGlassEffectAPIAvailable,
   isLiquidGlassAvailable,
 } from "expo-glass-effect";
+import * as Haptics from "expo-haptics";
 import {
+  type GestureResponderEvent,
   Pressable,
   type PressableProps,
   StyleSheet,
@@ -65,6 +67,8 @@ export function GlassButton({
   blurIntensity = 50,
   blurTint = "dark",
   disabled,
+  onPress,
+  onLongPress,
   children,
   ...pressableProps
 }: GlassButtonProps) {
@@ -77,10 +81,27 @@ export function GlassButton({
   const radius = flatStyle.borderRadius;
   const childRadius = radius != null ? { borderRadius: radius } : undefined;
 
+  // Haptics on every successful press (skipped when disabled — the
+  // Pressable's `disabled` prop already short-circuits handlers in that
+  // case). Light buzz on tap, medium on long-press for a stronger sense
+  // of "you triggered the alternate action." Failures are swallowed:
+  // haptics aren't supported on simulators / older devices, and a missing
+  // tap-buzz isn't worth a crash.
+  const handlePress = (e: GestureResponderEvent) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onPress?.(e);
+  };
+  const handleLongPress = (e: GestureResponderEvent) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    onLongPress?.(e);
+  };
+
   return (
     <Pressable
       {...pressableProps}
       disabled={disabled}
+      onPress={onPress ? handlePress : undefined}
+      onLongPress={onLongPress ? handleLongPress : undefined}
       style={({ pressed }) => [
         // Press + disabled feedback consolidated here so consumers don't
         // have to re-implement them per call-site.

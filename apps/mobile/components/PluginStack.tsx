@@ -40,9 +40,15 @@ export function createPluginStack<
 // because each plugin's PluginOverlay shell already owns the title chrome
 // (the close button, animated title), and screens use a custom inline header
 // row for the back chevron + section label.
+//
+// `contentStyle.backgroundColor: 'transparent'` so the PluginOverlay shell's
+// translucent sheet (azure/80) is the only colored layer underneath the
+// content. Without this, the native-stack paints solid azure over the
+// shell's translucent bg, causing the content area to read fully opaque
+// while the header (rendered outside this stack) reads translucent.
 export const pluginStackScreenOptions: NativeStackNavigationOptions = {
   headerShown: false,
-  contentStyle: { backgroundColor: '#0a1628' },
+  contentStyle: { backgroundColor: 'transparent' },
   animation: 'slide_from_right',
   gestureEnabled: true,
   fullScreenGestureEnabled: true,

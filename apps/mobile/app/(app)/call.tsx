@@ -110,7 +110,7 @@ export default function CallScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0a1628' },
+  root: { flex: 1, backgroundColor: 'rgba(12, 19, 32, 0.8)' },
   safeArea: { flex: 1, alignItems: 'center', paddingBottom: 48 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28 },
   timer: { color: '#e4e4e7', fontSize: 32, fontWeight: '600' },
