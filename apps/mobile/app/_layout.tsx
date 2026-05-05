@@ -26,16 +26,9 @@ import "../global.css";
 // muddier than the input — the matching surfaces are pre-desaturated to
 // match what the eye reads off the lava lamp.
 const LAVA_BG = "#0a1628"; // rgb(10, 22, 40) — azure-bg
-
-// In-family steps (same blue hue, brighter than bg). Deltas roughly
-// +10 / +20 / +30 / +40 above bg in the dominant blue channel.
-// const LAVA_BLOB = "rgba(20, 40, 75, 0.5)"; // azure +1 — barely perceptible
-// const LAVA_BLOB = "rgba(25, 48, 85, 0.5)"; // azure +1 — barely perceptible
-// const LAVA_BLOB = "rgba(30, 55, 95, 0.5)"; // azure +2 — gentle luminous patches
-const LAVA_BLOB = "rgba(45, 75, 120, 0.5)"; // azure +3 — visible, still in-family
-
+const LAVA_BLOB = "rgba(25, 48, 85, 0.5)"; // azure +1 — barely perceptible
 const LAVA_COLORS = [LAVA_BLOB, LAVA_BLOB, LAVA_BLOB];
-const INTENSITY = 100;
+const INTENSITY = 80;
 
 // Init Sentry as early as possible at module load so any error during the
 // React render path is captured. DSN-gated so local dev w/o EXPO_PUBLIC_SENTRY_DSN
@@ -77,10 +70,10 @@ function RootLayout() {
     <View style={styles.root}>
       <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
         <LavaLamp
-          count={3}
+          count={5}
           colors={LAVA_COLORS}
           bgColor={LAVA_BG}
-          duration={20000}
+          duration={25000}
           intensity={INTENSITY}
           tint="dark"
         />

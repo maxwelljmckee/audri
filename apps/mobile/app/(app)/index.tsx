@@ -64,11 +64,11 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.greetingBlock}>
-          {/* <Text style={styles.greeting}>
+        {/* <View style={styles.greetingBlock}>
+          <Text style={styles.greeting}>
             {greeting}
             {firstName ? `, ${firstName}` : ''}.
-          </Text> */}
+          </Text>
           {me.status === "ready" && (
             <Text style={styles.subtext}>
               {me.data.agents.length} agent ·{" "}
@@ -81,7 +81,7 @@ export default function HomeScreen() {
           {me.status === "error" && (
             <Text style={styles.errorText}>/me error: {me.error}</Text>
           )}
-        </View>
+        </View> */}
 
         <View style={styles.grid}>
           <PluginTile

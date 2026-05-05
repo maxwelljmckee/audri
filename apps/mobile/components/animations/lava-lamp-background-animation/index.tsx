@@ -65,26 +65,35 @@ export function LavaLamp({
         alpha: 0.3,
       });
     return _colors.map((color, index) => {
-      const rand = randomNumber(5, 12) / 10;
+      // randomNumber(min, max) is inclusive on both ends. /10 maps to
+      // a [min/10, max/10] decimal. Radius = blob diameter as fraction
+      // of screen width / 2. Lowered the max from 12 → 10 to keep the
+      // largest blobs under width × 0.5 instead of width × 0.6.
+      const rand = randomNumber(5, 10) / 10;
       const radius = (width * rand) / 2;
-      // Constrain placement so the blob's CENTER stays on-screen for the
-      // entire rotation. The blob orbits around (width/2, cy) with orbit
-      // radius |cx - width/2|. To keep the orbit inside [0, height]
-      // vertically, that radius must be ≤ min(cy, height - cy).
-      //
-      // Two refinements (otherwise blobs near edges barely move and the
-      // surface looks dead):
-      //   1. Clamp cy to a middle band so every blob has a usable orbit.
-      //   2. Bias orbit radius toward the upper end of its available range
-      //      so motion is consistently visible across all blobs.
-      // The blob itself (with its radius) can still extend past the screen
-      // edges — only the center is constrained.
+      // Placement math:
+      //   - Each blob orbits around (width/2, cy) with orbit radius
+      //     |cx - width/2|.
+      //   - cy is sampled from a vertical band so blobs aren't too close
+      //     to the very top/bottom (their max orbit would be tiny there).
+      //   - orbitR is biased toward the upper end of its available range
+      //     so motion is consistently visible.
+      //   - OVERSHOOT_FRAC lets the blob's CENTER drift past each screen
+      //     edge by that fraction of the screen dimension. Set to 0 for
+      //     "centers strictly on-screen"; raise to allow more drift.
       const Y_BAND_MIN = 0.2;
       const Y_BAND_MAX = 0.8;
       const ORBIT_MIN_FRAC = 0.6;
+      const OVERSHOOT_FRAC = 0.2;
+      const overshootY = height * OVERSHOOT_FRAC;
+      const overshootX = width * OVERSHOOT_FRAC;
       const cy =
         height * Y_BAND_MIN + Math.random() * height * (Y_BAND_MAX - Y_BAND_MIN);
-      const maxOrbitR = Math.min(cy, height - cy, width / 2);
+      const maxOrbitR = Math.min(
+        cy + overshootY,
+        height - cy + overshootY,
+        width / 2 + overshootX,
+      );
       const orbitR =
         maxOrbitR * (ORBIT_MIN_FRAC + Math.random() * (1 - ORBIT_MIN_FRAC));
       const offsetFromCenter = (Math.random() * 2 - 1) * orbitR;

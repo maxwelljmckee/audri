@@ -81,6 +81,18 @@ export function GlassButton({
   const radius = flatStyle.borderRadius;
   const childRadius = radius != null ? { borderRadius: radius } : undefined;
 
+  // Colored overlay used on the BlurView fallback path to give tinted
+  // buttons saturation that matches what Liquid Glass produces natively.
+  // The previous "Pressable bg behind the BlurView" approach got
+  // attenuated by the blur's dark tint and read as muddy/grey. This
+  // sits ON TOP of the BlurView (BlurView still provides the frosted
+  // texture; this layer adds the color). Only rendered inside the
+  // BlurView branch of the JSX below — Liquid Glass path is unaffected
+  // because that branch never mounts this overlay.
+  // Alpha tunable: `80` ~50% / `99` ~60% / `cc` ~80%. Higher = more pop.
+  const fallbackTintOverlay =
+    tintColor && /^#[0-9a-fA-F]{6}$/.test(tintColor) ? `${tintColor}99` : null;
+
   // Haptics on every successful press (skipped when disabled — the
   // Pressable's `disabled` prop already short-circuits handlers in that
   // case). Light buzz on tap, medium on long-press for a stronger sense
@@ -106,6 +118,11 @@ export function GlassButton({
         // Press + disabled feedback consolidated here so consumers don't
         // have to re-implement them per call-site.
         { opacity: disabled ? 0.4 : pressed ? 0.7 : 1, overflow: "hidden" },
+        // Subtle edge + surface wash substitutes for the bright halo
+        // Liquid Glass paints natively. Only on the BlurView fallback —
+        // on the Liquid Glass path GlassView produces its own edge and
+        // these would stack on top, doubling the highlight.
+        !LIQUID_GLASS_OK && FALLBACK_SURFACE_STYLE,
         style,
       ]}
     >
@@ -117,11 +134,23 @@ export function GlassButton({
           isInteractive={false}
         />
       ) : (
-        <BlurView
-          intensity={blurIntensity}
-          tint={blurTint}
-          style={[StyleAbsoluteFill, childRadius]}
-        />
+        <>
+          <BlurView
+            intensity={blurIntensity}
+            tint={blurTint}
+            style={[StyleAbsoluteFill, childRadius]}
+          />
+          {fallbackTintOverlay ? (
+            <View
+              pointerEvents="none"
+              style={[
+                StyleAbsoluteFill,
+                childRadius,
+                { backgroundColor: fallbackTintOverlay },
+              ]}
+            />
+          ) : null}
+        </>
       )}
       <View style={[StyleAbsoluteFill, StyleCenter, contentStyle]}>
         {children}
@@ -142,4 +171,17 @@ const StyleAbsoluteFill = {
 const StyleCenter = {
   alignItems: "center" as const,
   justifyContent: "center" as const,
+};
+// Light edge + faint surface wash. Tunable knobs:
+//   - borderWidth: 1 reads as a hairline at @2x/@3x. Bump to 1.5 for more
+//     definition.
+//   - borderColor alpha: 0.18 is "barely there" white. Push to 0.25-0.35
+//     to make the edge more pronounced.
+//   - backgroundColor alpha: 0.04 lets the surface glow faintly even
+//     when the BlurView underneath captures a dark bg. Drop to 0.02 for
+//     near-invisible, push to 0.08 for a more pronounced wash.
+const FALLBACK_SURFACE_STYLE = {
+  borderWidth: 1,
+  borderColor: "rgba(255, 255, 255, 0.3)",
+  backgroundColor: "rgba(255, 255, 255, 0.04)",
 };
