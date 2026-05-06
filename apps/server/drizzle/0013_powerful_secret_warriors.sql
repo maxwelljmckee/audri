@@ -1,0 +1,16 @@
+-- v0.1.1: claim-level audit dump on call_transcripts.
+--
+-- Persists Pro fan-out's structured response (creates / updates / skipped /
+-- tasks), with PII regex-redacted, alongside the transcript row. Used for
+-- incident debugging — see apps/worker/src/ingestion/redact.ts and
+-- specs/fan-out-prompt.md for the design rationale + redaction patterns.
+--
+-- The other six statements drizzle-kit emitted alongside this one were
+-- snapshot-drift duplicates of work already shipped in 0005 (citations),
+-- 0007 (research_outputs.title), 0008 (ingestion_status enum + columns),
+-- and 0012 (user_settings.tombstoned_at) — they would have failed against
+-- the actual DB state with "type/column already exists." Stripped to keep
+-- this migration as a clean forward delta. The 0013 snapshot still
+-- captures the full schema state correctly, so future drizzle-kit generates
+-- will see a clean baseline.
+ALTER TABLE "call_transcripts" ADD COLUMN "pro_fan_out_response" jsonb;
