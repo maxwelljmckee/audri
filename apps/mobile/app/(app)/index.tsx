@@ -1,6 +1,6 @@
-import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { useEffect } from "react";
+import { FontAwesome6, Ionicons } from "@expo/vector-icons";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CallButton } from "../../components/buttons";
@@ -25,8 +25,33 @@ export default function HomeScreen() {
   const greeting = timeAwareGreeting();
   const firstName = firstNameFromUser(sessionUser);
 
-  const startCall = useCallStore((s) => s.startCall);
+  const callStatus = useCallStore((s) => s.status);
   const showOverlay = usePluginOverlay((s) => s.show);
+
+  // True when a call is alive somewhere in the background. Idle = no
+  // active session. Anything else (connecting / connected / ending /
+  // dropped) means the FAB should rejoin instead of starting fresh.
+  const callActive = callStatus !== 'idle';
+
+  // The FAB visuals (icon + helper text) lag behind callActive on the
+  // call-START path so the stack-nav animation finishes before the icon
+  // swaps to PhoneForwarded — without this, returning to home from /call
+  // shows the new icon already painted during the slide-in.
+  // Call-END is synchronous: reset the moment callActive flips so the
+  // home FAB shows the default icon BEFORE the slide-in begins, instead
+  // of after it completes (which would read as a stale → fresh pop).
+  const ICON_SWAP_DELAY = 350;
+  const [displayCallActive, setDisplayCallActive] = useState(callActive);
+  useFocusEffect(
+    useCallback(() => {
+      if (!callActive) {
+        setDisplayCallActive(false);
+        return;
+      }
+      const t = setTimeout(() => setDisplayCallActive(true), ICON_SWAP_DELAY);
+      return () => clearTimeout(t);
+    }, [callActive]),
+  );
 
   // Boot RxDB sync on home so the wiki overlay has data ready when opened.
   useRxdbReady();
@@ -49,8 +74,13 @@ export default function HomeScreen() {
     await supabase.auth.signOut();
   }
 
+  // Home no longer flips status to 'connecting'. call.tsx owns the
+  // session lifecycle: on mount with status === 'idle' it kicks start();
+  // on mount with any other status it just rejoins without re-starting.
+  // Keeping status flips here would make the home FAB briefly read as
+  // "Call in progress" during the route transition AND short-circuit
+  // call.tsx's idle gate so the new session never gets opened.
   function openCall() {
-    startCall();
     router.push("/call");
   }
 
@@ -107,7 +137,29 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.fabRow}>
-          <CallButton mode="start" onPress={openCall} />
+          <CallButton
+            mode="start"
+            onPress={openCall}
+            accessibilityLabel={
+              displayCallActive ? 'Return to call in progress' : 'Start call'
+            }
+          >
+            {displayCallActive ? (
+              <FontAwesome6 name="arrow-right" size={28} color="#ffffff" />
+            ) : undefined}
+          </CallButton>
+          {/* Always render the helper-text slot so the FAB above stays
+              at the same y position whether or not the call is active.
+              Placeholder space keeps the Text's line height occupied;
+              opacity hides it when there's nothing to say. Uses the
+              delayed displayCallActive so it visually swaps in sync
+              with the icon, after the stack-nav animation completes. */}
+          <Text
+            style={[styles.fabSubtext, { opacity: displayCallActive ? 1 : 0 }]}
+            numberOfLines={1}
+          >
+            {displayCallActive ? 'Call in progress' : ' '}
+          </Text>
         </View>
       </SafeAreaView>
     </View>
@@ -152,5 +204,11 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     alignItems: "center",
     paddingBottom: 16,
+    gap: 8,
+  },
+  fabSubtext: {
+    color: "#7aa3d4",
+    fontSize: 13,
+    letterSpacing: 1,
   },
 });

@@ -152,7 +152,26 @@ For each claim, in order:
 
 2. **Existing-candidate match.** If the claim's subject corresponds to an existing `touched_pages` slug, route there. Use aliases, contextual disambiguation, and the page's `agent_abstract` to confirm match. When the candidate set contains multiple plausible matches (e.g., two Sarahs), use contextual cues to pick one; if ambiguous, skip with `reason: "ambiguous subject across candidates"`.
 
-3. **New-candidate match.** If the claim introduces an entity Flash flagged in `new_pages`, route to that proposed create. Pro may override Flash's proposed `type` or `parent_slug` if the transcript makes a different choice clearer (e.g., Flash said `concept`, transcript clearly establishes it's a `project`). The override is silent — no need to flag.
+3. **New-candidate match.** If the claim introduces an entity Flash flagged in `new_pages`, route to that proposed create. Pro may override Flash's proposed `type` if the transcript makes a different choice clearer (e.g., Flash said `concept`, transcript clearly establishes it's a `project`). The override is silent — no need to flag.
+
+**Type-bucket allow-list — load-bearing.** The wiki has exactly **three** legitimate top-level type-organized hierarchies, all seeded at signup:
+- `profile` (with sub-pages `profile/goals`, `profile/work`, etc.)
+- `todos` (with status buckets `todos/todo`, `todos/done`, etc.)
+- `projects` (with individual project pages as direct children)
+
+For every other page type (concept, person, place, org, source, event, note), **there is no type-bucket parent**. Pro must never invent or use parents like `concepts`, `places`, `people`, `events` — those buckets are explicitly *not allowed to exist*. Setting `parent_slug` is a SEMANTIC choice, not a type-categorical one. Heuristics:
+- A new project → `parent_slug: "projects"` (default), or a more specific semantic parent if obvious (a sub-project under its parent project).
+- A new todo → `parent_slug: "todos/todo"` (or a different status bucket if the user specified one).
+- A new sub-profile area → parent is the relevant `profile/*` page.
+- A new concept developed in a project's context → parent is that project.
+- A new person in the context of an organization → parent may be that org, or null (top-level) — judge from salience.
+- Otherwise → `parent_slug: null`. Top-level entity pages are FINE. Better a flat top level than an invented type-bucket.
+
+When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly. (Forward-looking: once Flash emits `proposed_parent_slug` per the v0.1.1 prefilter work, Pro starts from that hint and may override per the same heuristic. Flash will be subject to the same allow-list.)
+
+**Explicit user direction overrides heuristics.** If during the call the user told Audri where to file something ("nest this under Consensus", "make it top-level", "put it under my goals"), the transcript carries that direction. Pro respects it over its own semantic inference. The Live Agent's "ask when ambiguous" behavior (see `system-prompt.ts` and `specs/conversational-routing.md`'s Autonomy principle extended to structural intent) is the upstream half of this contract; Pro is the downstream half.
+
+**2026-05-06 incident — what this rule prevents.** A call about creating a new project "Consensus" with sub-topics "Social Technology" and "Interdependence" produced: a Consensus page parented under an invented `Projects` bucket (correct now that `projects` is seeded — but at the time, Pro hallucinated it), and the two sub-topic concepts filed under an invented `Concepts` top-level bucket instead of nesting under Consensus. Both failure modes are blocked by the rule above: `concepts` is not a legitimate type-bucket; semantic nesting (concept under its parent project) is the correct pattern.
 
 4. **No candidate fits → skip.** If a claim's subject doesn't correspond to any existing or proposed candidate, skip the claim. Add it to `skipped` with `reason: "no matching candidate"`. Do NOT invent a new entity outside Flash's `new_pages` plan. MVP scope — see §6.4 of the spec / `notes/ingestion-pipeline.md` for refactor paths if Flash recall becomes a problem.
 
@@ -161,6 +180,14 @@ For each claim, in order:
 #### Empty-update suppression
 
 If, after stages 2–3, Pro has no meaningful claim to write to an existing candidate from `touched_pages`, omit it from `updates` entirely and add it to `skipped` with `reason: "no substantive claim on re-read"`. Do not emit an `update` entry that only changes `agent_abstract` cosmetically.
+
+#### Section creation on updates
+
+When a routed claim has a clear target page but doesn't fit any existing section on that page, Pro must CREATE a new section rather than skipping. The section operations schema supports it — `{ title, content, snippets }` with no `id` triggers a backend insert.
+
+Skipping is for irrelevance, restatement, or already-covered content. It is NOT a fallback for "no existing section fits." Made concrete by the **2026-05-02 incident**: the user explicitly said "make a note in Audri's backlog about X" on a page with no Backlog section; Pro skipped because no fitting section existed. Correct behavior: create a `title: "Backlog"` section containing the new note.
+
+When the user explicitly directs a write to a target ("make a note in X", "add this to Y", "put this under Z"), Pro must always write — creating a new section if needed. New section titles should be specific and informative ("Backlog", "Decisions log", "Open questions about X", "Risks", "Next steps") — not generic labels like "Notes" or "Other".
 
 #### Multi-target phrasing
 

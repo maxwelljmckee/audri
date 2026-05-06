@@ -456,3 +456,10 @@ This is a companion to `todos.md` (decision checklist) and `architecture.md` (cu
 - **Why:** Eliminates a pointless rename step; prompt reads like a data contract; easier to grep LLM output against the DB schema.
 - **Gives up:** Nothing meaningful.
 - **Revisit if:** N/A.
+
+### Lava lamp: pause rotation while plugin overlays are open (vs. unmount, or no-op)
+- **Chose (v0.1.1):** When any plugin overlay is open, freeze the lava lamp's blob rotation in place via `cancelAnimation`; resume from the same angle on close. The full-screen `BlurView` and `bgColor` continue to render.
+- **Passed on:** (a) Doing nothing — leave the rotation running under a covered surface. (b) Unmounting the entire `<LavaLamp>` while overlays are open and remounting on close, which would tear down the persistent BlurView for additional GPU savings.
+- **Why:** The pause is a one-line wire-up (`paused={overlayOpen}`) that eliminates JS animation work for hidden motion. Honest about the limit: the dominant GPU cost in this setup is the persistent full-screen BlurView, which a pause alone doesn't address. Unmount-on-overlay would, but adds visual recompute on every close and felt like premature optimization at MVP scale (one user, no observed frame drops).
+- **Gives up:** ~5–10% of the per-frame budget that the persistent blur composition still consumes regardless of whether the surface is visible. Plus the same continuous blur work on the call screen, where the translucent azure sheet also covers most of the lava lamp.
+- **Revisit if:** TestFlight telemetry shows real frame drops when an overlay is open, or when running the app on lower-end devices (iPhone 12-class and older). The next step is replacing `paused={overlayOpen}` with `{!overlayOpen && <LavaLamp ... />}` — full unmount/remount — and extending the same logic to the call screen. Another lever: drop the per-circle BlurView at intensity=5 inside each blob (iOS-only in the original component, near-zero visual contribution for 5 extra blur passes per frame).

@@ -1,11 +1,12 @@
 import { BlurView } from "expo-blur";
 import randomColor from "randomcolor";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Platform, StyleSheet, useWindowDimensions, View } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   useAnimatedStyle,
-  useDerivedValue,
+  useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
@@ -29,6 +30,10 @@ type LavaLampProps = {
    *  washes a dark theme to white. Default kept as 'light' for backward
    *  compatibility; pass 'dark' on dark themes. */
   tint?: "light" | "dark" | "default";
+  /** When true, freezes each blob's rotation at its current angle. Use to
+   *  pause the animation when the surface isn't visible (e.g. a plugin
+   *  overlay is covering it) — saves continuous GPU work for nothing. */
+  paused?: boolean;
 };
 
 type Circle = {
@@ -42,6 +47,7 @@ type CircleProps = {
   circle: Circle;
   duration?: number;
   withBlur?: boolean;
+  paused?: boolean;
 };
 
 export function LavaLamp({
@@ -52,6 +58,7 @@ export function LavaLamp({
   duration,
   bgColor,
   tint = "light",
+  paused = false,
 }: LavaLampProps) {
   const { width, height } = useWindowDimensions();
   const circles = useMemo<Circle[]>(() => {
@@ -121,6 +128,7 @@ export function LavaLamp({
             circle={circle}
             duration={duration}
             withBlur={intensity !== 0}
+            paused={paused}
           />
         );
       })}
@@ -133,23 +141,34 @@ export function LavaLamp({
   );
 }
 
-function Circle({ circle, duration = 10000, withBlur }: CircleProps) {
-  // possible a full circle rotation?
-  const randRotation = Math.random() * 360;
+function Circle({ circle, duration = 10000, withBlur, paused }: CircleProps) {
+  // Stable random seed for the rotation start angle. useRef holds it
+  // across re-renders so pause/resume cycles don't pick a new angle.
+  const seedRef = useRef(Math.random() * 360);
+  const rotation = useSharedValue(seedRef.current);
 
-  const rotation = useDerivedValue(() => {
-    return withRepeat(
+  // Lifecycle:
+  //   - On mount (paused=false): kick off the infinite rotation from the
+  //     seed angle.
+  //   - On pause: cancelAnimation freezes the shared value at its current
+  //     angle.
+  //   - On resume: restart the rotation FROM the current angle so the
+  //     blob picks up where it left off (no jump).
+  useEffect(() => {
+    if (paused) {
+      cancelAnimation(rotation);
+      return;
+    }
+    const start = rotation.value;
+    rotation.value = withRepeat(
       withSequence(
-        withTiming(randRotation, { duration: 0 }),
-        withTiming(randRotation + 360, {
-          duration,
-          easing: Easing.linear,
-        })
+        withTiming(start, { duration: 0 }),
+        withTiming(start + 360, { duration, easing: Easing.linear }),
       ),
-      -1, // also as Infinity
-      false // no repeat reverse
+      -1,
+      false,
     );
-  }, [duration]);
+  }, [paused, duration, rotation]);
 
   const stylez = useAnimatedStyle(() => {
     return {

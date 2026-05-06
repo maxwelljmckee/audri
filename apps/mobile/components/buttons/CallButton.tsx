@@ -6,6 +6,7 @@
 // (start) and rose-500 (end). Icon stays white in both modes for contrast.
 
 import { Ionicons } from '@expo/vector-icons';
+import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { GlassButton } from './GlassButton';
 
@@ -24,6 +25,11 @@ export interface CallButtonProps {
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
+  /** Optional icon override. When provided, renders this content instead
+   *  of the default phone glyph. Use for state variants like the home
+   *  FAB's "Call in progress" indicator (lucide PhoneCall). Size + tint
+   *  per-mode are preserved either way. */
+  children?: ReactNode;
 }
 
 export function CallButton({
@@ -32,7 +38,20 @@ export function CallButton({
   disabled,
   style,
   accessibilityLabel,
+  children,
 }: CallButtonProps) {
+  // Default content: phone glyph, rotated 135° for 'end' to match the iOS
+  // hung-up convention. Consumers can pass `children` to render a custom
+  // icon while keeping the rest of the CallButton chrome.
+  const defaultIcon = (
+    <Ionicons
+      name="call"
+      size={ICON_SIZE}
+      color={ICON_COLOR}
+      style={mode === 'end' ? { transform: [{ rotate: '135deg' }] } : undefined}
+    />
+  );
+
   return (
     <GlassButton
       onPress={onPress}
@@ -42,13 +61,7 @@ export function CallButton({
       accessibilityRole="button"
       style={[{ width: SIZE, height: SIZE, borderRadius: SIZE / 2 }, style]}
     >
-      <Ionicons
-        name="call"
-        size={ICON_SIZE}
-        color={ICON_COLOR}
-        // 'end' = the iOS-style hung-up rotation. Same icon, 135° turn.
-        style={mode === 'end' ? { transform: [{ rotate: '135deg' }] } : undefined}
-      />
+      {children ?? defaultIcon}
     </GlassButton>
   );
 }

@@ -12,7 +12,9 @@ import { ResearchOverlay } from "../components/ResearchOverlay";
 import { SplashAnimation } from "../components/SplashAnimation";
 import { TodosOverlay } from "../components/TodosOverlay";
 import { WikiOverlay } from "../components/WikiOverlay";
+import { CallProvider } from "../lib/CallContext";
 import { Sentry, initSentry } from "../lib/sentry";
+import { usePluginOverlay } from "../lib/usePluginOverlay";
 import "../global.css";
 
 // Lava lamp blob set — blob color is a brighter step within the same
@@ -59,6 +61,12 @@ function RootLayout() {
     });
   }, [fontsLoaded]);
 
+  // Pause the lava-lamp animation while any plugin overlay is open. The
+  // overlay's translucent azure sheet covers the surface anyway, so the
+  // motion is mostly invisible — pausing cuts continuous GPU work that
+  // wasn't producing visible value.
+  const overlayOpen = usePluginOverlay((s) => s.open) !== null;
+
   if (!fontsLoaded) return null;
 
   return (
@@ -76,29 +84,36 @@ function RootLayout() {
           duration={25000}
           intensity={INTENSITY}
           tint="dark"
+          paused={overlayOpen}
         />
       </View>
       <SafeAreaProvider>
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: "transparent" },
-          }}
-        >
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(app)" />
-        </Stack>
-        <StatusBar style="light" />
-        {/* Plugin overlays mount at app root so navigation away (e.g., to /call)
-            doesn't tear them down. Each handles its own visibility via the
-            plugin-overlay store. */}
-        <WikiOverlay />
-        <ResearchOverlay />
-        <ProfileOverlay />
-        <TodosOverlay />
-        {/* Launch animation — mounted last so it sits above all overlays. Plays
-            once per cold start, then unmounts itself. */}
-        <SplashAnimation />
+        {/* CallProvider hoists useCall() above the screen tree so the
+            audio session + WebSocket + transcript survive call.tsx
+            unmounting (e.g., user taps the in-call back button to visit
+            home while the call keeps running). */}
+        <CallProvider>
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: "transparent" },
+            }}
+          >
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(app)" />
+          </Stack>
+          <StatusBar style="light" />
+          {/* Plugin overlays mount at app root so navigation away (e.g., to /call)
+              doesn't tear them down. Each handles its own visibility via the
+              plugin-overlay store. */}
+          <WikiOverlay />
+          <ResearchOverlay />
+          <ProfileOverlay />
+          <TodosOverlay />
+          {/* Launch animation — mounted last so it sits above all overlays. Plays
+              once per cold start, then unmounts itself. */}
+          <SplashAnimation />
+        </CallProvider>
       </SafeAreaProvider>
     </View>
   );

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
@@ -11,16 +11,16 @@ import Animated, {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CallButton } from '../../components/buttons';
 import { Orb } from '../../components/Orb';
-import { useCall } from '../../lib/gemini/useCall';
+import { useCallContext } from '../../lib/CallContext';
 import { useCallStore } from '../../lib/useCallStore';
 
 const ENDING_DELAY_MS = 400;
 
 // Pre-call guidance staggers in over a slow reveal. Three lines of
-// instructional text fade in at 3-second intervals, then "Tap to Start"
+// instructional text fade in at STAGGER_MS intervals, then "Tap to Start"
 // appears at the end. First-run users who already know what to do tap
 // before any of it shows.
-const STAGGER_MS = 3000;
+const STAGGER_MS = 2000;
 const FADE_MS = 600;
 const GUIDANCE_LINES = [
   'Turn up phone volume',
@@ -39,7 +39,7 @@ export default function OnboardingScreen() {
   const endCall = useCallStore((s) => s.endCall);
   const reset = useCallStore((s) => s.reset);
 
-  const { start, end, error } = useCall();
+  const { start, end, error } = useCallContext();
   const [phase, setPhase] = useState<'pre' | 'live' | 'finishing'>('pre');
   const finishingRef = useRef(false);
 
@@ -76,7 +76,11 @@ export default function OnboardingScreen() {
     void start({ callType: 'onboarding' });
   }, [start, startCall]);
 
-  const skip = useCallback(() => {
+  // Hangs up the active onboarding call. The CallButton that uses this
+  // is disabled until status === 'connected', so the not-connected
+  // branch is defensive only — no remaining UI path reaches it now that
+  // the pre-phase Skip link is gone.
+  const hangUp = useCallback(() => {
     if (status === 'connected') endCall();
     else {
       reset();
@@ -102,22 +106,11 @@ export default function OnboardingScreen() {
     return (
       <View style={styles.root}>
         <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-          {/* Skip lives in the top-right so the bottom of the screen can
-              host the call button at the same spot the home screen pins
-              its FAB — keeps onboarding → home spatially continuous. */}
-          <View style={styles.topRow}>
-            <Pressable
-              onPress={() => {
-                reset();
-                router.replace('/(app)');
-              }}
-              style={styles.skipButton}
-              hitSlop={12}
-            >
-              <Text style={styles.skipLabel}>Skip for now</Text>
-            </Pressable>
-          </View>
-
+          {/* Onboarding is mandatory at v0.1.1 — there's no "skip" path
+              because the home screen redirects right back here whenever
+              user_settings.onboarding_complete is false, which would loop.
+              A real skip needs a server-side "mark onboarding complete
+              without a transcript" path; deferred until that lands. */}
           <View style={styles.middleBlock}>
             <View style={styles.guidanceBlock}>
               <Animated.Text style={[styles.guidance, line0Style]}>
@@ -133,8 +126,12 @@ export default function OnboardingScreen() {
           </View>
 
           <View style={styles.fabRow}>
-            <Animated.Text style={[styles.hint, hintStyle]}>Tap to Start</Animated.Text>
             <CallButton mode="start" onPress={begin} accessibilityLabel="Start onboarding call" />
+            {/* Hint below the button, matching the home FAB layout. The
+                Animated.Text always renders (just with opacity 0 until
+                its scheduled fade-in) so the button position is locked
+                regardless of when the hint becomes visible. */}
+            <Animated.Text style={[styles.hint, hintStyle]}>Tap to Start</Animated.Text>
           </View>
         </SafeAreaView>
       </View>
@@ -157,7 +154,7 @@ export default function OnboardingScreen() {
 
         <CallButton
           mode="end"
-          onPress={skip}
+          onPress={hangUp}
           disabled={status !== 'connected'}
           style={styles.liveCallButton}
         />
@@ -177,11 +174,6 @@ const styles = StyleSheet.create({
   // Match home: paddingBottom 16 so the CallButton in fabRow lands at
   // the exact same spot during the onboarding → home transition.
   safeArea: { flex: 1, paddingBottom: 16, paddingHorizontal: 24 },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingTop: 8,
-  },
   // Mirrors home's fabRow exactly so the call button is in identical
   // screen position. Hint stacks just above the button via gap. No flex
   // here — the middleBlock above takes the remaining space, so this row
@@ -190,8 +182,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
   },
-  // Fills the space between topRow and fabRow; centers the guidance
-  // vertically + horizontally within that band.
+  // Fills the space above fabRow; centers the guidance vertically +
+  // horizontally within that band.
   middleBlock: {
     flex: 1,
     alignItems: 'center',
@@ -212,8 +204,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 1,
   },
-  skipButton: { paddingVertical: 8 },
-  skipLabel: { color: '#7aa3d4', fontSize: 13 },
   // Live-phase styles (Connecting / Listening / Wrapping up).
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28 },
   // safeArea no longer aligns children center; explicit on the end button.

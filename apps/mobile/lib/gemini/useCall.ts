@@ -117,7 +117,11 @@ export function useCall(): UseCallResult {
       if (!r.ok) throw new Error(`start failed: ${r.status} ${await r.text()}`);
       const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
       sessionIdRef.current = sessionId;
-      startedAtRef.current = new Date();
+      const startedAt = new Date();
+      startedAtRef.current = startedAt;
+      // Mirror to store so the call screen can compute elapsed time
+      // across mount/unmount cycles (back button → home → rejoin).
+      useCallStore.getState().setStartedAt(startedAt.getTime());
       // Initial snapshot: now if the app dies before we ever get a transcript
       // turn, we still have something to recover with.
       persistSnapshot();
