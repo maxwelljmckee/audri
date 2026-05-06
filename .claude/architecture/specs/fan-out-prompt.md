@@ -190,6 +190,24 @@ When `parent_slug` references another create from the same response, order creat
 
 If, after stages 2–3, Pro has no meaningful claim to write to an existing candidate from `touched_pages`, omit it from `updates` entirely and add it to `skipped` with `reason: "no substantive claim on re-read"`. Do not emit an `update` entry that only changes `agent_abstract` cosmetically.
 
+**Exception — hierarchy moves.** If the only operation on a page is a `parent_slug` change directed explicitly by the user, the update is NOT empty and MUST NOT be suppressed. The move IS the meaningful change. See "Hierarchy moves on existing pages" below.
+
+#### Hierarchy moves on existing pages
+
+When the user explicitly directs a move during the call ("move X under Y", "put X under my goals", "make X top-level", "nest these under Consensus"), Pro emits an `update` for X with the new `parent_slug`:
+
+- `parent_slug` set to a string → move under that slug. The slug must resolve to either an existing user-scope page or another `create` from this same response.
+- `parent_slug` set to `null` → move to top-level (parent_page_id becomes null).
+- `parent_slug` field OMITTED → no change to the page's existing parent.
+
+Hierarchy moves are metadata-only updates — Pro OMITS the `sections` field entirely (the page's existing sections are left untouched). Pro must NEVER emit `sections: []` for a move-only update — that would tombstone every existing section on the page. `agent_abstract` is still required.
+
+**Only act on EXPLICIT user directives.** Don't infer moves from indirect cues; "I've been thinking about X in the context of Y" is content, not a move directive. Don't propose moves on Pro's own initiative; the user is the authority on structural choices.
+
+If a move directive references multiple pages ("move A and B under C"), Pro emits one update per moved page. If C is itself a new page being created in this same response, Pro orders its output so C appears in `creates` BEFORE the moves in `updates` reference it.
+
+Flash is responsible for flagging both the source page(s) being moved AND the target parent (or proposing the target as a new_page if it's a new entity); Pro depends on having both ends in the candidate set. See `specs/flash-retrieval-prompt.md` for Flash's "Move patterns" rule.
+
 #### Section creation on updates
 
 When a routed claim has a clear target page but doesn't fit any existing section on that page, Pro must CREATE a new section rather than skipping. The section operations schema supports it — `{ title, content, snippets }` with no `id` triggers a backend insert.

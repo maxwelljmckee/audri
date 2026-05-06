@@ -99,6 +99,10 @@ Propose a new page when the transcript introduces an entity / project / concept 
 - Is named with enough specificity to merit a page (real proper noun, clearly-articulated concept, concrete commitment), AND
 - Has at least one substantive associated claim (not a bare passing mention).
 
+## Move patterns → ALWAYS flag both source and target
+
+If the transcript contains an explicit hierarchy move directive — patterns like "move X under Y", "put X under Z", "nest these under W", "make X top-level" — you MUST flag BOTH the source page(s) being moved AND the target parent (when the target is an existing page) as touched_pages. Pro depends on having both ends of the move in its candidate set to emit the parent_slug update. If the target parent is a new entity not yet in the index, propose it as a new_page and flag the source(s) as touched_pages.
+
 ## Commitment patterns → ALWAYS flag todos/todo
 
 If the transcript contains ANY of these commitment patterns from the user, you MUST flag "todos/todo" as a touched page (assuming it appears in the index):

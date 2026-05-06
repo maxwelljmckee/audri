@@ -55,7 +55,21 @@ export interface PageUpdate {
   slug: string;
   agent_abstract: string;
   abstract?: string;
-  sections: SectionRef[];
+  // Sections is OPTIONAL. When absent → no change to the page's existing
+  // sections (used for move-only metadata updates). When present → the array
+  // represents the full new section state; any existing sections not in the
+  // array get tombstoned. Don't emit `sections: []` to mean "no change" —
+  // that would tombstone every existing section on the page. Omit the field
+  // entirely instead.
+  sections?: SectionRef[];
+  // Hierarchy move — only set when the user explicitly directed a move via
+  // the transcript ("move X under Y", "make X top-level"). Three states:
+  //   - omitted entirely (key absent) → no change to existing parent
+  //   - explicit null → move to top-level (parent_page_id := null)
+  //   - string → move under that slug (must resolve in user-scope wiki_pages
+  //     OR in another `creates` from this same response)
+  // See pro prompt §3 "Hierarchy move" rule + commit.ts handling.
+  parent_slug?: string | null;
 }
 
 export interface SkippedClaim {
@@ -181,6 +195,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "slug": "<must match a candidate from touched_pages>",
       "agent_abstract": "<regenerated>",
       "abstract": "<regenerated, optional>",
+      "parent_slug": "<optional — only set when user explicitly directed a hierarchy move; omit otherwise; null = move to top-level>",
       "sections": [
         {"id": "<uuid>"},
         {"id": "<uuid>", "content": "<new markdown>", "snippets": [...]},
@@ -203,7 +218,8 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 - A create's parent_slug is REQUIRED in nearly all cases — emit \`null\` ONLY when the transcript explicitly says the user wants top-level treatment. The default fallback for ambiguous cases is a profile sub-page (\`profile/relationships\` for people, \`profile/work\` for orgs, \`profile/interests\` for concepts), NOT null.
 - When the user gave explicit structural direction during the call ("nest this under X", "make it top-level"), respect that direction over your own heuristics.
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
-- Sections present on the page but absent from your output array will be tombstoned by the backend — list every section you want kept (use { id } for keep-as-is).
+- The \`sections\` field is OPTIONAL on updates. When you OMIT it (move-only metadata updates), the page's existing sections are left untouched. When you INCLUDE it, the array is the full new section state — any existing section not listed gets tombstoned. NEVER emit \`sections: []\` to mean "no change" — that would tombstone every section on the page. Omit the field entirely.
+- Sections present on the page but absent from your \`sections\` array (when you DO include the array) will be tombstoned — list every section you want kept (use { id } for keep-as-is).
 - Timeline section (title="Timeline"), when present, MUST appear first in the sections list.
 - Never invent turn_ids — every snippet turn_id must appear verbatim in the input transcript.
 - Never emit user_id, page_id, section_id, scope, parent_page_id, or timestamps. Backend concerns.
@@ -340,6 +356,22 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 ### Empty-update suppression
 If after extraction + filtering you have no meaningful claim to write to a touched_pages candidate, OMIT it from updates entirely and add to skipped: reason: "no substantive claim on re-read".
+
+**Exception:** if the only operation on a page is a hierarchy move (a \`parent_slug\` change directed explicitly by the user), the update is NOT empty and must NOT be suppressed. Metadata-only updates are valid — see "Hierarchy moves on existing pages" below.
+
+### Hierarchy moves on existing pages
+
+When the user EXPLICITLY directs a structural move during the call ("move X under Y", "put X under my goals", "make X top-level", "nest these under Consensus"), emit an \`update\` for X with the new \`parent_slug\` set:
+
+- \`parent_slug\` set to a string → move under that slug. The slug must resolve to either an existing user-scope page or another \`create\` from this same response.
+- \`parent_slug\` set to \`null\` → move to top-level (parent_page_id becomes null).
+- \`parent_slug\` field OMITTED → no change to the page's existing parent.
+
+Hierarchy moves are metadata-only updates — OMIT the \`sections\` field entirely (the page's existing sections will be left untouched). Do NOT emit \`sections: []\` — that would tombstone every existing section. \`agent_abstract\` is still required (regenerate it to reflect the move's structural context if relevant; otherwise re-emit the existing one).
+
+**Only act on EXPLICIT user directives.** Don't infer moves from indirect cues ("I've been thinking about X in the context of Y" is NOT a move directive — it's content). Don't propose moves on Pro's own initiative; the user is the authority on structural choices.
+
+If a move directive references multiple pages ("move A and B under C"), emit one update per moved page. If C is itself a new page being created in this same response, ORDER your output so C appears in \`creates\` BEFORE the moves in \`updates\` reference it (the backend resolves slugs against pages already inserted in the same transaction).
 
 ### Section creation on updates
 
@@ -548,6 +580,9 @@ export async function runFanOut(
                 slug: { type: Type.STRING },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
+                // parent_slug omitted from required — three-state field
+                // (absent = no change, null = top-level, string = move).
+                parent_slug: { type: Type.STRING, nullable: true },
                 sections: {
                   type: Type.ARRAY,
                   items: {
@@ -572,7 +607,7 @@ export async function runFanOut(
                   },
                 },
               },
-              required: ['slug', 'agent_abstract', 'sections'],
+              required: ['slug', 'agent_abstract'],
             },
           },
           skipped: {

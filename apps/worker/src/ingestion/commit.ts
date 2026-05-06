@@ -199,15 +199,60 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         continue;
       }
 
-      // Update page metadata (agent_abstract, abstract — re-generated).
+      // Hierarchy move support — three-state parent_slug field on updates:
+      //   - omitted (key absent)  → preserve existing parent_page_id
+      //   - explicit null         → move to top-level (parent_page_id := null)
+      //   - string                → resolve slug, set parent_page_id
+      // Only applies when Pro emitted parent_slug, which the prompt restricts
+      // to explicit user-directed moves (see pro-fan-out.ts §3 "Hierarchy
+      // moves on existing pages").
+      let movePatch: { parentPageId: string | null } | null = null;
+      if (Object.hasOwn(update, 'parent_slug')) {
+        if (update.parent_slug === null) {
+          movePatch = { parentPageId: null };
+        } else if (typeof update.parent_slug === 'string') {
+          const targetSlug = update.parent_slug;
+          const [target] = await tx
+            .select({ id: wikiPages.id })
+            .from(wikiPages)
+            .where(
+              and(
+                eq(wikiPages.userId, userId),
+                eq(wikiPages.scope, 'user'),
+                eq(wikiPages.slug, targetSlug),
+              ),
+            )
+            .limit(1);
+          if (target) {
+            movePatch = { parentPageId: target.id };
+          } else {
+            logger.warn(
+              { slug: update.slug, requestedParent: targetSlug },
+              'commit: hierarchy move target slug not found — leaving existing parent intact',
+            );
+          }
+        }
+      }
+
+      // Update page metadata (agent_abstract, abstract regenerated; parent
+      // only when move was directed AND target resolved).
       await tx
         .update(wikiPages)
         .set({
           agentAbstract: update.agent_abstract,
           abstract: update.abstract ?? null,
+          ...(movePatch ?? {}),
         })
         .where(eq(wikiPages.id, candidate.id));
       result.pagesUpdated++;
+
+      // Sections is OPTIONAL. When absent, leave existing sections untouched
+      // (used for move-only metadata updates). When present, treat the array
+      // as the full new state — tombstone any existing sections not listed.
+      // See PageUpdate.sections in pro-fan-out.ts for the contract.
+      if (update.sections === undefined) {
+        continue;
+      }
 
       // Diff sections: { id }=keep, { id, content }=update, { title|content }=new.
       const keptOrUpdatedIds = new Set<string>();
