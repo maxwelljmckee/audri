@@ -27,6 +27,7 @@ import {
 import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { ProFanOutResult } from './pro-fan-out.js';
+import { redactJsonPii } from './redact.js';
 
 export interface CommitInput {
   userId: string;
@@ -316,6 +317,20 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
       ref: sql`${JSON.stringify({ transcriptId, slugs: touchedSlugs })}::jsonb`,
       summary,
     });
+
+    // Claim-level audit dump. Persist Pro's full structured response (creates,
+    // updates, skipped, tasks) on the transcript row, with PII regex-redacted.
+    // Server-only — call_transcripts isn't synced to mobile. Used for incident
+    // debugging ("why did Pro skip claim X?"). See specs/fan-out-prompt.md
+    // and tradeoffs.md → "Pro silently overrides Flash's `proposed_parent_slug`"
+    // for the design rationale; redactor lives in ./redact.ts.
+    const redactedFanOut = redactJsonPii(fanOut);
+    await tx
+      .update(callTranscripts)
+      .set({
+        proFanOutResponse: sql`${JSON.stringify(redactedFanOut)}::jsonb`,
+      })
+      .where(eq(callTranscripts.id, transcriptId));
 
     // ── TASKS ───────────────────────────────────────────────────────────────
     // Each extracted research-intent commitment becomes:

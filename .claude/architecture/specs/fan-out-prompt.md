@@ -174,7 +174,9 @@ For every other page type (concept, person, place, org, source, event, note), **
 - Genuinely orphan content with no clear home → pick the closest profile-area parent rather than null. The Live Agent should have asked the user mid-call; if it didn't, bias toward `profile/interests` for ideas/topics, `profile/relationships` for people.
 - `parent_slug: null` ONLY when the transcript explicitly directs top-level treatment.
 
-When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly. (Forward-looking: once Flash emits `proposed_parent_slug` per the v0.1.1 prefilter work, Pro starts from that hint and may override per the same heuristic. Flash will be subject to the same allow-list and same top-level-is-rare bias.)
+When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly.
+
+**Flash provides a hint; Pro may silently override.** As of the v0.1.1 prefilter work, Flash emits `proposed_parent_slug` on every new_pages entry, applying the same priority order. Pro defaults to Flash's hint and may silently override when transcript content makes a different choice clearer (same precedent as the existing `type` override). End-to-end priority: explicit user direction in transcript > Pro's content-grounded judgment (silent override) > Flash's hint > Pro's default heuristics. See `tradeoffs.md` → "Pro silently overrides Flash's `proposed_parent_slug`" for the design rationale.
 
 **Explicit user direction overrides heuristics.** If during the call the user told Audri where to file something ("nest this under Consensus", "make it top-level", "put it under my goals"), the transcript carries that direction. Pro respects it over its own semantic inference. The Live Agent's "ask when ambiguous" behavior (see `system-prompt.ts` and `specs/conversational-routing.md`'s Autonomy principle extended to structural intent) is the upstream half of this contract; Pro is the downstream half.
 

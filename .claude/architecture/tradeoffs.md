@@ -457,6 +457,13 @@ This is a companion to `todos.md` (decision checklist) and `architecture.md` (cu
 - **Gives up:** Nothing meaningful.
 - **Revisit if:** N/A.
 
+### Pro silently overrides Flash's `proposed_parent_slug` (vs. strict bind, vs. flagged override)
+- **Chose (v0.1.1):** Pro starts from Flash's `proposed_parent_slug` as the default, then may silently override when transcript content makes a different choice clearer — same precedent as the existing `type` override in routing rule 3. The full priority order: explicit user direction in transcript > Pro's content-grounded judgment (silent override) > Flash's hint > Pro's default heuristics.
+- **Passed on:** (a) **Strict bind** — Pro must use Flash's hint as-is. Loses Pro's information advantage: Flash sees the wiki index + transcript, but Pro sees the full transcript + the fully-joined content of every touched_page. Strict binding forces Pro to write content against a hierarchy it might have stronger grounds to revise. (b) **Flagged override** — Pro must emit a `routing_overrides` field documenting any disagreement with Flash. Gives observability but adds output-schema cost on every call.
+- **Why:** Same logic that already lets Pro override `type`. Pro reads more context than Flash and should be allowed to make a better call when the transcript clearly justifies it. The forward-looking note is already in `pro-fan-out.ts` routing rule 3 and `specs/fan-out-prompt.md` §4.3 ("Pro starts from that hint and may override per the same heuristic").
+- **Gives up:** No audit trail when Pro disagrees with Flash. Can't easily measure how often the two diverge or whether the override pattern reflects systematic Flash misroutes vs. case-by-case judgment.
+- **Revisit if:** The claim-level audit table lands (still open in v0.1.1). At that point fold a `routing_overrides` field into the audit shape rather than growing the per-call output schema — gives observability for free. Source: 2026-05-06 design discussion.
+
 ### Lava lamp: pause rotation while plugin overlays are open (vs. unmount, or no-op)
 - **Chose (v0.1.1):** When any plugin overlay is open, freeze the lava lamp's blob rotation in place via `cancelAnimation`; resume from the same angle on close. The full-screen `BlurView` and `bgColor` continue to render.
 - **Passed on:** (a) Doing nothing — leave the rotation running under a covered surface. (b) Unmounting the entire `<LavaLamp>` while overlays are open and remounting on close, which would tear down the persistent BlurView for additional GPU savings.

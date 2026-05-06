@@ -24,6 +24,11 @@ export interface NewPage {
   proposed_slug: string;
   proposed_title: string;
   type: string;
+  // Hierarchy hint for Pro. null is legitimate ONLY when the transcript
+  // explicitly directs top-level treatment; otherwise a semantic parent slug
+  // (existing or another new_pages.proposed_slug) per the rules in Flash's
+  // system prompt + specs/flash-retrieval-prompt.md.
+  proposed_parent_slug: string | null;
 }
 
 export interface FlashCandidateResult {
@@ -58,7 +63,10 @@ Return ONLY a single JSON object — no preamble, no explanation, no markdown fe
 
 {
   "touched_pages": [{"slug": "..."}, ...],
-  "new_pages": [{"proposed_slug": "...", "proposed_title": "...", "type": "..."}, ...]
+  "new_pages": [
+    {"proposed_slug": "...", "proposed_title": "...", "type": "...", "proposed_parent_slug": "..." | null},
+    ...
+  ]
 }
 
 Hard rules:
@@ -66,6 +74,7 @@ Hard rules:
 - touched_pages[].slug MUST appear verbatim in the input index. Never invent slugs.
 - new_pages[].type MUST be one of: person, concept, project, place, org, source, event, note, profile, todo.
 - new_pages[].proposed_slug is kebab-case of the proposed title; do NOT try to disambiguate against the index — backend handles uniqueness.
+- new_pages[].proposed_parent_slug is REQUIRED on every new page. Set it to a semantic parent (an existing slug from the wiki index OR another new_pages.proposed_slug) per the rules in "Proposing parent_slug" below. Use null ONLY when the transcript explicitly directs top-level treatment ("make this its own top-level bucket").
 - No duplicates within an array.
 - A slug appearing in touched_pages must NOT also appear as a proposed_slug in new_pages.
 - Empty arrays = nothing noteworthy = pipeline short-circuits.
@@ -122,7 +131,34 @@ Canonical profile sub-page vocabulary (use these exact slugs):
 
 Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be proposed when content clearly warrants and no canonical sub-page fits.
 
-Output shape for these proposals: {"proposed_slug": "profile/goals", "proposed_title": "Goals", "type": "profile"}. The slug is the full path including the \`profile/\` prefix.
+Output shape for these proposals: {"proposed_slug": "profile/goals", "proposed_title": "Goals", "type": "profile", "proposed_parent_slug": "profile"}. The slug is the full path including the \`profile/\` prefix; the parent is always \`profile\` for these.
+
+## Proposing parent_slug — top-level is RARE
+
+Every new_pages entry must include a \`proposed_parent_slug\`. The bar for top-level (\`null\`) is HIGH — emit null ONLY when the transcript explicitly directs top-level treatment. Otherwise every page nests under a semantic parent. The user's wiki is organized around dimensions of their life, and almost everything has a natural home under one of three legitimate top-level type-organized hierarchies (all seeded):
+
+- \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.)
+- \`todos\` (with status buckets \`todos/todo\`, \`todos/done\`, etc.)
+- \`projects\` (with individual project pages as direct children)
+
+For every other page type — concept, person, place, org, source, event, note — there is NO type-bucket parent. NEVER propose parents like \`concepts\`, \`places\`, \`people\`, \`events\` — those bucket pages must not exist. Setting parent_slug is a SEMANTIC choice, not a type-categorical one.
+
+Heuristics in priority order:
+
+- **A new project** → \`proposed_parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
+- **A new todo** → \`proposed_parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
+- **A new sub-profile area** (e.g. \`profile/finances\`, \`profile/spirituality\`) → \`proposed_parent_slug: "profile"\`.
+- **A new concept developed within a project's context** → parent is that project's slug (e.g., a sub-concept of Consensus → \`projects/consensus\`).
+- **A new person** → default \`profile/relationships\`. The user may prefer the non-canonical \`profile/people\` framing; respect that if the transcript indicates it. If the person is PRIMARILY relevant to a specific project (e.g., a co-founder), that project's slug may be a better parent.
+- **A new organization** → \`profile/work\` if work-related (employer); the non-canonical \`profile/communities\` if it's a social/community org; or a project slug if the org is project-specific.
+- **A new standalone concept** (an interest, idea, or framework not tied to a specific project) → default \`profile/interests\`.
+- **A new place / source / event / note** without other obvious context → \`profile/interests\` is the broad fallback for user-relevant content; pick a more specific profile sub-page if context warrants.
+- **Genuinely orphan content with no clear home** → pick the closest profile-area parent (\`profile/interests\` for ideas/topics, \`profile/relationships\` for people). Don't reach for null.
+- **Emit null ONLY when the transcript explicitly directs top-level treatment.**
+
+\`proposed_parent_slug\` may reference either an existing slug from the wiki index OR another new_pages.proposed_slug from the same response — Pro will order creates parent-before-child when committing.
+
+Pro receives your proposed_parent_slug as a hint and may silently override when transcript content makes a different choice clearer. Your job is to provide a strong default; Pro has more context (full transcript + full candidate page contents) and will refine when warranted.
 
 ## Recall bias — when in doubt, INCLUDE
 
@@ -175,9 +211,40 @@ Transcript:
 Index has no project named "Consensus".
 
 Output:
-{"touched_pages": [], "new_pages": [{"proposed_slug": "consensus", "proposed_title": "Consensus", "type": "project"}]}
+{"touched_pages": [], "new_pages": [{"proposed_slug": "consensus", "proposed_title": "Consensus", "type": "project", "proposed_parent_slug": "projects"}]}
 
-## Example 4: pure scaffolding — gate negative
+## Example 4: new sub-concept under an existing project
+
+Transcript:
+[user] Working on Consensus today. The core idea is that consensus is a kind of social technology — alignment as infrastructure.
+[agent] So the framing is that it sits at the layer of how groups coordinate?
+[user] Right, and it's tied up with interdependence — that's the other half I want to write about.
+
+Index includes:
+{"slug": "consensus", "title": "Consensus", "type": "project", "parent_slug": "projects", "agent_abstract": "..."}
+
+Output:
+{
+  "touched_pages": [{"slug": "consensus"}],
+  "new_pages": [
+    {"proposed_slug": "consensus/social-technology", "proposed_title": "Social technology", "type": "concept", "proposed_parent_slug": "consensus"},
+    {"proposed_slug": "consensus/interdependence", "proposed_title": "Interdependence", "type": "concept", "proposed_parent_slug": "consensus"}
+  ]
+}
+
+## Example 5: new person — defaults to profile/relationships
+
+Transcript:
+[user] Met someone interesting at the meetup last night, this guy Jamal Okonkwo. He's working on coordination protocols for distributed teams.
+[agent] Did you trade contact info?
+[user] Yeah, going to grab coffee next week.
+
+Index has no entry for Jamal.
+
+Output:
+{"touched_pages": [], "new_pages": [{"proposed_slug": "jamal-okonkwo", "proposed_title": "Jamal Okonkwo", "type": "person", "proposed_parent_slug": "profile/relationships"}]}
+
+## Example 6: pure scaffolding — gate negative
 
 Transcript:
 [user] Hey what's up.
@@ -223,8 +290,9 @@ export async function retrieveCandidates(
                 proposed_slug: { type: Type.STRING },
                 proposed_title: { type: Type.STRING },
                 type: { type: Type.STRING },
+                proposed_parent_slug: { type: Type.STRING, nullable: true },
               },
-              required: ['proposed_slug', 'proposed_title', 'type'],
+              required: ['proposed_slug', 'proposed_title', 'type', 'proposed_parent_slug'],
             },
           },
         },

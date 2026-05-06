@@ -156,7 +156,7 @@ What this example does NOT include — patterns to avoid (anti-examples):
 You receive:
 1. **Transcript** — turn-tagged conversation. User turns are sources of claims; the assistant's turns are NOT (use them for context only).
 2. **Candidate touched_pages** — fully-joined JSON for each existing page that may need updating. Includes metadata + all sections.
-3. **Candidate new_pages** — proposed creates from Flash with { proposed_slug, proposed_title, type }. You decide which to actually create.
+3. **Candidate new_pages** — proposed creates from Flash with { proposed_slug, proposed_title, type, proposed_parent_slug }. You decide which to actually create. Flash's proposed_parent_slug is a HINT — default to it; you may silently override (just like proposed_type) when transcript content makes a different choice clearer.
 
 # Output contract
 
@@ -304,7 +304,9 @@ In order:
 
 2. **Existing-candidate match.** If the claim's subject corresponds to a touched_pages slug, route there. When multiple candidates plausibly match, use contextual cues; if ambiguous, skip with reason: "ambiguous subject across candidates".
 
-3. **New-candidate match.** If the claim introduces an entity from new_pages, route to that proposed create. You may silently override the proposed type if the transcript makes a different choice clearer.
+3. **New-candidate match.** If the claim introduces an entity from new_pages, route to that proposed create. You may silently override the proposed type AND/OR the proposed_parent_slug if the transcript makes a different choice clearer (same precedent for both — silent override, no need to flag).
+
+**Default to Flash's \`proposed_parent_slug\`** — Flash has done the structural pattern-matching against the wiki index for you. Override only when you have content-grounded reason to: e.g., Flash proposed \`profile/relationships\` for a new person but the transcript shows the person is exclusively a co-founder of a project, never mentioned in a personal context — that justifies overriding to the project's slug. Without such evidence, use Flash's proposed_parent_slug as-is.
 
 **Setting \`parent_slug\` on creates — high bar for top-level.** The wiki has exactly THREE legitimate top-level type-organized hierarchies, all seeded:
 - \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.)

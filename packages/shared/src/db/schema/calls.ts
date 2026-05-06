@@ -31,6 +31,12 @@ export const callTranscripts = pgTable(
     endedAt: timestamp('ended_at', { withTimezone: true }),
     content: jsonb('content').notNull().default(sql`'[]'::jsonb`),
     toolCalls: jsonb('tool_calls'),
+    // Audit dump of Pro fan-out's structured response, persisted verbatim
+    // (with PII regex-redacted). Server-only — never synced to mobile. Powers
+    // incident debugging (e.g. "why did Pro skip this claim?"). See
+    // apps/worker/src/ingestion/redact.ts for the redaction regexes and
+    // build-phases/v0.1.1.md → claim-level audit for the design rationale.
+    proFanOutResponse: jsonb('pro_fan_out_response'),
     droppedTurnIds: text('dropped_turn_ids')
       .array()
       .notNull()
