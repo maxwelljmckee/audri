@@ -155,19 +155,26 @@ For each claim, in order:
 3. **New-candidate match.** If the claim introduces an entity Flash flagged in `new_pages`, route to that proposed create. Pro may override Flash's proposed `type` if the transcript makes a different choice clearer (e.g., Flash said `concept`, transcript clearly establishes it's a `project`). The override is silent — no need to flag.
 
 **Type-bucket allow-list — load-bearing.** The wiki has exactly **three** legitimate top-level type-organized hierarchies, all seeded at signup:
-- `profile` (with sub-pages `profile/goals`, `profile/work`, etc.)
+- `profile` (with on-demand sub-pages like `profile/goals`, `profile/work`, etc.)
 - `todos` (with status buckets `todos/todo`, `todos/done`, etc.)
 - `projects` (with individual project pages as direct children)
 
-For every other page type (concept, person, place, org, source, event, note), **there is no type-bucket parent**. Pro must never invent or use parents like `concepts`, `places`, `people`, `events` — those buckets are explicitly *not allowed to exist*. Setting `parent_slug` is a SEMANTIC choice, not a type-categorical one. Heuristics:
-- A new project → `parent_slug: "projects"` (default), or a more specific semantic parent if obvious (a sub-project under its parent project).
-- A new todo → `parent_slug: "todos/todo"` (or a different status bucket if the user specified one).
-- A new sub-profile area → parent is the relevant `profile/*` page.
-- A new concept developed in a project's context → parent is that project.
-- A new person in the context of an organization → parent may be that org, or null (top-level) — judge from salience.
-- Otherwise → `parent_slug: null`. Top-level entity pages are FINE. Better a flat top level than an invented type-bucket.
+For every other page type (concept, person, place, org, source, event, note), **there is no type-bucket parent**. Pro must never invent or use parents like `concepts`, `places`, `people`, `events` — those buckets are explicitly *not allowed to exist*. Setting `parent_slug` is a SEMANTIC choice, not a type-categorical one.
 
-When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly. (Forward-looking: once Flash emits `proposed_parent_slug` per the v0.1.1 prefilter work, Pro starts from that hint and may override per the same heuristic. Flash will be subject to the same allow-list.)
+**Top-level pages are RARE.** The bar is HIGH: emit `parent_slug: null` ONLY when the transcript explicitly indicates the user wants top-level treatment. Almost everything has a natural home under one of the seeded roots — the user's wiki is organized around dimensions of their life, and almost every entity fits somewhere. Heuristics in priority order:
+
+- A new project → `parent_slug: "projects"` (default), or a more specific parent if obvious (a sub-project under its parent project).
+- A new todo → `parent_slug: "todos/todo"` (or a different status bucket if the user specified one).
+- A new sub-profile area → parent is `profile`.
+- A new concept developed in a project's context → parent is that project.
+- A new person → default `profile/relationships` (or non-canonical `profile/people` if the user uses that framing; or a project slug if the person is primarily project-relevant).
+- A new organization → `profile/work` if work-related; non-canonical `profile/communities` if community/social; project slug if project-specific.
+- A new standalone concept / interest / book → default `profile/interests`.
+- A new place / source / event / note → `profile/interests` is the broad fallback for user-relevant content; pick a more specific profile sub-page if context warrants.
+- Genuinely orphan content with no clear home → pick the closest profile-area parent rather than null. The Live Agent should have asked the user mid-call; if it didn't, bias toward `profile/interests` for ideas/topics, `profile/relationships` for people.
+- `parent_slug: null` ONLY when the transcript explicitly directs top-level treatment.
+
+When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly. (Forward-looking: once Flash emits `proposed_parent_slug` per the v0.1.1 prefilter work, Pro starts from that hint and may override per the same heuristic. Flash will be subject to the same allow-list and same top-level-is-rare bias.)
 
 **Explicit user direction overrides heuristics.** If during the call the user told Audri where to file something ("nest this under Consensus", "make it top-level", "put it under my goals"), the transcript carries that direction. Pro respects it over its own semantic inference. The Live Agent's "ask when ambiguous" behavior (see `system-prompt.ts` and `specs/conversational-routing.md`'s Autonomy principle extended to structural intent) is the upstream half of this contract; Pro is the downstream half.
 

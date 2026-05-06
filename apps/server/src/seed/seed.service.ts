@@ -4,6 +4,7 @@ import {
   AGENT_SCOPE_PAGES,
   ASSISTANT_AGENT,
   PROFILE_PAGES,
+  PROJECT_PAGES,
   TODO_PAGES,
 } from './seed.constants.js';
 
@@ -15,7 +16,8 @@ export type SeedResult =
 export class SeedService {
   private readonly logger = new Logger(SeedService.name);
 
-  // Atomic seed of 1 agents row + 20 wiki_pages + 1 user_settings.
+  // Atomic seed of 1 agents row + 8 wiki_pages + 1 user_settings.
+  // (1 agent-scope root + 1 profile root + 5 todos + 1 projects.)
   // Idempotent on user_id (re-firing webhook is safe).
   async seedNewUser(userId: string): Promise<SeedResult> {
     const existing = await db
@@ -46,14 +48,21 @@ export class SeedService {
       )[0] as { id: string };
       const agentId = agentRow.id;
 
+      const totalPages =
+        AGENT_SCOPE_PAGES.length +
+        PROFILE_PAGES.length +
+        TODO_PAGES.length +
+        PROJECT_PAGES.length;
       const idRows = (await tx.execute(
-        sql`SELECT gen_random_uuid() AS id FROM generate_series(1, 20)`,
+        sql`SELECT gen_random_uuid() AS id FROM generate_series(1, ${totalPages})`,
       )) as { id: string }[];
       const pageIds = idRows.map((r) => r.id);
 
       const agentRootIdx = 0;
       const profileRootIdx = AGENT_SCOPE_PAGES.length;
       const todosRootIdx = AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length;
+      const projectsRootIdx =
+        AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length;
 
       const allPages = [
         ...AGENT_SCOPE_PAGES.map((p, i) => ({
@@ -85,6 +94,17 @@ export class SeedService {
           type: 'todo' as const,
           slug: p.slug,
           parentPageId: i === 0 ? null : (pageIds[todosRootIdx] as string),
+          title: p.title,
+          agentAbstract: p.agentAbstract,
+          agentId: null,
+        })),
+        ...PROJECT_PAGES.map((p, i) => ({
+          id: pageIds[projectsRootIdx + i] as string,
+          userId,
+          scope: 'user' as const,
+          type: 'project' as const,
+          slug: p.slug,
+          parentPageId: i === 0 ? null : (pageIds[projectsRootIdx] as string),
           title: p.title,
           agentAbstract: p.agentAbstract,
           agentId: null,

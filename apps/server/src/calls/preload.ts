@@ -10,12 +10,16 @@
 // recently-updated wiki pages — those are richer than call summaries since
 // they reflect what was actually extracted and considered worth remembering.
 
-import { and, db, desc, eq, inArray, isNull, sql } from '@audri/shared/db';
+import { and, db, desc, eq, inArray, isNotNull, isNull, sql } from '@audri/shared/db';
 import { callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
 
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
 const INCOMPLETE_CALL_LOOKBACK_HOURS = 24;
+// Cap on depth-2 children per top-level page in the structural snapshot.
+// Keeps token budget bounded as the user's wiki grows; deeper exploration
+// happens via Flash candidate retrieval at ingestion time, not at call start.
+const STRUCTURE_CHILDREN_PER_PARENT_LIMIT = 12;
 
 interface PageWithSections {
   slug: string;
@@ -42,22 +46,39 @@ interface IncompleteCall {
   touchedSlugs: string[];
 }
 
+// Structural snapshot of the wiki — top-level pages + their immediate children
+// (depth 2). Powers the Live Agent's ability to reason about "where does this
+// new thing fit" — see specs/conversational-routing.md (Autonomy principle
+// extended to structural ambiguity) and the system-prompt's wiki-structure
+// section. Distinct from `recentPages` which surfaces *active* areas; this
+// surfaces *shape*.
+interface WikiStructureNode {
+  slug: string;
+  title: string;
+  type: string;
+  agentAbstract: string;
+  children: Array<{ slug: string; title: string; type: string; agentAbstract: string }>;
+  childrenTruncated: boolean;
+}
+
 interface PreloadData {
   profile: PageWithSections[];
   agentNotes: PageWithSections[];
   recentPages: RecentPage[];
+  wikiStructure: WikiStructureNode[];
   incompleteCall: IncompleteCall | null;
 }
 
 export async function loadGenericCallContext(userId: string): Promise<PreloadData> {
-  const [profile, agentNotes, recentPages, incompleteCall] = await Promise.all([
+  const [profile, agentNotes, recentPages, wikiStructure, incompleteCall] = await Promise.all([
     fetchPagesByPrefix(userId, 'user', 'profile'),
     fetchPagesByPrefix(userId, 'agent', 'assistant'),
     fetchRecentPages(userId),
+    fetchWikiStructure(userId),
     fetchMostRecentIncompleteCall(userId),
   ]);
 
-  return { profile, agentNotes, recentPages, incompleteCall };
+  return { profile, agentNotes, recentPages, wikiStructure, incompleteCall };
 }
 
 async function fetchPagesByPrefix(
@@ -122,6 +143,78 @@ async function fetchPagesByPrefix(
   return rows
     .map((r) => ({ ...r, sections: sectionsBySlug.get(r.slug) ?? [] }))
     .filter((p) => p.sections.length > 0 || p.abstract);
+}
+
+// Top-level (parent_page_id IS NULL) user-scope pages + their immediate
+// children. Two queries: one for the top-level set, one for the child set
+// keyed by parent id. Capped per-parent so wide categories (e.g. a
+// many-projects user) don't blow the token budget.
+async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> {
+  const tops = await db
+    .select({
+      id: wikiPages.id,
+      slug: wikiPages.slug,
+      title: wikiPages.title,
+      type: wikiPages.type,
+      agentAbstract: wikiPages.agentAbstract,
+    })
+    .from(wikiPages)
+    .where(
+      and(
+        eq(wikiPages.userId, userId),
+        eq(wikiPages.scope, 'user'),
+        isNull(wikiPages.tombstonedAt),
+        isNull(wikiPages.parentPageId),
+      ),
+    )
+    .orderBy(wikiPages.slug);
+
+  if (tops.length === 0) return [];
+
+  const topIds = tops.map((t) => t.id);
+  const childRows = await db
+    .select({
+      slug: wikiPages.slug,
+      title: wikiPages.title,
+      type: wikiPages.type,
+      agentAbstract: wikiPages.agentAbstract,
+      parentPageId: wikiPages.parentPageId,
+    })
+    .from(wikiPages)
+    .where(
+      and(
+        eq(wikiPages.userId, userId),
+        eq(wikiPages.scope, 'user'),
+        isNull(wikiPages.tombstonedAt),
+        isNotNull(wikiPages.parentPageId),
+        inArray(wikiPages.parentPageId, topIds),
+      ),
+    )
+    .orderBy(wikiPages.slug);
+
+  const childrenByParent = new Map<
+    string,
+    Array<{ slug: string; title: string; type: string; agentAbstract: string }>
+  >();
+  for (const c of childRows) {
+    if (!c.parentPageId) continue;
+    const list = childrenByParent.get(c.parentPageId) ?? [];
+    list.push({ slug: c.slug, title: c.title, type: c.type, agentAbstract: c.agentAbstract });
+    childrenByParent.set(c.parentPageId, list);
+  }
+
+  return tops.map((t) => {
+    const all = childrenByParent.get(t.id) ?? [];
+    const truncated = all.length > STRUCTURE_CHILDREN_PER_PARENT_LIMIT;
+    return {
+      slug: t.slug,
+      title: t.title,
+      type: t.type,
+      agentAbstract: t.agentAbstract,
+      children: truncated ? all.slice(0, STRUCTURE_CHILDREN_PER_PARENT_LIMIT) : all,
+      childrenTruncated: truncated,
+    };
+  });
 }
 
 async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
@@ -218,6 +311,7 @@ export function renderPreloadBlock(data: PreloadData): string {
     data.profile.length === 0 &&
     data.agentNotes.length === 0 &&
     data.recentPages.length === 0 &&
+    data.wikiStructure.length === 0 &&
     !data.incompleteCall
   ) {
     return '';
@@ -239,6 +333,15 @@ export function renderPreloadBlock(data: PreloadData): string {
       '## Your private notes (agent-scope)',
       'These are observations you’ve recorded across past conversations. The user does not see them directly.',
       renderPages(data.agentNotes),
+    );
+  }
+
+  if (data.wikiStructure.length > 0) {
+    parts.push(
+      '',
+      '## Wiki structure (top-level pages + immediate children)',
+      "Use this to reason about WHERE in the user's wiki a new topic might fit. When the user introduces a substantial new entity and the structure is ambiguous, ask them — see the wiki-structure section in your scaffolding.",
+      renderWikiStructure(data.wikiStructure),
     );
   }
 
@@ -301,6 +404,22 @@ function renderRecentPages(pages: RecentPage[]): string {
       (p) =>
         `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`,
     )
+    .join('\n');
+}
+
+function renderWikiStructure(nodes: WikiStructureNode[]): string {
+  return nodes
+    .map((n) => {
+      const head = `- **${n.title}** \`${n.slug}\` (\`${n.type}\`) — ${n.agentAbstract}`;
+      if (n.children.length === 0) return head;
+      const childLines = n.children.map(
+        (c) => `  - ${c.title} \`${c.slug}\` (\`${c.type}\`) — ${c.agentAbstract}`,
+      );
+      const more = n.childrenTruncated
+        ? `  - …and more under \`${n.slug}\` (truncated)`
+        : null;
+      return [head, ...childLines, ...(more ? [more] : [])].join('\n');
+    })
     .join('\n');
 }
 

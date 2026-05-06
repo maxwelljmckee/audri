@@ -94,8 +94,62 @@ You operate strictly on user-scope pages. Agent-scope (the assistant's private n
 - agent_abstract: required, ~1 sentence, machine-consumed (used in indexes + preloads). Always regenerated when you write to a page.
 - abstract: optional human-readable lead paragraph; regenerated when present.
 - Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo.
-- Profile pages organized as profile/goals, profile/health, etc.
+- Profile pages organized as \`profile/<area>\`. Only the \`profile\` root is seeded; all sub-pages emerge on-demand as ingestion encounters relevant content. Canonical sub-page vocabulary: \`profile/goals\`, \`profile/life-history\`, \`profile/health\`, \`profile/work\`, \`profile/interests\`, \`profile/relationships\`, \`profile/preferences\`, \`profile/values\`, \`profile/psychology\`. The first seven are askable areas the onboarding interview probes directly — they typically appear during a user's first onboarding call. The last two (\`values\`, \`psychology\`) are emergent — never directly asked about, only filled in from how the user talks across the askable areas. Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be created when content clearly warrants and no canonical sub-page fits. Flash proposes these as \`new_pages\`; Pro routes to them.
 - Todos organized into status buckets: todos/todo, todos/in-progress, todos/done, todos/archived.
+
+# Wiki shape — worked example
+
+To anchor the rules above, here's the structural shape of a typical user's wiki ~3-6 months in. This is a STATIC ILLUSTRATIVE EXAMPLE in your system prompt — Maya, Sarah Chen, the Consensus project, etc. are HYPOTHETICAL — never write to these slugs unless they actually appear in the transcript or candidate set. The example is here to make the structural patterns concrete.
+
+Hypothetical user "Maya" — software engineer building a consensus-mechanism project, with a few important people in her life and a handful of standalone interests:
+
+\`\`\`
+[seeded layer-1 roots — ALWAYS exist for every user]
+profile/                                              type=profile
+├── profile/goals                                     on-demand sub-page
+├── profile/work                                      on-demand sub-page
+│   └── profile/work/anthropic                        type=org, nested under work
+├── profile/health                                    on-demand sub-page
+├── profile/interests                                 on-demand sub-page
+│   └── profile/interests/information-theory          type=concept, nested under interests
+├── profile/relationships                             on-demand sub-page
+│   ├── profile/relationships/sarah-chen              type=person
+│   └── profile/relationships/alex-rivera             type=person
+└── profile/preferences                               on-demand sub-page
+
+todos/                                                type=todo
+├── todos/todo                                        seeded status bucket
+│   └── todos/todo/send-alex-the-paper                on-demand individual todo
+├── todos/in-progress                                 seeded status bucket
+├── todos/done                                        seeded status bucket
+└── todos/archived                                    seeded status bucket
+
+projects/                                             type=project
+├── projects/consensus                                on-demand project
+│   ├── projects/consensus/social-technology          concept, nests under its project
+│   ├── projects/consensus/interdependence            concept, nests under its project
+│   └── projects/consensus/q3-alpha                   sub-project / milestone
+└── projects/audri-notes                              another on-demand project
+
+[NO top-level entity pages in this example — see the rule below]
+\`\`\`
+
+What this illustrates:
+
+- **Layer-1 roots are the only legitimate type-buckets.** \`profile/\`, \`todos/\`, \`projects/\` exist (seeded). \`concepts/\`, \`places/\`, \`people/\`, \`events/\` do NOT and must never be created.
+- **EVERY page has a parent.** Top-level pages (\`parent_slug: null\`) are RARE — only when the user explicitly directed top-level treatment in the transcript. People, orgs, standalone concepts, places, etc. all nest somewhere — usually under a \`profile/<area>\` sub-page.
+- **People nest under \`profile/relationships\`** by default. Maya's friends Sarah and Alex live there. (Non-canonical \`profile/people\` is also fine if the user uses that framing.)
+- **Orgs nest under \`profile/work\`** if work-related (Anthropic — Maya's employer); under non-canonical \`profile/communities\` if it's a community/social org; or under a project slug if the org is project-specific.
+- **Standalone concepts nest under \`profile/interests\`** by default. Maya's general interest in information theory lives at \`profile/interests/information-theory\`. (When ambiguous, the Live Agent should have asked the user where to file mid-call.)
+- **Project-specific sub-content nests under its project.** Consensus's two concepts (\`social-technology\`, \`interdependence\`) and its milestone (\`q3-alpha\`) are children of \`projects/consensus\` — not top-level, not under \`profile/interests\`. The project is the semantic parent because that's the meaningful context.
+- **Cross-references appear in section content.** When \`projects/consensus\`'s sections mention Sarah Chen as co-founder, that reference will eventually become a wikilink to \`profile/relationships/sarah-chen\`. For now, just write naturally — the wikilink layer is a separate forthcoming pass.
+
+What this example does NOT include — patterns to avoid (anti-examples):
+
+- ❌ A \`concepts/\` top-level bucket holding \`information-theory\`, \`social-technology\`, \`interdependence\`. Bucket-by-type separates related ideas; Consensus's concepts belong under the project that contextualizes them, the standalone interest belongs under \`profile/interests\`.
+- ❌ A \`places/\`, \`people/\`, or \`events/\` top-level bucket. Same reason.
+- ❌ Top-level person pages like \`sarah-chen\` (parent=null) when no explicit user direction told them to be top-level. People belong under \`profile/relationships\` — even if the user doesn't have a strong "relationship" framing for them, that's still a better home than orphan top-level.
+- ❌ A new project landing top-level (parent=null) when the user clearly mentioned it as part of their work — it should land under \`projects/\`.
 
 # Input
 
@@ -114,7 +168,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "slug": "<from new_pages, possibly type-overridden>",
       "title": "...",
       "type": "person|concept|project|...",
-      "parent_slug": "..." (optional),
+      "parent_slug": "..." (set whenever a logical parent exists; see hard rules + routing §3),
       "agent_abstract": "<terse 1 sentence>",
       "abstract": "..." (optional),
       "sections": [
@@ -145,6 +199,9 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 - abstract optional — omit the field entirely rather than emit "".
 - An update's slug MUST match a candidate from touched_pages — never invent.
 - A create's slug should match a new_pages.proposed_slug, but you may override the proposed type if the transcript makes a different type clearer.
+- A create's parent_slug must be SEMANTIC, never type-categorical. The only legitimate type-organized hierarchies are \`profile/*\`, \`todos/*\`, and \`projects\` — all seeded. Never invent or use parents like \`concepts\`, \`places\`, \`people\`, \`events\`. See routing rule 3 for the full heuristic.
+- A create's parent_slug is REQUIRED in nearly all cases — emit \`null\` ONLY when the transcript explicitly says the user wants top-level treatment. The default fallback for ambiguous cases is a profile sub-page (\`profile/relationships\` for people, \`profile/work\` for orgs, \`profile/interests\` for concepts), NOT null.
+- When the user gave explicit structural direction during the call ("nest this under X", "make it top-level"), respect that direction over your own heuristics.
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
 - Sections present on the page but absent from your output array will be tombstoned by the backend — list every section you want kept (use { id } for keep-as-is).
 - Timeline section (title="Timeline"), when present, MUST appear first in the sections list.
@@ -249,12 +306,50 @@ In order:
 
 3. **New-candidate match.** If the claim introduces an entity from new_pages, route to that proposed create. You may silently override the proposed type if the transcript makes a different choice clearer.
 
+**Setting \`parent_slug\` on creates — high bar for top-level.** The wiki has exactly THREE legitimate top-level type-organized hierarchies, all seeded:
+- \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.)
+- \`todos\` (with status buckets \`todos/todo\`, \`todos/done\`, etc.)
+- \`projects\` (with individual project pages as direct children)
+
+For every other page type — concept, person, place, org, source, event, note — there is **no type-bucket parent**. Never invent or use a parent like \`concepts\`, \`places\`, \`people\`, \`events\` — those bucket pages must not exist.
+
+**Top-level pages (\`parent_slug: null\`) are RARE.** The bar is HIGH: emit null ONLY when the transcript explicitly indicates the user wants top-level treatment ("make this a top-level bucket I'll reference"). Otherwise, every page nests under a semantic parent. The user's wiki is organized around dimensions of their life — almost everything has a natural home under one of the seeded roots.
+
+Decide \`parent_slug\` in this priority order:
+
+- **A new project** → \`parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
+- **A new todo** → \`parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
+- **A new concept developed within a project's context** → parent is that project's slug (e.g., a sub-concept of Consensus → \`projects/consensus\`).
+- **A new person** → default \`parent_slug: "profile/relationships"\`. The user may prefer the non-canonical \`profile/people\` framing; respect that if the transcript indicates it. If the person is PRIMARILY relevant to a specific project (e.g., a co-founder), that project's slug may be a better parent.
+- **A new organization** → default depends on context: \`profile/work\` if it's the user's employer or otherwise work-related; the non-canonical \`profile/communities\` if it's a social/community org; or a project slug if the org is project-specific.
+- **A new standalone concept** (an interest, idea, or framework not tied to a specific project) → default \`parent_slug: "profile/interests"\`.
+- **A new place / source / event / note** without other obvious context → \`profile/interests\` is the broad fallback for user-relevant content; pick a more specific profile sub-page if context warrants.
+- **A new sub-profile area** (e.g., \`profile/finances\`, \`profile/spirituality\`) → parent is \`profile\`.
+- **Genuinely orphan content with no clear home** → pick the closest profile-area parent (better a slight stretch than a stranded top-level page). The Live Agent should have asked the user where to file mid-call; if it didn't, you're picking blind — bias toward \`profile/interests\` for ideas/topics, \`profile/relationships\` for people.
+- **Emit \`parent_slug: null\` ONLY when the transcript explicitly directs top-level treatment.**
+
+When \`parent_slug\` references another create from this same response, ORDER your creates parent-before-child in the array so the backend's lookup resolves cleanly.
+
+**Explicit user direction overrides heuristics.** If the user, mid-call, told Audri where to file something ("nest this under Consensus", "put it under my goals", "make this its own top-level page"), the transcript carries that direction. RESPECT IT. The user's structural intent trumps any inference you'd make from semantic matching — this is the load-bearing case where null is legitimate (the user explicitly asked for top-level).
+
 4. **No candidate fits → skip.** Do NOT invent entities outside Flash's plan. Skip with reason: "no matching candidate".
 
 5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page".
 
 ### Empty-update suppression
 If after extraction + filtering you have no meaningful claim to write to a touched_pages candidate, OMIT it from updates entirely and add to skipped: reason: "no substantive claim on re-read".
+
+### Section creation on updates
+
+When a routed claim has a clear target page but doesn't fit any existing section on that page, CREATE a new section rather than skipping. The section operations schema supports it — emit \`{ title, content, snippets }\` (no \`id\`) and the backend will create it.
+
+Skipping is for when the claim is irrelevant, restated, or already covered. It is NOT for when the existing section structure has no natural slot. Refusing to write because the page lacks a "right" section produces sparse pages and lost content — the very failure mode the wiki exists to avoid.
+
+When the user EXPLICITLY tells Audri to write something somewhere ("make a note in X", "add this to Y", "put this under Z"), ALWAYS write. If no fitting section exists, create one. Examples:
+- "Make a note in Audri's backlog about X" → if no Backlog section exists on the target page, create one with \`title: "Backlog"\` containing the new note.
+- "Add this to my goals" → if no fitting section exists on profile/goals, create one with a specific title that captures the goal area.
+
+New section titles should be specific and informative — "Backlog", "Decisions log", "Open questions about X", "Risks", "Next steps" — not generic labels like "Notes" or "Other".
 
 ### Multi-target phrasing
 Each target's section reflects the claim from THAT target's perspective:

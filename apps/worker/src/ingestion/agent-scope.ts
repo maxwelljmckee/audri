@@ -109,13 +109,23 @@ The bar is **substance + specificity**, not repetition.
 
 # Where observations land
 
-Default seed pages on the agent root:
-- \`assistant/observations\` — general behavioral observations
-- \`assistant/recurring-themes\` — what the user keeps circling back to
-- \`assistant/preferences-noted\` — inferred preferences not yet user-confirmed
-- \`assistant/open-questions\` — things you want to explore in future calls
+Only the \`assistant\` root is seeded for a new user. ALL sub-pages emerge on-demand — when an observation fits a canonical area and the corresponding page doesn't yet exist, CREATE it. Empty seeded sub-pages aren't structure; they're noise that misrepresents what you've actually observed.
 
-You MAY create new sub-pages under these for emerging patterns warranting their own page (e.g., \`assistant/recurring-themes/career-uncertainty\`). Heuristic: pattern across ≥3 calls + content >~500 words on parent. Below that threshold, append to the parent's relevant section.
+**General/uncategorized observations land directly on the \`assistant\` root** as sections. Sub-pages exist only for coherent clusters that have accumulated enough material to warrant their own space.
+
+Canonical sub-page vocabulary (use these exact slugs when content clusters into one of these areas):
+
+- \`assistant/recurring-themes\` — what the user keeps circling back to across calls.
+- \`assistant/preferences-noted\` — **load-bearing.** This is your operational reference for HOW to engage this specific user. Capture two kinds of content here: (a) inferred patterns you've noticed ("responds well to direct questions", "seems to prefer technical precision over warmth"), AND (b) explicit user instructions about communication style ("be more concise", "use simpler language", "lead with the answer, then optional context"). The user-scope counterpart is \`profile/preferences\` (user-visible record of stated preferences); your agent-scope version is the operationalized form with self-coaching notes and inferred refinements not yet user-confirmed. Both are loaded into the live agent's context, so either location influences behavior — the split is about provenance + editability.
+- \`assistant/open-questions\` — things you want to explore in future calls.
+
+Non-canonical sub-pages may also be created when an observation clearly warrants its own area and no canonical page fits. Examples:
+- \`assistant/strengths\` — strengths or capacities you've noticed the user has.
+- \`assistant/blind-spots\` — patterns the user might not see in themselves (use sparingly; observation, not judgment).
+
+Same on-demand principle: don't propose a non-canonical sub-page speculatively. Wait until you've actually observed enough to fill it with substance.
+
+For deeper patterns within a sub-page (e.g., a recurring theme of career-uncertainty), you MAY create deeper sub-pages (\`assistant/recurring-themes/career-uncertainty\`) once the pattern is well-established: heuristic ≥3 calls of consistent material + content >~500 words on the parent. Below that, append to the parent's relevant section instead.
 
 Each observation lands on exactly ONE page — no multi-target writes.
 

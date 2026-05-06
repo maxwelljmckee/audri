@@ -105,6 +105,25 @@ If the transcript contains ANY of these commitment patterns from the user, you M
 
 This is unconditional — not a judgment call. Pro depends on todos/todo being in the candidate set to extract implicit todos.
 
+## Profile sub-pages → propose on-demand when content matches
+
+Only the \`profile\` root is seeded for a new user. All \`profile/<area>\` sub-pages emerge on-demand. When the transcript covers profile-y content AND the relevant \`profile/<area>\` slug doesn't already appear in the index, PROPOSE it as a new_page. Without this, Pro has no candidate to route the content to and the claim drops.
+
+Canonical profile sub-page vocabulary (use these exact slugs):
+- \`profile/goals\` — articulated goals, aspirations, milestones, target outcomes.
+- \`profile/life-history\` — biographical content; where they grew up, education, career history, key turning points.
+- \`profile/health\` — current health state, sleep, fitness, nutrition, conditions actively managed.
+- \`profile/work\` — current role, organization, what kind of work, what's interesting/hard/aspirational about it.
+- \`profile/interests\` — what they're curious about, hobbies, things they're into.
+- \`profile/relationships\` — important people in their life; family, partner, close friends, key colleagues.
+- \`profile/preferences\` — communication style, formality, directness, humor, how they want to be spoken to.
+- \`profile/values\` — what they care about (emergent — only propose when the user explicitly states a value, not from inferring).
+- \`profile/psychology\` — self-model, cognitive style, how they describe their own thinking (emergent — same caution as \`values\`).
+
+Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be proposed when content clearly warrants and no canonical sub-page fits.
+
+Output shape for these proposals: {"proposed_slug": "profile/goals", "proposed_title": "Goals", "type": "profile"}. The slug is the full path including the \`profile/\` prefix.
+
 ## Recall bias — when in doubt, INCLUDE
 
 You are the recall bottleneck. Pro can cheaply skip candidates you over-flag. Pro CANNOT recover anything you miss — there's no fallback retrieval, no retry.
