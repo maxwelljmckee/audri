@@ -11,6 +11,7 @@
 // identifier is versioned so a schema bump can force a full re-sync.
 
 import { SupabaseReplication } from 'rxdb-supabase';
+import { captureClientError } from '../sentry';
 import { supabase } from '../supabase';
 import { getDatabase } from './database';
 
@@ -75,6 +76,32 @@ export function startReplication(): Promise<ReplicationHandle> {
       deletedField: '_deleted',
       pull: { batchSize: 100, lastModifiedField: 'updated_at' },
     });
+
+    // Surface errors from each replication's error stream — without this,
+    // pull/push failures (RLS denials, schema-validation rejections, network
+    // hiccups) are silent and the wiki UI just appears empty. Each error
+    // routes to Sentry with a per-collection tag so we can triangulate which
+    // sync stream failed.
+    const subscribeErrors = (
+      repl: { error$: { subscribe: (fn: (err: unknown) => void) => unknown } },
+      collection: string,
+    ) => {
+      try {
+        repl.error$.subscribe((err: unknown) => {
+          captureClientError(`rxdb-replication-${collection}`, err);
+          // Also log to console for immediate dev-time visibility — Sentry can
+          // be lossy and field-test debugging benefits from raw stderr output.
+          // biome-ignore lint/suspicious/noConsole: deliberate debug surface
+          console.error(`[rxdb][${collection}] replication error:`, err);
+        });
+      } catch (e) {
+        captureClientError(`rxdb-error-subscribe-${collection}`, e);
+      }
+    };
+    subscribeErrors(wikiPagesRepl, 'wiki_pages');
+    subscribeErrors(wikiSectionsRepl, 'wiki_sections');
+    subscribeErrors(researchOutputsRepl, 'research_outputs');
+    subscribeErrors(agentTasksRepl, 'agent_tasks');
 
     _active = {
       replications: [wikiPagesRepl, wikiSectionsRepl, researchOutputsRepl, agentTasksRepl],

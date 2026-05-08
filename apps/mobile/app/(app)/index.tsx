@@ -1,6 +1,6 @@
 import { FontAwesome6, Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { Redirect, router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CallButton } from "../../components/buttons";
@@ -60,16 +60,6 @@ export default function HomeScreen() {
   // drop, backgrounded-but-failed-to-reach-server). Runs once per sign-in.
   useCallRecoverySweep();
 
-  // First-run redirect: if the user hasn't completed onboarding, send them to
-  // the onboarding screen. Once onboarding_complete flips, every subsequent
-  // load lands here normally.
-  useEffect(() => {
-    if (me.status !== "ready") return;
-    if (me.data.userSettings && !me.data.userSettings.onboardingComplete) {
-      router.replace("/(app)/onboarding");
-    }
-  }, [me]);
-
   async function signOut() {
     await supabase.auth.signOut();
   }
@@ -82,6 +72,22 @@ export default function HomeScreen() {
   // call.tsx's idle gate so the new session never gets opened.
   function openCall() {
     router.push("/call");
+  }
+
+  // First-run / loading gate (must come AFTER all hooks above to keep hook
+  // order stable across renders). While /me is loading, render null so the
+  // home UI doesn't flash before the onboarding redirect resolves — the root
+  // LavaLamp shows through, giving a smooth auth → onboarding transition for
+  // first-time users. Once /me is ready and onboarding is incomplete, redirect
+  // synchronously via the Redirect component so home never paints. Errors
+  // fall through to the home render so the user isn't stuck on a blank screen.
+  if (me.status === "loading") return null;
+  if (
+    me.status === "ready" &&
+    me.data.userSettings &&
+    !me.data.userSettings.onboardingComplete
+  ) {
+    return <Redirect href="/(app)/onboarding" />;
   }
 
   return (
