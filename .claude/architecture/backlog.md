@@ -300,6 +300,12 @@ This note should be revisited *before* the items below are promoted into a build
 | Recommendation table | P2 | M | Data model | Reuse notifications or dedicated table. Kinds: schedule-proposal, split-proposal, follow-up, merge-proposal. Source: §3. |
 | Schedule / recurring-task table | P1 | M | Data model | Cron spec, task kind, params, delivery prefs, pause state, next-run, owner. Source: §3, §12. |
 
+### Archive mechanic (committed to v0.3)
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **Page archive via `archived_at` timestamp** | **P0 (v0.3)** | **S** | **Data model + UX + KG maintenance** | Any wiki page can be archived. Mechanism: add a nullable `archived_at` timestamp column to `wiki_pages` (active pages = `NULL`; archived = timestamp of archive moment). Pages keep their original `kind`, slug, parent, sections, and complete history — archive state is purely metadata. Unarchive = `archived_at = NULL`. **Behavior:** archived pages and their descendants are (a) excluded from all preload queries (single-CTE walk-up of parent chain — page is effectively archived if any ancestor is archived), (b) excluded from `search_wiki` results by default (or returned with explicit `[archived]` marking), (c) excluded from fan-out targeting (don't silently update archived pages), (d) retrievable via explicit user navigation in the Wiki UI. **First user:** the v0.3 Dreaming plugin uses archive as the alternative to promotion when the user reviews a dream — promote moves parent_page_id to a main-wiki target, archive sets `archived_at`. **Why timestamp not kind/hierarchy-move:** keeps page history clean (no kind mutation), preserves original wiki location (no parent rewrite), simplifies unarchive (single column update). Source: 2026-05-09 design pass; committed to v0.3 alongside Dreaming because Dreaming depends on it. |
+
 ### Schema maintenance
 
 | Name | Priority | Effort | Type | Description |

@@ -15,10 +15,12 @@
     "build:ios:preview": "eas build --platform ios --profile preview",
     "build:ios:production": "eas build --platform ios --profile production",
     "submit:ios": "eas submit --platform ios",
-    "testflight": "eas build --platform ios --profile preview --auto-submit"
+    "testflight": "eas build --platform ios --profile preview --auto-submit",
+    "postinstall": "install-skia"
   },
   "dependencies": {
     "@audri/shared": "workspace:*",
+    "entities": "^2.1.0",
     "@expo-google-fonts/comfortaa": "^0.4.2",
     "@expo/vector-icons": "^15.0.3",
     "@google/genai": "^1.50.1",
