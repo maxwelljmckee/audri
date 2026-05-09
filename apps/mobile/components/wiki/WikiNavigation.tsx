@@ -18,14 +18,25 @@ import {
   createNativeStackNavigator,
 } from '@react-navigation/native-stack';
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import type { WikiPageDoc, WikiSectionDoc } from '../../lib/rxdb/schemas';
+import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useWikiPages, useWikiSectionsForPage } from '../../lib/rxdb/useWikiPages';
 import { pluginStackScreenOptions } from '../PluginStack';
 import { WikiSectionEditor } from '../WikiSectionEditor';
 import { Breadcrumbs } from './Breadcrumbs';
+import { WikiPendingBanner } from './WikiPendingBanner';
 import {
   type WikiSearchHit,
   countChildren,
@@ -74,6 +85,7 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
   const ready = useRxdbReady();
   const pages = useWikiPages();
   const [query, setQuery] = useState('');
+  const { refreshing, onRefresh } = useReplicationResync();
 
   const topLevel = useMemo(() => getTopLevelPages(pages), [pages]);
   const childCounts = useMemo(() => {
@@ -94,6 +106,7 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
 
   return (
     <View style={styles.flex}>
+      <WikiPendingBanner />
       <View style={styles.searchBar}>
         <Ionicons name="search-outline" size={16} color="#7aa3d4" />
         <TextInput
@@ -123,6 +136,9 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
           data={topLevel}
           keyExtractor={(p) => p.id}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyText}>

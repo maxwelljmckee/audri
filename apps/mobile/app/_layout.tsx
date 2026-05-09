@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AgentsOverlay } from '../components/AgentsOverlay';
 import { ProfileOverlay } from '../components/ProfileOverlay';
 import { ResearchOverlay } from '../components/ResearchOverlay';
 import { SplashAnimation } from '../components/SplashAnimation';
@@ -110,6 +111,7 @@ function RootLayout() {
           <ResearchOverlay />
           <ProfileOverlay />
           <TodosOverlay />
+          <AgentsOverlay />
           {/* Launch animation — mounted last so it sits above all overlays. Plays
               once per cold start, then unmounts itself. */}
           <SplashAnimation />

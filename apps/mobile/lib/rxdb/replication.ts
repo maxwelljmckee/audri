@@ -21,6 +21,11 @@ export interface ReplicationHandle {
   // biome-ignore lint/suspicious/noExplicitAny: SupabaseReplication is a generic-heavy type from rxdb-supabase
   replications: any[];
   stop: () => Promise<void>;
+  // Force a manual pull cycle on every collection. Used by pull-to-refresh in
+  // plugin overlays — mobile is in-memory storage, so realtime hiccups can
+  // leave the local view stale until a re-pull arrives. Pull-to-refresh is
+  // the user's manual recourse.
+  reSync: () => Promise<void>;
 }
 
 let _active: ReplicationHandle | null = null;
@@ -77,6 +82,19 @@ export function startReplication(): Promise<ReplicationHandle> {
       pull: { batchSize: 100, lastModifiedField: 'updated_at' },
     });
 
+    // agent_open_items — the v0.2 autonomic-loop queue. Mobile reads via the
+    // Agents tile + writes status updates (snooze / dismiss). Server writes
+    // come from agent-scope ingestion fan-out (item #4) and the hygiene
+    // sweep (item #9). Push enabled so mobile dismiss/snooze flows up.
+    const agentOpenItemsRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.agent_open_items,
+      replicationIdentifier: `audri:agent_open_items:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 50, lastModifiedField: 'updated_at' },
+      push: {},
+    });
+
     // Surface errors from each replication's error stream — without this,
     // pull/push failures (RLS denials, schema-validation rejections, network
     // hiccups) are silent and the wiki UI just appears empty. Each error
@@ -101,17 +119,33 @@ export function startReplication(): Promise<ReplicationHandle> {
     subscribeErrors(wikiSectionsRepl, 'wiki_sections');
     subscribeErrors(researchOutputsRepl, 'research_outputs');
     subscribeErrors(agentTasksRepl, 'agent_tasks');
+    subscribeErrors(agentOpenItemsRepl, 'agent_open_items');
+
+    const allRepls = [
+      wikiPagesRepl,
+      wikiSectionsRepl,
+      researchOutputsRepl,
+      agentTasksRepl,
+      agentOpenItemsRepl,
+    ];
 
     _active = {
-      replications: [wikiPagesRepl, wikiSectionsRepl, researchOutputsRepl, agentTasksRepl],
+      replications: allRepls,
       stop: async () => {
-        await Promise.all([
-          wikiPagesRepl.cancel(),
-          wikiSectionsRepl.cancel(),
-          researchOutputsRepl.cancel(),
-          agentTasksRepl.cancel(),
-        ]);
+        await Promise.all(allRepls.map((r) => r.cancel()));
         _active = null;
+      },
+      reSync: async () => {
+        // RxDB exposes reSync() on each replication; calling it nudges the
+        // pull cycle to fire immediately. Errors surface through the existing
+        // error subscriptions (subscribeErrors above).
+        for (const r of allRepls) {
+          try {
+            r.reSync();
+          } catch (e) {
+            captureClientError('rxdb-resync', e);
+          }
+        }
       },
     };
 

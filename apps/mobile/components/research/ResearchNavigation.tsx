@@ -12,6 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +20,7 @@ import {
 } from 'react-native';
 import type { AgentTaskDoc, ResearchOutputDoc } from '../../lib/rxdb/schemas';
 import { useActiveAgentTasks } from '../../lib/rxdb/useAgentTasks';
+import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useResearchOutputs } from '../../lib/rxdb/useResearchOutputs';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { spawnResearch } from '../../lib/spawnResearch';
@@ -54,6 +56,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
   const ready = useRxdbReady();
   const outputs = useResearchOutputs();
   const pendingTasks = useActiveAgentTasks('research');
+  const { refreshing, onRefresh } = useReplicationResync();
 
   if (!ready) {
     return (
@@ -81,6 +84,9 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
         data={rows}
         keyExtractor={(r) => (r.kind === 'pending' ? `task:${r.task.id}` : `out:${r.output.id}`)}
         contentContainerStyle={styles.list}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>

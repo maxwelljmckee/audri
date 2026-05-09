@@ -134,6 +134,11 @@ export default function HomeScreen() {
             icon="person-circle-outline"
             onPressWithOrigin={(origin) => showOverlay('profile', origin)}
           />
+          <PluginTile
+            label="Agents"
+            icon="sparkles-outline"
+            onPressWithOrigin={(origin) => showOverlay('agents', origin)}
+          />
         </View>
 
         <View style={styles.fabRow}>

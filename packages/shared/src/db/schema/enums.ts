@@ -64,3 +64,31 @@ export const ingestionStatusEnum = pgEnum('ingestion_status', [
   'succeeded',
   'failed',
 ]);
+
+// Claim model (v0.2 substrate). `status` is the contestability of a claim
+// against the wiki it lives in: 'supported' = backed by current evidence;
+// 'contested' = newer evidence conflicts; 'rejected' = explicitly rebutted
+// (kept for audit, not surfaced as fact).
+export const claimStatusEnum = pgEnum('claim_status', ['supported', 'contested', 'rejected']);
+
+// agent_open_items queue. `kind` distinguishes gap-filling questions
+// (terminate on `answered`) from proactive info-shares (terminate on
+// `surfaced` / `engaged`). One table covers both lifecycles per DP-5.
+export const agentOpenItemKindEnum = pgEnum('agent_open_item_kind', ['question', 'info_share']);
+
+export const agentOpenItemStatusEnum = pgEnum('agent_open_item_status', [
+  'pending',
+  'surfaced',
+  'answered',
+  'engaged',
+  'dismissed',
+  'expired',
+]);
+
+// Tiered maturity of an entity page (person, project, concept, org, ...).
+// Coarse signal of "how much do we actually know about this entity?"
+// Source: COG-second-brain people-CRM tiering (1 / 3+ / 8+ inbound mentions).
+// Stored as nullable; populated by future ingestion logic. Not auto-maintained
+// in v0.2 — code that needs current tier should recompute on demand or read
+// the cached value with the understanding that it may lag behind reality.
+export const wikiMaturityEnum = pgEnum('wiki_maturity', ['stub', 'moderate', 'full']);

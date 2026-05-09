@@ -20,6 +20,12 @@ export interface WikiPageDoc {
   agent_abstract: string;
   abstract: string | null;
   frontmatter: Record<string, unknown>;
+  // Structured per-person metadata (handles, socials, ask-for, etc.).
+  // Always-null for non-person pages by convention. v0.2 substrate.
+  person_metadata: Record<string, unknown> | null;
+  // 'stub' | 'moderate' | 'full'. Coarse signal of how much we know about
+  // the entity. Nullable; populated by future ingestion. v0.2 substrate.
+  maturity: 'stub' | 'moderate' | 'full' | null;
   agent_id: string | null;
   created_at: string;
   updated_at: string;
@@ -54,6 +60,8 @@ export const wikiPageSchema: RxJsonSchema<WikiPageDoc> = {
     agent_abstract: { type: 'string' },
     abstract: { type: ['string', 'null'] },
     frontmatter: { type: 'object' },
+    person_metadata: { type: ['object', 'null'] },
+    maturity: { type: ['string', 'null'], enum: ['stub', 'moderate', 'full', null], maxLength: 8 },
     agent_id: { type: ['string', 'null'] },
     created_at: { type: 'string', maxLength: 32 },
     // Indexed (in [type, updated_at]) — needs maxLength. ISO timestamp fits.
@@ -196,6 +204,69 @@ export const agentTaskSchema: RxJsonSchema<AgentTaskDoc> = {
     'updated_at',
   ],
   indexes: ['kind', 'status', ['kind', 'status', 'updated_at']],
+};
+
+// agent_open_items — per-persona queue of agent-initiated content (questions
+// + info-shares) that the call-side prompt composer reads to drive proactive
+// behavior. Mobile reads via the Agents tile; mobile pushes status updates
+// (snooze / dismiss). v0.2 substrate.
+export interface AgentOpenItemDoc {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  kind: 'question' | 'info_share';
+  topic: string;
+  body_text: string;
+  priority: number;
+  status: 'pending' | 'surfaced' | 'answered' | 'engaged' | 'dismissed' | 'expired';
+  created_by_task_id: string | null;
+  cross_domain_links: unknown[];
+  created_at: string;
+  updated_at: string;
+  surfaced_at: string | null;
+  resolved_at: string | null;
+}
+
+export const agentOpenItemSchema: RxJsonSchema<AgentOpenItemDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    user_id: { type: 'string', maxLength: 36 },
+    agent_id: { type: 'string', maxLength: 36 },
+    kind: { type: 'string', enum: ['question', 'info_share'], maxLength: 16 },
+    topic: { type: 'string' },
+    body_text: { type: 'string' },
+    priority: { type: 'number', minimum: 0, maximum: 10, multipleOf: 1 },
+    status: {
+      type: 'string',
+      enum: ['pending', 'surfaced', 'answered', 'engaged', 'dismissed', 'expired'],
+      maxLength: 16,
+    },
+    created_by_task_id: { type: ['string', 'null'] },
+    cross_domain_links: { type: 'array' },
+    created_at: { type: 'string', maxLength: 32 },
+    updated_at: { type: 'string', maxLength: 32 },
+    surfaced_at: { type: ['string', 'null'] },
+    resolved_at: { type: ['string', 'null'] },
+  },
+  required: [
+    'id',
+    'user_id',
+    'agent_id',
+    'kind',
+    'topic',
+    'body_text',
+    'priority',
+    'status',
+    'cross_domain_links',
+    'created_at',
+    'updated_at',
+  ],
+  // Primary read path: composer pulls "pending items for this agent ranked
+  // by priority". Index matches the query shape.
+  indexes: ['agent_id', ['agent_id', 'status', 'priority']],
 };
 
 export const researchOutputSchema: RxJsonSchema<ResearchOutputDoc> = {

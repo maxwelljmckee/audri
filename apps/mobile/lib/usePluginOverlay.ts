@@ -3,7 +3,7 @@
 
 import { create } from 'zustand';
 
-export type PluginKind = 'wiki' | 'todos' | 'research' | 'profile';
+export type PluginKind = 'wiki' | 'todos' | 'research' | 'profile' | 'agents';
 
 export interface OriginRect {
   x: number;

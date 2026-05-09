@@ -13,7 +13,13 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
-import { editedByEnum, pageTypeEnum, wikiLogKindEnum, wikiScopeEnum } from './enums.js';
+import {
+  editedByEnum,
+  pageTypeEnum,
+  wikiLogKindEnum,
+  wikiMaturityEnum,
+  wikiScopeEnum,
+} from './enums.js';
 import { agents } from './identity.js';
 
 export const wikiPages = pgTable(
@@ -33,6 +39,20 @@ export const wikiPages = pgTable(
     agentAbstract: text('agent_abstract').notNull(),
     abstract: text('abstract'),
     frontmatter: jsonb('frontmatter').notNull().default(sql`'{}'::jsonb`),
+    // Structured metadata for kind='person' pages — handles, socials, timezone,
+    // ask-for, avoid-asking-for, privacy. JSONB rather than a sidecar table per
+    // backlog governance ("only entities with their own plugin surface get
+    // sidecars"; person currently doesn't). Schema-light; shape firms up as
+    // ingestion populates it. Always-null for non-person pages by convention
+    // (not enforced at schema level — kept flexible for future kind extensions
+    // like 'project' wanting their own typed sidecar slot).
+    personMetadata: jsonb('person_metadata'),
+    // Coarse signal of how much we know about this entity. Source: COG-style
+    // tiering (1 / 3+ / 8+ inbound junction mentions = stub / moderate / full).
+    // Nullable; populated by future ingestion. NOT auto-maintained in v0.2 —
+    // can lag reality. Read sites that need current-truth should recompute on
+    // demand. See v0.2 build phase doc, item #2.
+    maturity: wikiMaturityEnum('maturity'),
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

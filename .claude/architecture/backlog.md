@@ -300,6 +300,12 @@ This note should be revisited *before* the items below are promoted into a build
 | Recommendation table | P2 | M | Data model | Reuse notifications or dedicated table. Kinds: schedule-proposal, split-proposal, follow-up, merge-proposal. Source: §3. |
 | Schedule / recurring-task table | P1 | M | Data model | Cron spec, task kind, params, delivery prefs, pause state, next-run, owner. Source: §3, §12. |
 
+### Per-turn call ingestion (V2+)
+
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| **`call_turns` table + per-turn ingestion** | **P2 (V2+)** | **L** | **Data model + Infra** | Today, ingestion is one batch pass after the call ends (full transcript → Flash retrieval → Pro fan-out → transactional commit). Per-turn would split it: each turn (or pair of turns) ingests immediately into a `call_turns` child table of `call_transcripts`, with much narrower context per pass. **Pros:** wiki updates feel live mid-call; pending state shrinks dramatically; cheaper Pro context per pass. **Cons:** loses batch coherence (Pro currently sees the whole call — can resolve cross-turn contradictions, identify multi-turn synthesis); write/retract risk if user reverses themselves later in call; cost direction net-unclear without modeling. **Hybrid options:** per-turn lightweight extraction + post-call full Pro pass; or adaptive batching every N turns / M seconds. **Why deferred from v0.2:** the Wiki pending indicator (v0.2 item #11) solves the "is anything happening?" UX problem cheaply, regardless of underlying ingestion shape. Per-turn is additive when revisited (new child table; doesn't rewrite existing ingestion). Cost/coherence modeling against a real transcript should precede any future commit. Source: v0.2.0 DP-8 deferral 2026-05-09. |
+
 ### Archive mechanic (committed to v0.3)
 
 | Name | Priority | Effort | Type | Description |
@@ -427,6 +433,7 @@ This note should be revisited *before* the items below are promoted into a build
 | Secret management | P0 | S | Security | Server env vars + Supabase Vault for per-user tokens. Source: §20. |
 | Token / secret storage for connectors | P1 | S | Security | Supabase Vault vs. server env vs. per-user encrypted. Lean Vault. Source: §15. |
 | Graceful cleanup on account deletion during in-flight tasks | P2 | M | Security + Infra | Orphan-artifact cleanup. Source: §11. |
+| On-device storage as a privacy position | P2 | XL | Security + Infra + Cost-Business | Evaluate making "your conversations and knowledge graph live only on your devices; our servers never persist them" a marketable claim. Scope is *storage*, not LLM inference (Gemini still sees content transiently under zero-retention terms). Requires flipping RxDB to canonical source-of-truth, moving ingestion Phase 1 + Phase 3 onto the device with the worker degrading to a stateless Gemini-call relay, serving `search_wiki` / `fetch_page` from RxDB, building user-key-derived encrypted backup for recovery, and either an E2E-encrypted CRDT relay for multi-device or a single-device V1 stance. Cheapest variant is a "local-only" opt-in tier (disables ingestion + agent tasks, keeps Audri as a local voice notebook) — partial answer that targets the privacy-maxi audience without the full rewrite. Open questions before promoting to a build phase: is privacy actually a wedge for our user, single-device vs. multi-device at V1+, regulatory tailwind, voice-layer asterisk severity. Full design exploration: `notes/on-device-privacy-options.md`. Source: 2026-05-09 design discussion. |
 
 ---
 

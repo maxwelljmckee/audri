@@ -5,9 +5,14 @@ import { initSentry } from './observability/sentry.js';
 import { withSentry } from './observability/wrap-task.js';
 import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
 import { heartbeat } from './tasks/heartbeat.js';
+import { hygieneSweep } from './tasks/hygiene-sweep.js';
 import { ingestion } from './tasks/ingestion.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+// Daily — the hygiene sweep is a low-frequency cleanup; minute-level cron
+// resolution would be wasteful. Run on app boot too so a worker restart
+// doesn't skip a day.
+const HYGIENE_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   initSentry();
@@ -23,6 +28,7 @@ async function main(): Promise<void> {
       heartbeat,
       ingestion: withSentry('ingestion', ingestion),
       agent_task_dispatch: withSentry('agent_task_dispatch', dispatchAgentTask),
+      hygiene_sweep: withSentry('hygiene_sweep', hygieneSweep),
     },
   });
 
@@ -38,9 +44,20 @@ async function main(): Promise<void> {
   tick();
   const interval = setInterval(tick, HEARTBEAT_INTERVAL_MS);
 
+  // Hygiene sweep — daily cadence. Fires on boot too so a restart doesn't
+  // skip a day. setInterval drift is fine at this resolution.
+  const enqueueHygiene = () => {
+    runner.addJob('hygiene_sweep', {}).catch((err) => {
+      logger.error({ err }, 'failed to enqueue hygiene_sweep');
+    });
+  };
+  enqueueHygiene();
+  const hygieneInterval = setInterval(enqueueHygiene, HYGIENE_SWEEP_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutdown received — stopping');
     clearInterval(interval);
+    clearInterval(hygieneInterval);
     await runner.stop();
     // Flush any buffered PostHog events before exit so we don't drop the
     // last batch on graceful restart.
