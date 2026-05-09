@@ -9,9 +9,9 @@
 // Bias: recall over precision. Pro can cheaply skip over-flagged candidates;
 // it CANNOT recover anything Flash misses.
 
-import { Type } from '@google/genai';
 import { getGeminiClient } from '@audri/shared/gemini';
-import { logger } from '../logger.js';
+import { Type } from '@google/genai';
+import { parseGeminiJson } from './parse-gemini-json.js';
 import type { WikiIndexEntry } from './wiki-index.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';
@@ -269,9 +269,7 @@ export async function retrieveCandidates(
 
   const resp = await getGeminiClient().models.generateContent({
     model: FLASH_MODEL,
-    contents: [
-      { role: 'user', parts: [{ text: userMessage }] },
-    ],
+    contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       responseMimeType: 'application/json',
@@ -306,20 +304,8 @@ export async function retrieveCandidates(
     },
   });
 
-  const text = resp.text;
-  if (!text) {
-    logger.warn('flash candidate retrieval returned empty text');
-    return { touched_pages: [], new_pages: [] };
-  }
-
-  // Lenient JSON extraction — Flash sometimes wraps JSON in prose despite schema.
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    logger.warn({ text: text.slice(0, 200) }, 'flash candidate retrieval returned non-JSON');
-    return { touched_pages: [], new_pages: [] };
-  }
-  const parsed = JSON.parse(text.slice(start, end + 1)) as Partial<FlashCandidateResult>;
+  const parsed = parseGeminiJson<Partial<FlashCandidateResult>>(resp, 'flash-candidate-retrieval');
+  if (!parsed) return { touched_pages: [], new_pages: [] };
   return {
     touched_pages: Array.isArray(parsed.touched_pages) ? parsed.touched_pages : [],
     new_pages: Array.isArray(parsed.new_pages) ? parsed.new_pages : [],

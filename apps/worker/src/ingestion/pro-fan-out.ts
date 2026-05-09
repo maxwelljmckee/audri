@@ -7,11 +7,12 @@
 //
 // Pro does NOT do candidate retrieval (Flash) or DB commit (backend).
 
-import { Type } from '@google/genai';
 import { getGeminiClient } from '@audri/shared/gemini';
+import { Type } from '@google/genai';
 import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { IngestionTranscriptTurn, NewPage } from './flash-candidate-retrieval.js';
+import { parseGeminiJson } from './parse-gemini-json.js';
 
 // Pro fan-out runs on gemini-3.1-pro-preview. Requires paid-tier GCP billing.
 // Override via env for development on Flash if billing's off.
@@ -512,17 +513,13 @@ export interface ProFanOutInput {
   callTimestamp: Date;
 }
 
-export async function runFanOut(
-  input: ProFanOutInput,
-): Promise<ProFanOutResult> {
+export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult> {
   // Use turn ids in the prompt so Pro can cite them in snippets.
-  const transcriptWithIds = (input.transcript as Array<{ id?: string; role: string; text: string }>).map(
-    (t, i) => ({ id: t.id ?? `turn-${i}`, role: t.role, text: t.text }),
-  );
+  const transcriptWithIds = (
+    input.transcript as Array<{ id?: string; role: string; text: string }>
+  ).map((t, i) => ({ id: t.id ?? `turn-${i}`, role: t.role, text: t.text }));
 
-  const flat = transcriptWithIds
-    .map((t) => `[turn_id=${t.id}] [${t.role}] ${t.text}`)
-    .join('\n');
+  const flat = transcriptWithIds.map((t) => `[turn_id=${t.id}] [${t.role}] ${t.text}`).join('\n');
 
   const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
 
@@ -640,24 +637,14 @@ export async function runFanOut(
     },
   });
 
-  const text = resp.text;
-  if (!text) {
-    logger.warn('pro fan-out returned empty text');
-    return { creates: [], updates: [], skipped: [], tasks: [] };
-  }
-
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    logger.warn({ text: text.slice(0, 300) }, 'pro fan-out returned non-JSON');
-    return { creates: [], updates: [], skipped: [], tasks: [] };
-  }
-
-  const parsed = JSON.parse(text.slice(start, end + 1)) as Partial<ProFanOutResult>;
+  const parsed = parseGeminiJson<Partial<ProFanOutResult>>(resp, 'pro-fan-out');
+  if (!parsed) return { creates: [], updates: [], skipped: [], tasks: [] };
   // Filter tasks defensively — drop unknown kinds; current MVP plugin set is
   // research-only, so anything else is hallucinated.
   const rawTasks = Array.isArray(parsed.tasks) ? (parsed.tasks as ExtractedTask[]) : [];
-  const tasks = rawTasks.filter((t) => t.kind === 'research' && typeof t.query === 'string' && t.query.trim().length > 0);
+  const tasks = rawTasks.filter(
+    (t) => t.kind === 'research' && typeof t.query === 'string' && t.query.trim().length > 0,
+  );
 
   return {
     creates: Array.isArray(parsed.creates) ? (parsed.creates as PageCreate[]) : [],

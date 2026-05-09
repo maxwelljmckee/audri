@@ -14,7 +14,6 @@
 //   - Snippets optional (observations are often gestalt-based).
 //   - Soft volume guidance — typical calls produce 0-2 writes, max 5.
 
-import { Type } from '@google/genai';
 import {
   agents,
   and,
@@ -32,8 +31,10 @@ import {
   wikiSections,
 } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
+import { Type } from '@google/genai';
 import { logger } from '../logger.js';
 import type { IngestionTranscriptTurn } from './flash-candidate-retrieval.js';
+import { parseGeminiJson } from './parse-gemini-json.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';
 
@@ -195,9 +196,7 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeRes
     text: t.text,
   }));
 
-  const flat = transcriptWithIds
-    .map((t) => `[turn_id=${t.id}] [${t.role}] ${t.text}`)
-    .join('\n');
+  const flat = transcriptWithIds.map((t) => `[turn_id=${t.id}] [${t.role}] ${t.text}`).join('\n');
 
   // Strip section ids out of the wire format — pass them, but make it visible
   // that they're for update references not for the model to invent.
@@ -298,14 +297,8 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeRes
     },
   });
 
-  const text = resp.text;
-  if (!text) return { creates: [], updates: [], skipped: [] };
-
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1) return { creates: [], updates: [], skipped: [] };
-
-  const parsed = JSON.parse(text.slice(start, end + 1)) as Partial<AgentScopeResult>;
+  const parsed = parseGeminiJson<Partial<AgentScopeResult>>(resp, 'agent-scope-flash');
+  if (!parsed) return { creates: [], updates: [], skipped: [] };
   return {
     creates: Array.isArray(parsed.creates) ? parsed.creates : [],
     updates: Array.isArray(parsed.updates) ? parsed.updates : [],
@@ -355,9 +348,7 @@ async function fetchAgentWiki(agentId: string): Promise<{
   const sectionRows = await db
     .select()
     .from(wikiSections)
-    .where(
-      and(inArray(wikiSections.pageId, pageIds), isNull(wikiSections.tombstonedAt)),
-    )
+    .where(and(inArray(wikiSections.pageId, pageIds), isNull(wikiSections.tombstonedAt)))
     .orderBy(asc(wikiSections.sortOrder));
 
   const sectionsByPage = new Map<string, AgentWikiPage['sections']>();
