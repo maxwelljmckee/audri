@@ -70,8 +70,15 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
   // explain commit zero-counts. Strip later once stable.
   logger.info(
     {
-      creates: fanOut.creates.map((c) => ({ slug: c.slug, type: c.type, sectionCount: c.sections?.length ?? 0 })),
-      updates: fanOut.updates.map((u) => ({ slug: u.slug, sectionRefCount: u.sections?.length ?? 0 })),
+      creates: fanOut.creates.map((c) => ({
+        slug: c.slug,
+        type: c.type,
+        sectionCount: c.sections?.length ?? 0,
+      })),
+      updates: fanOut.updates.map((u) => ({
+        slug: u.slug,
+        sectionRefCount: u.sections?.length ?? 0,
+      })),
       skipped: fanOut.skipped,
       candidateSlugs: [...candidateBySlug.keys()],
     },
@@ -81,8 +88,16 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
   // Validation set for page types — must match the page_type pgEnum in
   // packages/shared/src/db/schema/enums.ts.
   const VALID_PAGE_TYPES = new Set([
-    'person', 'concept', 'project', 'place', 'org', 'source',
-    'event', 'note', 'profile', 'todo',
+    'person',
+    'concept',
+    'project',
+    'place',
+    'org',
+    'source',
+    'event',
+    'note',
+    'profile',
+    'todo',
   ]);
 
   await db.transaction(async (tx) => {
@@ -265,10 +280,7 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         if (ref.id && !ref.content) {
           // Keep as-is. Preserve content; only update sort_order if changed.
           keptOrUpdatedIds.add(ref.id);
-          await tx
-            .update(wikiSections)
-            .set({ sortOrder })
-            .where(eq(wikiSections.id, ref.id));
+          await tx.update(wikiSections).set({ sortOrder }).where(eq(wikiSections.id, ref.id));
           continue;
         }
 

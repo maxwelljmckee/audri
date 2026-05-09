@@ -1,16 +1,7 @@
 // Fully-joined page representation that Pro fan-out reads — page metadata +
 // ordered sections. Per specs/fan-out-prompt.md input contract.
 
-import {
-  and,
-  asc,
-  db,
-  eq,
-  inArray,
-  isNull,
-  wikiPages,
-  wikiSections,
-} from '@audri/shared/db';
+import { and, asc, db, eq, inArray, isNull, wikiPages, wikiSections } from '@audri/shared/db';
 
 export interface FullSection {
   id: string;

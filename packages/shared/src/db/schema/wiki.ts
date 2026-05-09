@@ -60,8 +60,10 @@ export const wikiPages = pgTable(
     parentLiveIdx: index('wiki_pages_parent_live_idx')
       .on(t.parentPageId)
       .where(sql`tombstoned_at IS NULL`),
-    frontmatterGin: index('wiki_pages_frontmatter_gin')
-      .using('gin', sql`frontmatter jsonb_path_ops`),
+    frontmatterGin: index('wiki_pages_frontmatter_gin').using(
+      'gin',
+      sql`frontmatter jsonb_path_ops`,
+    ),
     scopeAgentCheck: check(
       'wiki_pages_scope_agent_check',
       sql`(scope = 'user' AND agent_id IS NULL) OR (scope = 'agent' AND agent_id IS NOT NULL)`,

@@ -7,12 +7,7 @@
 // Only fires once per session-signed-in transition; doesn't poll.
 
 import { useEffect, useRef } from 'react';
-import {
-  clearCallSnapshot,
-  isStale,
-  readCallSnapshot,
-  recoverCall,
-} from './callRecovery';
+import { clearCallSnapshot, isStale, readCallSnapshot, recoverCall } from './callRecovery';
 import { captureClientError } from './sentry';
 import { useSession } from './useSession';
 

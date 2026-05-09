@@ -3,7 +3,7 @@
 // outbound, the Supabase Auth proxy, etc.). For unauthenticated requests we
 // fall back to IP — those should be rare (only health + webhooks).
 
-import { Injectable, type ExecutionContext } from '@nestjs/common';
+import { type ExecutionContext, Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 @Injectable()

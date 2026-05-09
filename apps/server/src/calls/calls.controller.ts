@@ -1,3 +1,4 @@
+import { callTranscripts, db, eq, sql, userSettings } from '@audri/shared/db';
 import {
   BadRequestException,
   Body,
@@ -10,7 +11,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { db, callTranscripts, eq, sql, userSettings } from '@audri/shared/db';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
@@ -43,10 +43,7 @@ export class CallsController {
   // ceiling on runaway loops.
   @Throttle({ short: { limit: 10, ttl: 60 * 60_000 }, long: { limit: 100, ttl: 24 * 60 * 60_000 } })
   @Post('start')
-  async start(
-    @CurrentUser() user: { id: string },
-    @Body() body: StartCallBody,
-  ) {
+  async start(@CurrentUser() user: { id: string }, @Body() body: StartCallBody) {
     const agentSlug = body.agent_slug ?? 'assistant';
     const callType = body.call_type ?? 'generic';
     return this.calls.startCall({ userId: user.id, agentSlug, callType });
@@ -130,10 +127,7 @@ export class CallsController {
   // by status: only re-fires when ingestion_status is currently 'failed' so a
   // double-tap doesn't queue duplicate work.
   @Post(':sessionId/retry-ingest')
-  async retryIngest(
-    @CurrentUser() user: { id: string },
-    @Param('sessionId') sessionId: string,
-  ) {
+  async retryIngest(@CurrentUser() user: { id: string }, @Param('sessionId') sessionId: string) {
     const [row] = await db
       .select()
       .from(callTranscripts)

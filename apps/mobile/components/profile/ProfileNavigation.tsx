@@ -10,9 +10,9 @@ import {
 } from '@react-navigation/native-stack';
 import { useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { WikiPageDoc } from '../../lib/rxdb/schemas';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useWikiPages } from '../../lib/rxdb/useWikiPages';
-import type { WikiPageDoc } from '../../lib/rxdb/schemas';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
 import { WikiPageDetail } from '../WikiPageDetail';
 
@@ -85,10 +85,7 @@ function ProfileRow({
 }) {
   const isRoot = page.slug === 'profile';
   return (
-    <Pressable
-      style={styles.row}
-      onPress={() => navigation.push('Page', { pageId: page.id })}
-    >
+    <Pressable style={styles.row} onPress={() => navigation.push('Page', { pageId: page.id })}>
       <View style={[styles.rowIcon, isRoot && styles.rowIconRoot]}>
         <Ionicons
           name={isRoot ? 'person-circle-outline' : 'document-text-outline'}

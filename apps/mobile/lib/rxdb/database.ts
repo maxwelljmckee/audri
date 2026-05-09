@@ -4,7 +4,7 @@
 // adapter; rxdb-premium SQLite would close that gap. Acceptable for MVP since
 // initial Supabase sync is fast and re-runs on each cold start.)
 
-import { addRxPlugin, createRxDatabase, type RxCollection, type RxDatabase } from 'rxdb';
+import { type RxCollection, type RxDatabase, addRxPlugin, createRxDatabase } from 'rxdb';
 import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import { RxDBQueryBuilderPlugin } from 'rxdb/plugins/query-builder';
 import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';

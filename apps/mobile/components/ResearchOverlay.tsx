@@ -2,8 +2,8 @@
 // independent React Navigation stack. Each screen lives in `research/` —
 // this file is just the wiring.
 
-import { PluginNavigationContainer } from './PluginStack';
 import { PluginOverlay } from './PluginOverlay';
+import { PluginNavigationContainer } from './PluginStack';
 import { ResearchStack } from './research/ResearchNavigation';
 
 export function ResearchOverlay() {

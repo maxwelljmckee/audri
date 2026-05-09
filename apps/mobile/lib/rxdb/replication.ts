@@ -91,7 +91,6 @@ export function startReplication(): Promise<ReplicationHandle> {
           captureClientError(`rxdb-replication-${collection}`, err);
           // Also log to console for immediate dev-time visibility — Sentry can
           // be lossy and field-test debugging benefits from raw stderr output.
-          // biome-ignore lint/suspicious/noConsole: deliberate debug surface
           console.error(`[rxdb][${collection}] replication error:`, err);
         });
       } catch (e) {

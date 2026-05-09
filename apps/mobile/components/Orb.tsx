@@ -13,11 +13,11 @@
 // The shader's `hueByIntensity` is disabled so it doesn't override our
 // state-driven hue with its own oscillation.
 
-import React, { useEffect } from "react";
-import { ActivityIndicator } from "react-native";
-import { useSharedValue, withTiming } from "react-native-reanimated";
-import { useCallStore } from "../lib/useCallStore";
-import ShaderOrb from "./animations/orb-shader-animation-with-react-native-skia";
+import React, { useEffect } from 'react';
+import { ActivityIndicator } from 'react-native';
+import { useSharedValue, withTiming } from 'react-native-reanimated';
+import { useCallStore } from '../lib/useCallStore';
+import ShaderOrb from './animations/orb-shader-animation-with-react-native-skia';
 
 const ORB_SIZE = 240;
 
@@ -48,15 +48,12 @@ export function Orb() {
   const intensity = useSharedValue(0);
 
   useEffect(() => {
-    if (speaker === "user") {
+    if (speaker === 'user') {
       // sqrt curve boosts low-amplitude response (quiet speech becomes
       // visible), gain scales further, hard cap limits the visual ceiling.
-      const boosted = Math.min(
-        Math.sqrt(amplitude) * INPUT_GAIN,
-        MAX_INTENSITY,
-      );
+      const boosted = Math.min(Math.sqrt(amplitude) * INPUT_GAIN, MAX_INTENSITY);
       intensity.value = withTiming(boosted, { duration: 80 });
-    } else if (speaker === "agent") {
+    } else if (speaker === 'agent') {
       intensity.value = withTiming(AGENT_INTENSITY, { duration: 200 });
     } else {
       intensity.value = withTiming(0, { duration: 400 });
@@ -64,11 +61,7 @@ export function Orb() {
   }, [speaker, amplitude, intensity]);
 
   const hue =
-    speaker === "user"
-      ? ORB_HUE_USER
-      : speaker === "agent"
-        ? ORB_HUE_AGENT
-        : ORB_HUE_IDLE;
+    speaker === 'user' ? ORB_HUE_USER : speaker === 'agent' ? ORB_HUE_AGENT : ORB_HUE_IDLE;
 
   return (
     <React.Suspense fallback={<ActivityIndicator color="#e8f1ff" />}>

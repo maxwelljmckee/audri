@@ -8,9 +8,9 @@ import { HealthModule } from './health/health.module.js';
 import { MeModule } from './me/me.module.js';
 import { SeedModule } from './seed/seed.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
+import { UserThrottlerGuard } from './throttler/user-throttler.guard.js';
 import { TodosModule } from './todos/todos.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
-import { UserThrottlerGuard } from './throttler/user-throttler.guard.js';
 
 @Module({
   imports: [
@@ -32,20 +32,33 @@ import { UserThrottlerGuard } from './throttler/user-throttler.guard.js';
           paths: [
             'req.headers.authorization',
             'req.headers.cookie',
-            'password', '*.password',
-            'token', '*.token',
-            'api_key', '*.api_key',
+            'password',
+            '*.password',
+            'token',
+            '*.token',
+            'api_key',
+            '*.api_key',
             // User content
-            'transcript', '*.transcript',
-            'content', '*.content',
-            'query', '*.query',
-            'summary', '*.summary',
-            'payload', '*.payload',
-            'snippets', '*.snippets',
-            'snippet', '*.snippet',
-            'findings', '*.findings',
-            'notes_for_user', '*.notes_for_user',
-            'context_summary', '*.context_summary',
+            'transcript',
+            '*.transcript',
+            'content',
+            '*.content',
+            'query',
+            '*.query',
+            'summary',
+            '*.summary',
+            'payload',
+            '*.payload',
+            'snippets',
+            '*.snippets',
+            'snippet',
+            '*.snippet',
+            'findings',
+            '*.findings',
+            'notes_for_user',
+            '*.notes_for_user',
+            'context_summary',
+            '*.context_summary',
           ],
           remove: true,
         },
@@ -67,8 +80,6 @@ import { UserThrottlerGuard } from './throttler/user-throttler.guard.js';
     TasksModule,
     TodosModule,
   ],
-  providers: [
-    { provide: APP_GUARD, useClass: UserThrottlerGuard },
-  ],
+  providers: [{ provide: APP_GUARD, useClass: UserThrottlerGuard }],
 })
 export class AppModule {}

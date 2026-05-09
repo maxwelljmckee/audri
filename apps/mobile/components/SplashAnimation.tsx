@@ -2,8 +2,8 @@
 // letters inward, opacity + clipped-width together. Mounts above everything
 // in app/_layout.tsx; unmounts itself once done. Plays once per cold start.
 
-import { useEffect, useState } from "react";
-import { StyleSheet, Text } from "react-native";
+import { useEffect, useState } from 'react';
+import { StyleSheet, Text } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -11,8 +11,8 @@ import Animated, {
   useSharedValue,
   withDelay,
   withTiming,
-} from "react-native-reanimated";
-import { useSplashAnimation } from "../lib/useSplashAnimation";
+} from 'react-native-reanimated';
+import { useSplashAnimation } from '../lib/useSplashAnimation';
 
 // Choreography (ms). Pre-roll → hold (with breath+lift) → collapse → settle
 // → fade → complete. Pre-roll is a static beat at rest before any motion
@@ -33,14 +33,14 @@ const BREATH_MAX_SCALE = 1.08;
 // Negative Y in RN coordinate space = up.
 const LIFT_MAX_Y = -4;
 
-const FONT_FAMILY = "Comfortaa_400Regular";
+const FONT_FAMILY = 'Comfortaa_400Regular';
 const FONT_SIZE = 48;
-const TEXT_COLOR = "#e8f1ff"; // azure-text
+const TEXT_COLOR = '#e8f1ff'; // azure-text
 // Slightly desaturated + darker than azure-bg (#0a1628) so the surface
 // reads similarly to the LavaLamp's post-blur output, which the splash
 // fades onto. Tweak knob if it drifts: keep R/G close together, B only
 // modestly higher → muted-blue.
-const BG_COLOR = "#0c1320"; // rgb(12, 19, 32) — desat azure
+const BG_COLOR = '#0c1320'; // rgb(12, 19, 32) — desat azure
 
 // Fast-out-slow-in cubic. Standard Material curve for "expressive" motion.
 const EASE = Easing.bezier(0.4, 0, 0.2, 1);
@@ -70,18 +70,12 @@ export function SplashAnimation() {
   useEffect(() => {
     if (done) return;
     const easing = Easing.out(Easing.cubic);
-    textOpacity.value = withDelay(
-      PRE_ROLL_MS,
-      withTiming(1, { duration: HOLD_MS, easing }),
-    );
+    textOpacity.value = withDelay(PRE_ROLL_MS, withTiming(1, { duration: HOLD_MS, easing }));
     breathe.value = withDelay(
       PRE_ROLL_MS,
       withTiming(BREATH_MAX_SCALE, { duration: HOLD_MS, easing }),
     );
-    lift.value = withDelay(
-      PRE_ROLL_MS,
-      withTiming(LIFT_MAX_Y, { duration: HOLD_MS, easing }),
-    );
+    lift.value = withDelay(PRE_ROLL_MS, withTiming(LIFT_MAX_Y, { duration: HOLD_MS, easing }));
   }, [done, textOpacity, breathe, lift]);
 
   useEffect(() => {
@@ -164,8 +158,8 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: BG_COLOR,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     // Render above everything else mounted in the root layout (overlays,
     // status bar). Z-index isn't enough on Android; absolute-fill at the
     // bottom of the root tree handles the stacking on both platforms.
@@ -173,11 +167,11 @@ const styles = StyleSheet.create({
     elevation: 9999,
   },
   row: {
-    flexDirection: "row",
-    alignItems: "baseline",
+    flexDirection: 'row',
+    alignItems: 'baseline',
   },
   middle: {
-    overflow: "hidden",
+    overflow: 'hidden',
   },
   middleText: {
     flexShrink: 0,

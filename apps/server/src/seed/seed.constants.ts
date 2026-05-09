@@ -36,7 +36,12 @@ export const ASSISTANT_AGENT = {
 // assistant/blind-spots) may emerge when observations clearly warrant them.
 // Vocabulary lives in apps/worker/src/ingestion/agent-scope.ts.
 export const AGENT_SCOPE_PAGES = [
-  { slug: 'assistant', title: 'Assistant', agentAbstract: 'Private notes about the user, kept by the Assistant.', isRoot: true },
+  {
+    slug: 'assistant',
+    title: 'Assistant',
+    agentAbstract: 'Private notes about the user, kept by the Assistant.',
+    isRoot: true,
+  },
 ] as const;
 
 // User-scope profile root (1). Sub-pages are NOT seeded — every `profile/<area>`
@@ -55,7 +60,12 @@ export const AGENT_SCOPE_PAGES = [
 // Flash + Pro prompts so the ingestion pipeline knows when to propose +
 // route. See specs/onboarding.md for the askable/emergent split.
 export const PROFILE_PAGES = [
-  { slug: 'profile', title: 'Profile', agentAbstract: "The user's profile — who they are, what matters to them.", isRoot: true },
+  {
+    slug: 'profile',
+    title: 'Profile',
+    agentAbstract: "The user's profile — who they are, what matters to them.",
+    isRoot: true,
+  },
 ] as const;
 
 // User-scope todo pages (5). Root + 4 status buckets, all `type='todo'`.

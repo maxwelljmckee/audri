@@ -6,8 +6,8 @@
 // enabled). So we instruct the model to emit JSON in the prompt and parse +
 // validate post-hoc with zod.
 
-import { type Tool } from '@google/genai';
 import { getGeminiClient } from '@audri/shared/gemini';
+import type { Tool } from '@google/genai';
 import { z } from 'zod';
 import { logger } from '../logger.js';
 
@@ -174,9 +174,8 @@ export async function runResearch(payload: ResearchPayload): Promise<ResearchHan
   if (!parsed.query) parsed.query = payload.query;
   // Fallback title if the model omitted it: truncate the query.
   if (!parsed.title || typeof parsed.title !== 'string') {
-    parsed.title = payload.query.length > 60
-      ? `${payload.query.slice(0, 60).trimEnd()}…`
-      : payload.query;
+    parsed.title =
+      payload.query.length > 60 ? `${payload.query.slice(0, 60).trimEnd()}…` : payload.query;
   }
 
   // Reconcile citations against the SDK's groundingMetadata.groundingChunks.
@@ -196,8 +195,9 @@ export async function runResearch(payload: ResearchPayload): Promise<ResearchHan
   const validated = ResearchOutputZ.parse(parsed);
 
   // Token usage — best-effort extraction. Defaults to 0 if absent.
-  const meta = (resp as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } })
-    .usageMetadata;
+  const meta = (
+    resp as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }
+  ).usageMetadata;
   const tokensIn = meta?.promptTokenCount ?? 0;
   const tokensOut = meta?.candidatesTokenCount ?? 0;
 
@@ -225,7 +225,9 @@ interface GroundingMeta {
 function extractGroundingChunks(resp: unknown): GroundingChunkWeb[] {
   const meta = resp as GroundingMeta;
   const chunks = meta.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-  return chunks.map((c) => c.web ?? {}).filter((w) => typeof w.uri === 'string' && w.uri.length > 0);
+  return chunks
+    .map((c) => c.web ?? {})
+    .filter((w) => typeof w.uri === 'string' && w.uri.length > 0);
 }
 
 function hostname(url: string): string | null {
@@ -285,7 +287,14 @@ function reconcileCitations(
     }
 
     // Otherwise try to find an unclaimed grounding chunk on the same host.
-    const host = hostname(rawUrl) ?? rawUrl.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]?.toLowerCase() ?? '';
+    const host =
+      hostname(rawUrl) ??
+      rawUrl
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .split('/')[0]
+        ?.toLowerCase() ??
+      '';
     const candidates = chunksByHost.get(host) ?? [];
     const match = candidates.find((c) => c.uri && !claimed.has(c.uri));
     if (match?.uri) {
@@ -300,10 +309,7 @@ function reconcileCitations(
 
     // No deep URL available anywhere — drop. Bare-domain citations are
     // useless for cross-linking; skipping them is honest.
-    logger.warn(
-      { rawUrl, host },
-      'research handler: dropped citation with no deep URL available',
-    );
+    logger.warn({ rawUrl, host }, 'research handler: dropped citation with no deep URL available');
   }
 
   // Append any grounding chunks the model didn't cite explicitly. They

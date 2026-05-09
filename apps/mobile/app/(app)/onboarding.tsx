@@ -9,8 +9,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { CallButton } from '../../components/buttons';
 import { Orb } from '../../components/Orb';
+import { CallButton } from '../../components/buttons';
 import { useCallContext } from '../../lib/CallContext';
 import { useCallStore } from '../../lib/useCallStore';
 
@@ -56,10 +56,13 @@ export default function OnboardingScreen() {
   useEffect(() => {
     if (phase !== 'pre') return;
     const fade = (delayMultiplier: number) =>
-      withDelay(STAGGER_MS * delayMultiplier, withTiming(1, {
-        duration: FADE_MS,
-        easing: Easing.out(Easing.cubic),
-      }));
+      withDelay(
+        STAGGER_MS * delayMultiplier,
+        withTiming(1, {
+          duration: FADE_MS,
+          easing: Easing.out(Easing.cubic),
+        }),
+      );
     line0.value = fade(1);
     line1.value = fade(2);
     line2.value = fade(3);

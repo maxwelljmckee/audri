@@ -1,8 +1,8 @@
+import { agents, db, eq, sql, userSettings } from '@audri/shared/db';
 import { Controller, Delete, Get, Logger, UseGuards } from '@nestjs/common';
-import { db, agents, userSettings, eq, sql } from '@audri/shared/db';
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { getSupabaseAdmin } from '../auth/supabase.client.js';
 import { CurrentUser } from '../auth/user.decorator.js';
-import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 
 @Controller('me')
 @UseGuards(SupabaseAuthGuard)

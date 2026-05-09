@@ -7,8 +7,8 @@
 // `useCallContext()` lets any screen (call, onboarding, home FAB) read
 // from the same session instance.
 
-import { createContext, type ReactNode, useContext } from 'react';
-import { useCall, type UseCallResult } from './gemini/useCall';
+import { type ReactNode, createContext, useContext } from 'react';
+import { type UseCallResult, useCall } from './gemini/useCall';
 
 const CallContext = createContext<UseCallResult | null>(null);
 

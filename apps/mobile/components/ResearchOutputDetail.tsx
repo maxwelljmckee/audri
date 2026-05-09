@@ -51,21 +51,19 @@ export function ResearchOutputDetail({ output, onBack }: Props) {
       <ScrollView ref={scrollRef} contentContainerStyle={styles.body}>
         <Text style={styles.title}>{output.title || output.query}</Text>
         <Text style={styles.queryLine}>{output.query}</Text>
-        <Text style={styles.timestamp}>
-          {new Date(output.generated_at).toLocaleString()}
-        </Text>
+        <Text style={styles.timestamp}>{new Date(output.generated_at).toLocaleString()}</Text>
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Summary</Text>
           <Text style={styles.summary}>{output.summary}</Text>
         </View>
 
-        {output.findings.map((f: ResearchFindingDoc, idx) => {
+        {output.findings.map((f: ResearchFindingDoc) => {
           const validCitations = f.citation_indices.filter(
             (i) => i > 0 && i <= output.citations.length,
           );
           return (
-            <View key={idx} style={styles.finding}>
+            <View key={f.heading} style={styles.finding}>
               <Text style={styles.findingHeading}>{f.heading}</Text>
               <Markdown style={markdownStyles}>{f.content}</Markdown>
               {validCitations.length > 0 && (
@@ -73,12 +71,11 @@ export function ResearchOutputDetail({ output, onBack }: Props) {
                   <Text style={styles.citationLineLabel}>Sources: </Text>
                   {validCitations.map((i, k) => (
                     <Text
-                      key={`${idx}-${i}-${k}`}
+                      key={`${f.heading}-cite-${i}`}
                       style={styles.citationLink}
                       onPress={() => scrollToCitation(i)}
                     >
-                      [{i}]
-                      {k < validCitations.length - 1 ? ' ' : ''}
+                      [{i}]{k < validCitations.length - 1 ? ' ' : ''}
                     </Text>
                   ))}
                 </View>
@@ -97,8 +94,8 @@ export function ResearchOutputDetail({ output, onBack }: Props) {
         {output.follow_up_questions.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>Follow-up questions</Text>
-            {output.follow_up_questions.map((q, i) => (
-              <Text key={i} style={styles.followUp}>
+            {output.follow_up_questions.map((q) => (
+              <Text key={q} style={styles.followUp}>
                 – {q}
               </Text>
             ))}
@@ -112,7 +109,7 @@ export function ResearchOutputDetail({ output, onBack }: Props) {
               const idx1 = i + 1;
               return (
                 <View
-                  key={i}
+                  key={c.url}
                   ref={(node) => {
                     if (node) citationRefs.current.set(idx1, node);
                     else citationRefs.current.delete(idx1);

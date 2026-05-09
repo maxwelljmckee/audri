@@ -7,7 +7,7 @@
 //   turnComplete as "Audri is done", we'd open the mic-gate too early and
 //   the speaker output would echo back into Gemini and start a new turn.
 
-import { AudioContext, type AudioBufferQueueSourceNode } from 'react-native-audio-api';
+import { type AudioBufferQueueSourceNode, AudioContext } from 'react-native-audio-api';
 import { base64ToInt16Array } from './audio-utils';
 
 export const PLAYBACK_SAMPLE_RATE = 24000;

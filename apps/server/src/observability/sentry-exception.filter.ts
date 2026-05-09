@@ -4,7 +4,13 @@
 // 4xx HttpExceptions are NOT captured — those are user-facing input errors,
 // not server faults. 5xx + uncaught exceptions are captured.
 
-import { ArgumentsHost, Catch, HttpException, HttpStatus, type ExceptionFilter } from '@nestjs/common';
+import {
+  type ArgumentsHost,
+  Catch,
+  type ExceptionFilter,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import * as Sentry from '@sentry/node';
 

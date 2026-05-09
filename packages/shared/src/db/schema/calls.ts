@@ -37,10 +37,7 @@ export const callTranscripts = pgTable(
     // apps/worker/src/ingestion/redact.ts for the redaction regexes and
     // build-phases/v0.1.1.md → claim-level audit for the design rationale.
     proFanOutResponse: jsonb('pro_fan_out_response'),
-    droppedTurnIds: text('dropped_turn_ids')
-      .array()
-      .notNull()
-      .default(sql`ARRAY[]::text[]`),
+    droppedTurnIds: text('dropped_turn_ids').array().notNull().default(sql`ARRAY[]::text[]`),
     cancelled: boolean('cancelled').notNull().default(false),
     endReason: endReasonEnum('end_reason'),
     ingestionStatus: ingestionStatusEnum('ingestion_status').notNull().default('pending'),

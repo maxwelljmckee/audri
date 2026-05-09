@@ -2,8 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
-import { useWikiSectionsForPage } from '../lib/rxdb/useWikiPages';
 import type { WikiPageDoc } from '../lib/rxdb/schemas';
+import { useWikiSectionsForPage } from '../lib/rxdb/useWikiPages';
 import { WikiSectionEditor } from './WikiSectionEditor';
 
 interface Props {
@@ -18,12 +18,7 @@ export function WikiPageDetail({ page, onBack }: Props) {
   if (editingSectionId) {
     const section = sections.find((s) => s.id === editingSectionId);
     if (section) {
-      return (
-        <WikiSectionEditor
-          section={section}
-          onClose={() => setEditingSectionId(null)}
-        />
-      );
+      return <WikiSectionEditor section={section} onClose={() => setEditingSectionId(null)} />;
     }
   }
 
@@ -46,11 +41,7 @@ export function WikiPageDetail({ page, onBack }: Props) {
         )}
 
         {sections.map((s) => (
-          <Pressable
-            key={s.id}
-            style={styles.section}
-            onPress={() => setEditingSectionId(s.id)}
-          >
+          <Pressable key={s.id} style={styles.section} onPress={() => setEditingSectionId(s.id)}>
             {s.title && <Text style={styles.sectionTitle}>{s.title}</Text>}
             <Markdown style={markdownStyles}>{s.content}</Markdown>
             <View style={styles.editHint}>

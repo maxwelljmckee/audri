@@ -203,7 +203,10 @@ function SpawnScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLi
   );
 }
 
-function DetailScreen({ navigation, route }: NativeStackScreenProps<ResearchStackParamList, 'Detail'>) {
+function DetailScreen({
+  navigation,
+  route,
+}: NativeStackScreenProps<ResearchStackParamList, 'Detail'>) {
   const outputs = useResearchOutputs();
   const output = outputs.find((o) => o.id === route.params.researchOutputId);
 

@@ -4,24 +4,9 @@
 //
 // Per todos.md §11. Currently only `research` is exposed.
 
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Logger,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
+import { agentTasks, and, db, eq, isNull, sql, wikiPages } from '@audri/shared/db';
+import { BadRequestException, Body, Controller, Logger, Post, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import {
-  agentTasks,
-  and,
-  db,
-  eq,
-  isNull,
-  sql,
-  wikiPages,
-} from '@audri/shared/db';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 
@@ -48,10 +33,7 @@ export class TasksController {
   // Cap to 20/hour and 80/day per user.
   @Throttle({ short: { limit: 20, ttl: 60 * 60_000 }, long: { limit: 80, ttl: 24 * 60 * 60_000 } })
   @Post('research')
-  async spawnResearch(
-    @CurrentUser() user: { id: string },
-    @Body() body: SpawnResearchBody,
-  ) {
+  async spawnResearch(@CurrentUser() user: { id: string }, @Body() body: SpawnResearchBody) {
     const query = (body.query ?? '').trim();
     if (query.length === 0) throw new BadRequestException('query required');
 
@@ -99,7 +81,10 @@ export class TasksController {
           userId: user.id,
           todoPageId: todoRow.id,
           kind: 'research',
-          payload: { query, ...(body.context_summary ? { context_summary: body.context_summary } : {}) },
+          payload: {
+            query,
+            ...(body.context_summary ? { context_summary: body.context_summary } : {}),
+          },
           status: 'pending',
         })
         .returning({ id: agentTasks.id });
@@ -116,10 +101,7 @@ export class TasksController {
         )
       `);
 
-      this.logger.log(
-        { userId: user.id, agentTaskId: taskRow.id, query },
-        'research task spawned',
-      );
+      this.logger.log({ userId: user.id, agentTaskId: taskRow.id, query }, 'research task spawned');
 
       return { agentTaskId: taskRow.id, todoPageId: todoRow.id };
     });

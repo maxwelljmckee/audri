@@ -32,11 +32,7 @@ export function initSentry(): void {
 // Helper for caught errors that we don't want to crash on but DO want
 // visible in Sentry. Always logs to console (preserves existing dev UX),
 // additionally fires to Sentry with a tag identifying the call site.
-export function captureClientError(
-  area: string,
-  err: unknown,
-  extras?: Record<string, unknown>,
-) {
+export function captureClientError(area: string, err: unknown, extras?: Record<string, unknown>) {
   console.warn(`[${area}] error`, err, extras);
   Sentry.withScope((scope) => {
     scope.setTag('area', area);

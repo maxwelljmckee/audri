@@ -3,22 +3,8 @@
 // user-scope pages, but creation is server-only — pages typically arrive
 // via ingestion fan-out).
 
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Logger,
-  Post,
-  UseGuards,
-} from '@nestjs/common';
-import {
-  and,
-  db,
-  eq,
-  isNull,
-  wikiPages,
-  wikiSections,
-} from '@audri/shared/db';
+import { and, db, eq, isNull, wikiPages, wikiSections } from '@audri/shared/db';
+import { BadRequestException, Body, Controller, Logger, Post, UseGuards } from '@nestjs/common';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 

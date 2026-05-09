@@ -7,7 +7,7 @@
 // origin coordinates back up for the scale-from-tile launch animation.
 
 import { Ionicons } from '@expo/vector-icons';
-import { Text, type StyleProp, type ViewStyle } from 'react-native';
+import { type StyleProp, Text, type ViewStyle } from 'react-native';
 import { GlassButton } from './GlassButton';
 
 const ICON_SIZE = 28;

@@ -6,7 +6,7 @@
 // gated=false the moment we detect user speech.
 
 import { AudioManager, AudioRecorder } from 'react-native-audio-api';
-import { float32ToPcm16, peakAmplitude, pcm16ToBase64 } from './audio-utils';
+import { float32ToPcm16, pcm16ToBase64, peakAmplitude } from './audio-utils';
 
 export const MIC_SAMPLE_RATE = 16000;
 const MIC_BUFFER_LENGTH = 1600; // 100ms at 16kHz

@@ -1,7 +1,7 @@
-import { BlurView } from "expo-blur";
-import randomColor from "randomcolor";
-import { useEffect, useMemo, useRef } from "react";
-import { Platform, StyleSheet, useWindowDimensions, View } from "react-native";
+import { BlurView } from 'expo-blur';
+import randomColor from 'randomcolor';
+import { useEffect, useMemo, useRef } from 'react';
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, {
   cancelAnimation,
   Easing,
@@ -10,7 +10,7 @@ import Animated, {
   withRepeat,
   withSequence,
   withTiming,
-} from "react-native-reanimated";
+} from 'react-native-reanimated';
 
 function randomNumber(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1) + min);
@@ -29,7 +29,7 @@ type LavaLampProps = {
   /** BlurView tint scheme. Original component hardcoded 'light' which
    *  washes a dark theme to white. Default kept as 'light' for backward
    *  compatibility; pass 'dark' on dark themes. */
-  tint?: "light" | "dark" | "default";
+  tint?: 'light' | 'dark' | 'default';
   /** When true, freezes each blob's rotation at its current angle. Use to
    *  pause the animation when the surface isn't visible (e.g. a plugin
    *  overlay is covering it) — saves continuous GPU work for nothing. */
@@ -52,23 +52,24 @@ type CircleProps = {
 
 export function LavaLamp({
   count = 4,
-  hue = "green",
+  hue = 'green',
   intensity = 100,
   colors,
   duration,
   bgColor,
-  tint = "light",
+  tint = 'light',
   paused = false,
 }: LavaLampProps) {
   const { width, height } = useWindowDimensions();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: width/height intentionally excluded — blob positions are stable per mount and shouldn't scramble on rotation
   const circles = useMemo<Circle[]>(() => {
     const _colors =
       colors ??
       randomColor({
         count,
         hue,
-        format: "rgba",
-        luminosity: "light",
+        format: 'rgba',
+        luminosity: 'light',
         alpha: 0.3,
       });
     return _colors.map((color, index) => {
@@ -94,15 +95,9 @@ export function LavaLamp({
       const OVERSHOOT_FRAC = 0.2;
       const overshootY = height * OVERSHOOT_FRAC;
       const overshootX = width * OVERSHOOT_FRAC;
-      const cy =
-        height * Y_BAND_MIN + Math.random() * height * (Y_BAND_MAX - Y_BAND_MIN);
-      const maxOrbitR = Math.min(
-        cy + overshootY,
-        height - cy + overshootY,
-        width / 2 + overshootX,
-      );
-      const orbitR =
-        maxOrbitR * (ORBIT_MIN_FRAC + Math.random() * (1 - ORBIT_MIN_FRAC));
+      const cy = height * Y_BAND_MIN + Math.random() * height * (Y_BAND_MAX - Y_BAND_MIN);
+      const maxOrbitR = Math.min(cy + overshootY, height - cy + overshootY, width / 2 + overshootX);
+      const orbitR = maxOrbitR * (ORBIT_MIN_FRAC + Math.random() * (1 - ORBIT_MIN_FRAC));
       const offsetFromCenter = (Math.random() * 2 - 1) * orbitR;
       return {
         x: width / 2 + offsetFromCenter,
@@ -115,12 +110,10 @@ export function LavaLamp({
   }, [count, hue, colors]);
   // Honor the explicit background color when given; otherwise fall back to
   // the original hue-derived dark color.
-  const resolvedBg =
-    bgColor ?? randomColor({ hue, count: 1, luminosity: "dark" })[0];
+  const resolvedBg = bgColor ?? randomColor({ hue, count: 1, luminosity: 'dark' })[0];
 
   return (
-    <View
-      style={[StyleSheet.absoluteFillObject, { backgroundColor: resolvedBg }]}>
+    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: resolvedBg }]}>
       {circles.map((circle) => {
         return (
           <Circle
@@ -132,11 +125,7 @@ export function LavaLamp({
           />
         );
       })}
-      <BlurView
-        style={StyleSheet.absoluteFillObject}
-        intensity={intensity}
-        tint={tint}
-      />
+      <BlurView style={StyleSheet.absoluteFillObject} intensity={intensity} tint={tint} />
     </View>
   );
 }
@@ -186,30 +175,27 @@ function Circle({ circle, duration = 10000, withBlur, paused }: CircleProps) {
         StyleSheet.absoluteFillObject,
         stylez,
         {
-          transformOrigin: ["50%", circle.y, 0],
+          transformOrigin: ['50%', circle.y, 0],
         },
-      ]}>
+      ]}
+    >
       <View
         style={[
           {
             backgroundColor: circle.color,
-            position: "absolute",
+            position: 'absolute',
             left: circle.x - circle.radius,
             top: circle.y - circle.radius,
             width: circle.radius * 2,
             height: circle.radius * 2,
             borderRadius: circle.radius,
             // This is using React Native 0.76
-            filter: Platform.OS === "android" ? "blur(10px)" : "",
+            filter: Platform.OS === 'android' ? 'blur(10px)' : '',
           },
         ]}
       />
-      {withBlur && Platform.OS === "ios" && (
-        <BlurView
-          style={StyleSheet.absoluteFillObject}
-          intensity={5}
-          tint='light'
-        />
+      {withBlur && Platform.OS === 'ios' && (
+        <BlurView style={StyleSheet.absoluteFillObject} intensity={5} tint="light" />
       )}
     </Animated.View>
   );

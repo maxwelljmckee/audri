@@ -18,15 +18,7 @@ import {
   createNativeStackNavigator,
 } from '@react-navigation/native-stack';
 import { useMemo, useState } from 'react';
-import {
-  FlatList,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import type { WikiPageDoc, WikiSectionDoc } from '../../lib/rxdb/schemas';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
@@ -35,12 +27,12 @@ import { pluginStackScreenOptions } from '../PluginStack';
 import { WikiSectionEditor } from '../WikiSectionEditor';
 import { Breadcrumbs } from './Breadcrumbs';
 import {
+  type WikiSearchHit,
   countChildren,
   getAncestorChain,
   getChildren,
   getTopLevelPages,
   searchPages,
-  type WikiSearchHit,
 } from './tree';
 
 const TYPE_ICONS: Record<string, React.ComponentProps<typeof Ionicons>['name']> = {
@@ -69,10 +61,7 @@ const Stack = createNativeStackNavigator<WikiStackParamList>();
 
 export function WikiStack() {
   return (
-    <Stack.Navigator
-      screenOptions={pluginStackScreenOptions}
-      initialRouteName="Folders"
-    >
+    <Stack.Navigator screenOptions={pluginStackScreenOptions} initialRouteName="Folders">
       <Stack.Screen name="Folders" component={FoldersScreen} />
       <Stack.Screen name="Page" component={PageScreen} />
     </Stack.Navigator>
@@ -81,9 +70,7 @@ export function WikiStack() {
 
 // ── Folders (top-level + search) ──────────────────────────────────────────
 
-function FoldersScreen({
-  navigation,
-}: NativeStackScreenProps<WikiStackParamList, 'Folders'>) {
+function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList, 'Folders'>) {
   const ready = useRxdbReady();
   const pages = useWikiPages();
   const [query, setQuery] = useState('');
@@ -174,10 +161,7 @@ function SearchResultsList({
         </View>
       }
       renderItem={({ item }) => (
-        <Pressable
-          style={styles.searchRow}
-          onPress={() => onPick(item.page.id)}
-        >
+        <Pressable style={styles.searchRow} onPress={() => onPick(item.page.id)}>
           <View style={styles.rowIcon}>
             <Ionicons name={iconFor(item.page.type)} size={18} color="#7aa3d4" />
           </View>
@@ -205,20 +189,14 @@ function SearchResultsList({
 
 // ── Page (universal page view) ────────────────────────────────────────────
 
-function PageScreen({
-  navigation,
-  route,
-}: NativeStackScreenProps<WikiStackParamList, 'Page'>) {
+function PageScreen({ navigation, route }: NativeStackScreenProps<WikiStackParamList, 'Page'>) {
   const pages = useWikiPages();
   const page = useMemo(
     () => pages.find((p) => p.id === route.params.pageId),
     [pages, route.params.pageId],
   );
   const sections = useWikiSectionsForPage(page?.id ?? null);
-  const children = useMemo(
-    () => (page ? getChildren(page.id, pages) : []),
-    [page, pages],
-  );
+  const children = useMemo(() => (page ? getChildren(page.id, pages) : []), [page, pages]);
   const childCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const c of children) m.set(c.id, countChildren(c.id, pages));
@@ -251,12 +229,7 @@ function PageScreen({
   if (editingSectionId) {
     const section = sections.find((s) => s.id === editingSectionId);
     if (section) {
-      return (
-        <WikiSectionEditor
-          section={section}
-          onClose={() => setEditingSectionId(null)}
-        />
-      );
+      return <WikiSectionEditor section={section} onClose={() => setEditingSectionId(null)} />;
     }
   }
 
@@ -270,14 +243,11 @@ function PageScreen({
         </View>
         {page.abstract && <Text style={styles.pageAbstract}>{page.abstract}</Text>}
 
-        <SectionsView
-          sections={sections}
-          onEditSection={(id) => setEditingSectionId(id)}
-        />
+        <SectionsView sections={sections} onEditSection={(id) => setEditingSectionId(id)} />
 
         {children.length > 0 && (
           <SubPagesList
-            children={children}
+            pages={children}
             childCounts={childCounts}
             onPress={(id) => navigation.push('Page', { pageId: id })}
           />
@@ -298,11 +268,7 @@ function SectionsView({
   return (
     <View style={styles.sectionsBlock}>
       {sections.map((s) => (
-        <Pressable
-          key={s.id}
-          style={styles.section}
-          onPress={() => onEditSection(s.id)}
-        >
+        <Pressable key={s.id} style={styles.section} onPress={() => onEditSection(s.id)}>
           {s.title && <Text style={styles.sectionTitle}>{s.title}</Text>}
           <Markdown style={markdownStyles}>{s.content}</Markdown>
           <View style={styles.editHint}>
@@ -316,20 +282,18 @@ function SectionsView({
 }
 
 function SubPagesList({
-  children,
+  pages,
   childCounts,
   onPress,
 }: {
-  children: WikiPageDoc[];
+  pages: WikiPageDoc[];
   childCounts: Map<string, number>;
   onPress: (id: string) => void;
 }) {
   return (
     <View style={styles.subPagesBlock}>
-      <Text style={styles.subPagesHeader}>
-        Sub-pages
-      </Text>
-      {children.map((c) => (
+      <Text style={styles.subPagesHeader}>Sub-pages</Text>
+      {pages.map((c) => (
         <PageRow
           key={c.id}
           page={c}

@@ -8,22 +8,18 @@
 // (CallButton, TileButton, …) for normalized, use-case-specific styling
 // rather than calling GlassButton directly from screen code.
 
-import { BlurView } from "expo-blur";
-import {
-  GlassView,
-  isGlassEffectAPIAvailable,
-  isLiquidGlassAvailable,
-} from "expo-glass-effect";
-import * as Haptics from "expo-haptics";
+import { BlurView } from 'expo-blur';
+import { GlassView, isGlassEffectAPIAvailable, isLiquidGlassAvailable } from 'expo-glass-effect';
+import * as Haptics from 'expo-haptics';
 import {
   type GestureResponderEvent,
   Pressable,
   type PressableProps,
-  StyleSheet,
   type StyleProp,
+  StyleSheet,
   View,
   type ViewStyle,
-} from "react-native";
+} from 'react-native';
 
 // Resolved once at module load. The native capability doesn't change
 // during a session, so caching avoids the API call on every render.
@@ -40,32 +36,29 @@ const LIQUID_GLASS_OK = (() => {
   }
 })();
 
-export interface GlassButtonProps extends Omit<
-  PressableProps,
-  "style" | "children"
-> {
+export interface GlassButtonProps extends Omit<PressableProps, 'style' | 'children'> {
   /** Outer container style — use to set width / height / borderRadius / aspectRatio. */
   style?: StyleProp<ViewStyle>;
   /** Inner content padding / centering style. Defaults to centered with no padding. */
   contentStyle?: StyleProp<ViewStyle>;
   /** Glass effect style passed through on iOS 26+. Default 'regular'. */
-  glassEffectStyle?: "clear" | "regular";
+  glassEffectStyle?: 'clear' | 'regular';
   /** Optional tint applied via the native glass `tintColor` prop on iOS 26+. */
   tintColor?: string;
   /** Blur intensity used by the BlurView fallback (0–100). Default 50. */
   blurIntensity?: number;
   /** Blur tint scheme used by the BlurView fallback. Default 'dark'. */
-  blurTint?: "light" | "dark" | "default";
+  blurTint?: 'light' | 'dark' | 'default';
   children: React.ReactNode;
 }
 
 export function GlassButton({
   style,
   contentStyle,
-  glassEffectStyle = "clear",
+  glassEffectStyle = 'clear',
   tintColor,
   blurIntensity = 50,
-  blurTint = "dark",
+  blurTint = 'dark',
   disabled,
   onPress,
   onLongPress,
@@ -117,7 +110,7 @@ export function GlassButton({
       style={({ pressed }) => [
         // Press + disabled feedback consolidated here so consumers don't
         // have to re-implement them per call-site.
-        { opacity: disabled ? 0.4 : pressed ? 0.7 : 1, overflow: "hidden" },
+        { opacity: disabled ? 0.4 : pressed ? 0.7 : 1, overflow: 'hidden' },
         // Subtle edge + surface wash substitutes for the bright halo
         // Liquid Glass paints natively. Only on the BlurView fallback —
         // on the Liquid Glass path GlassView produces its own edge and
@@ -143,18 +136,12 @@ export function GlassButton({
           {fallbackTintOverlay ? (
             <View
               pointerEvents="none"
-              style={[
-                StyleAbsoluteFill,
-                childRadius,
-                { backgroundColor: fallbackTintOverlay },
-              ]}
+              style={[StyleAbsoluteFill, childRadius, { backgroundColor: fallbackTintOverlay }]}
             />
           ) : null}
         </>
       )}
-      <View style={[StyleAbsoluteFill, StyleCenter, contentStyle]}>
-        {children}
-      </View>
+      <View style={[StyleAbsoluteFill, StyleCenter, contentStyle]}>{children}</View>
     </Pressable>
   );
 }
@@ -162,15 +149,15 @@ export function GlassButton({
 // Hand-rolled (vs StyleSheet.absoluteFillObject) to avoid creating a
 // StyleSheet just for two static keys. Same shape, no perf difference.
 const StyleAbsoluteFill = {
-  position: "absolute" as const,
+  position: 'absolute' as const,
   top: 0,
   left: 0,
   right: 0,
   bottom: 0,
 };
 const StyleCenter = {
-  alignItems: "center" as const,
-  justifyContent: "center" as const,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
 };
 // Light edge + faint surface wash. Tunable knobs:
 //   - borderWidth: 1 reads as a hairline at @2x/@3x. Bump to 1.5 for more
@@ -182,6 +169,6 @@ const StyleCenter = {
 //     near-invisible, push to 0.08 for a more pronounced wash.
 const FALLBACK_SURFACE_STYLE = {
   borderWidth: 1,
-  borderColor: "rgba(255, 255, 255, 0.3)",
-  backgroundColor: "rgba(255, 255, 255, 0.04)",
+  borderColor: 'rgba(255, 255, 255, 0.3)',
+  backgroundColor: 'rgba(255, 255, 255, 0.04)',
 };

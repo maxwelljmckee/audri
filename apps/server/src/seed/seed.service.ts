@@ -1,5 +1,5 @@
+import { agents, and, db, eq, sql, userSettings, wikiPages } from '@audri/shared/db';
 import { Injectable, Logger } from '@nestjs/common';
-import { db, agents, userSettings, wikiPages, and, eq, sql } from '@audri/shared/db';
 import {
   AGENT_SCOPE_PAGES,
   ASSISTANT_AGENT,
@@ -43,16 +43,11 @@ export class SeedService {
       await tx.execute(sql`SET CONSTRAINTS ALL DEFERRED`);
 
       // Pre-generate UUIDs so we can wire cross-references before insert.
-      const agentRow = (
-        await tx.execute(sql`SELECT gen_random_uuid() AS id`)
-      )[0] as { id: string };
+      const agentRow = (await tx.execute(sql`SELECT gen_random_uuid() AS id`))[0] as { id: string };
       const agentId = agentRow.id;
 
       const totalPages =
-        AGENT_SCOPE_PAGES.length +
-        PROFILE_PAGES.length +
-        TODO_PAGES.length +
-        PROJECT_PAGES.length;
+        AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length + PROJECT_PAGES.length;
       const idRows = (await tx.execute(
         sql`SELECT gen_random_uuid() AS id FROM generate_series(1, ${totalPages})`,
       )) as { id: string }[];
@@ -61,8 +56,7 @@ export class SeedService {
       const agentRootIdx = 0;
       const profileRootIdx = AGENT_SCOPE_PAGES.length;
       const todosRootIdx = AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length;
-      const projectsRootIdx =
-        AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length;
+      const projectsRootIdx = AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length;
 
       const allPages = [
         ...AGENT_SCOPE_PAGES.map((p, i) => ({

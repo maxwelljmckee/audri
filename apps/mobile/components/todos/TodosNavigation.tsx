@@ -32,12 +32,7 @@ import { spawnTodo } from '../../lib/spawnTodo';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
 import { WikiPageDetail } from '../WikiPageDetail';
 
-const BUCKET_SLUGS = [
-  'todos/todo',
-  'todos/in-progress',
-  'todos/done',
-  'todos/archived',
-] as const;
+const BUCKET_SLUGS = ['todos/todo', 'todos/in-progress', 'todos/done', 'todos/archived'] as const;
 type BucketSlug = (typeof BUCKET_SLUGS)[number];
 const BUCKET_LABELS: Record<BucketSlug, string> = {
   'todos/todo': 'To do',
@@ -108,14 +103,14 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
   }
 
   const activeBucketPage = bucketBySlug.get(activeBucket);
-  const items = activeBucketPage ? childrenByBucketId.get(activeBucketPage.id) ?? [] : [];
+  const items = activeBucketPage ? (childrenByBucketId.get(activeBucketPage.id) ?? []) : [];
 
   return (
     <View style={styles.flex}>
       <View style={styles.tabBar}>
         {BUCKET_SLUGS.map((slug) => {
           const bucket = bucketBySlug.get(slug);
-          const count = bucket ? childrenByBucketId.get(bucket.id)?.length ?? 0 : 0;
+          const count = bucket ? (childrenByBucketId.get(bucket.id)?.length ?? 0) : 0;
           const isActive = slug === activeBucket;
           return (
             <Pressable
@@ -127,9 +122,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
                 {BUCKET_LABELS[slug]}
               </Text>
               {count > 0 ? (
-                <Text style={[styles.tabCount, isActive && styles.tabCountActive]}>
-                  {count}
-                </Text>
+                <Text style={[styles.tabCount, isActive && styles.tabCountActive]}>{count}</Text>
               ) : null}
             </Pressable>
           );
@@ -231,7 +224,7 @@ function TodoRow({
         <Text style={styles.rowAbstract} numberOfLines={2}>
           {isActive
             ? activeTask?.status === 'running'
-              ? `Researching now · usually 1–3 min`
+              ? 'Researching now · usually 1–3 min'
               : 'Queued for research'
             : page.agent_abstract}
         </Text>
@@ -243,7 +236,10 @@ function TodoRow({
 
 // ── Detail ──────────────────────────────────────────────────────────────────
 
-function DetailScreen({ navigation, route }: NativeStackScreenProps<TodosStackParamList, 'Detail'>) {
+function DetailScreen({
+  navigation,
+  route,
+}: NativeStackScreenProps<TodosStackParamList, 'Detail'>) {
   const pages = useWikiPages();
   const page = pages.find((p) => p.id === route.params.pageId);
 

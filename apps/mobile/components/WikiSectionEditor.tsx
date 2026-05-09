@@ -1,6 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { getDatabase } from '../lib/rxdb/database';
 import type { WikiSectionDoc } from '../lib/rxdb/schemas';
 import { captureClientError } from '../lib/sentry';

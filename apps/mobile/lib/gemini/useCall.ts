@@ -7,11 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { AudioManager } from 'react-native-audio-api';
-import {
-  type CallSnapshot,
-  clearCallSnapshot,
-  saveCallSnapshot,
-} from '../callRecovery';
+import { type CallSnapshot, clearCallSnapshot, saveCallSnapshot } from '../callRecovery';
 import { captureClientError } from '../sentry';
 import { supabase } from '../supabase';
 import { useCallStore } from '../useCallStore';
@@ -93,179 +89,182 @@ export function useCall(): UseCallResult {
 
   useEffect(() => () => teardown(), [teardown]);
 
-  const start = useCallback(async (opts?: { callType?: CallType }) => {
-    const gen = ++generationRef.current;
-    const callType: CallType = opts?.callType ?? 'generic';
-    callTypeRef.current = callType;
-    setError(null);
-    transcriptRef.current.reset();
-    setTranscript([]);
+  const start = useCallback(
+    async (opts?: { callType?: CallType }) => {
+      const gen = ++generationRef.current;
+      const callType: CallType = opts?.callType ?? 'generic';
+      callTypeRef.current = callType;
+      setError(null);
+      transcriptRef.current.reset();
+      setTranscript([]);
 
-    const store = useCallStore.getState();
+      const store = useCallStore.getState();
 
-    try {
-      // 1. Get JWT + ephemeral token
-      const { data: sessionData } = await supabase.auth.getSession();
-      const jwt = sessionData.session?.access_token;
-      if (!jwt) throw new Error('not signed in');
+      try {
+        // 1. Get JWT + ephemeral token
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData.session?.access_token;
+        if (!jwt) throw new Error('not signed in');
 
-      const r = await fetch(`${API_URL}/calls/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ agent_slug: 'assistant', call_type: callType }),
-      });
-      if (!r.ok) throw new Error(`start failed: ${r.status} ${await r.text()}`);
-      const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
-      sessionIdRef.current = sessionId;
-      const startedAt = new Date();
-      startedAtRef.current = startedAt;
-      // Mirror to store so the call screen can compute elapsed time
-      // across mount/unmount cycles (back button → home → rejoin).
-      useCallStore.getState().setStartedAt(startedAt.getTime());
-      // Initial snapshot: now if the app dies before we ever get a transcript
-      // turn, we still have something to recover with.
-      persistSnapshot();
+        const r = await fetch(`${API_URL}/calls/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ agent_slug: 'assistant', call_type: callType }),
+        });
+        if (!r.ok) throw new Error(`start failed: ${r.status} ${await r.text()}`);
+        const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
+        sessionIdRef.current = sessionId;
+        const startedAt = new Date();
+        startedAtRef.current = startedAt;
+        // Mirror to store so the call screen can compute elapsed time
+        // across mount/unmount cycles (back button → home → rejoin).
+        useCallStore.getState().setStartedAt(startedAt.getTime());
+        // Initial snapshot: now if the app dies before we ever get a transcript
+        // turn, we still have something to recover with.
+        persistSnapshot();
 
-      if (gen !== generationRef.current) return; // stale
+        if (gen !== generationRef.current) return; // stale
 
-      // 2. Configure iOS audio session for voice chat
-      AudioManager.setAudioSessionOptions({
-        iosCategory: 'playAndRecord',
-        iosMode: 'voiceChat',
-        iosOptions: ['defaultToSpeaker', 'allowBluetoothHFP'],
-      });
-      await AudioManager.setAudioSessionActivity(true);
+        // 2. Configure iOS audio session for voice chat
+        AudioManager.setAudioSessionOptions({
+          iosCategory: 'playAndRecord',
+          iosMode: 'voiceChat',
+          iosOptions: ['defaultToSpeaker', 'allowBluetoothHFP'],
+        });
+        await AudioManager.setAudioSessionActivity(true);
 
-      // 3. Build audio in/out
-      const output = createAudioOutput();
-      outputRef.current = output;
-      const input = createAudioInput();
-      inputRef.current = input;
+        // 3. Build audio in/out
+        const output = createAudioOutput();
+        outputRef.current = output;
+        const input = createAudioInput();
+        inputRef.current = input;
 
-      // Mic-gate during playback prevents Gemini hearing Audri through the
-      // speakerphone. Barge-in via fixed amp threshold + sustained window.
-      output.onPlaybackStart(() => {
-        input.setGated(true);
-        store.setSpeaker('agent');
-      });
-      output.onPlaybackEnd(() => {
-        input.setGated(false);
-        transcriptRef.current.finalizeAgentTurn();
-        refreshTranscript();
-        store.setSpeaker(null);
-      });
+        // Mic-gate during playback prevents Gemini hearing Audri through the
+        // speakerphone. Barge-in via fixed amp threshold + sustained window.
+        output.onPlaybackStart(() => {
+          input.setGated(true);
+          store.setSpeaker('agent');
+        });
+        output.onPlaybackEnd(() => {
+          input.setGated(false);
+          transcriptRef.current.finalizeAgentTurn();
+          refreshTranscript();
+          store.setSpeaker(null);
+        });
 
-      // Peak-amplitude threshold. Typical voice peaks 0.3-0.5; echo after AEC
-      // typically stays below 0.1. 0.15 gives a comfortable margin.
-      // Tuned against measured peak amplitudes: voice peaks 0.06-0.27, echo
-      // after AEC stays under ~0.05. Re-tune from telemetry once observability
-      // service lands.
-      const BARGE_IN_THRESHOLD = 0.06;
-      const BARGE_IN_SUSTAINED_MS = 100;
-      let loudSinceMs: number | null = null;
+        // Peak-amplitude threshold. Typical voice peaks 0.3-0.5; echo after AEC
+        // typically stays below 0.1. 0.15 gives a comfortable margin.
+        // Tuned against measured peak amplitudes: voice peaks 0.06-0.27, echo
+        // after AEC stays under ~0.05. Re-tune from telemetry once observability
+        // service lands.
+        const BARGE_IN_THRESHOLD = 0.06;
+        const BARGE_IN_SUSTAINED_MS = 100;
+        let loudSinceMs: number | null = null;
 
-      input.onAmplitude((amp) => {
-        store.setAmplitude(amp);
+        input.onAmplitude((amp) => {
+          store.setAmplitude(amp);
 
-        if (output.isPlaying()) {
-          if (amp > BARGE_IN_THRESHOLD) {
-            if (loudSinceMs === null) {
-              loudSinceMs = Date.now();
-            } else if (Date.now() - loudSinceMs >= BARGE_IN_SUSTAINED_MS) {
+          if (output.isPlaying()) {
+            if (amp > BARGE_IN_THRESHOLD) {
+              if (loudSinceMs === null) {
+                loudSinceMs = Date.now();
+              } else if (Date.now() - loudSinceMs >= BARGE_IN_SUSTAINED_MS) {
+                loudSinceMs = null;
+                output.flush();
+                input.setGated(false);
+                transcriptRef.current.finalizeAgentTurn();
+                refreshTranscript();
+                store.setSpeaker('user');
+              }
+            } else {
               loudSinceMs = null;
+            }
+          } else if (amp > 0.05) {
+            store.setSpeaker('user');
+          }
+        });
+
+        input.onError((e) => setError(e.message));
+
+        // 4. Open Gemini Live session
+        const session = await openSession(
+          { ephemeralToken, model },
+          {
+            onOpen: () => store.markConnected(),
+            onModelAudio: (b64) => output.enqueue(b64),
+            onModelTextChunk: (chunk) => {
+              transcriptRef.current.appendAgentTextChunk(chunk);
+            },
+            onUserText: (text) => {
+              transcriptRef.current.appendUserText(text);
+              refreshTranscript();
+            },
+            onTurnComplete: () => {
+              // Don't tear down playback — wait for the queue to drain via per-buffer onEnded.
+              output.markTurnComplete();
+            },
+            onInterrupted: () => {
               output.flush();
-              input.setGated(false);
               transcriptRef.current.finalizeAgentTurn();
               refreshTranscript();
-              store.setSpeaker('user');
-            }
-          } else {
-            loudSinceMs = null;
-          }
-        } else if (amp > 0.05) {
-          store.setSpeaker('user');
+            },
+            onError: (err) => setError(err.message),
+            onClose: (reason) => {
+              // Server closed unexpectedly while we were active → mark dropped.
+              if (useCallStore.getState().status === 'connected') {
+                useCallStore.getState().markDropped();
+                setError(`connection closed: ${reason}`);
+              }
+            },
+          },
+        );
+        sessionRef.current = session;
+
+        if (gen !== generationRef.current) {
+          session.close();
+          return;
         }
-      });
 
-      input.onError((e) => setError(e.message));
+        // 5. Wire mic → session
+        input.onFrame((b64) => session.sendAudio(b64));
+        await input.start();
 
-      // 4. Open Gemini Live session
-      const session = await openSession(
-        { ephemeralToken, model },
-        {
-          onOpen: () => store.markConnected(),
-          onModelAudio: (b64) => output.enqueue(b64),
-          onModelTextChunk: (chunk) => {
-            transcriptRef.current.appendAgentTextChunk(chunk);
-          },
-          onUserText: (text) => {
-            transcriptRef.current.appendUserText(text);
-            refreshTranscript();
-          },
-          onTurnComplete: () => {
-            // Don't tear down playback — wait for the queue to drain via per-buffer onEnded.
-            output.markTurnComplete();
-          },
-          onInterrupted: () => {
-            output.flush();
-            transcriptRef.current.finalizeAgentTurn();
-            refreshTranscript();
-          },
-          onError: (err) => setError(err.message),
-          onClose: (reason) => {
-            // Server closed unexpectedly while we were active → mark dropped.
-            if (useCallStore.getState().status === 'connected') {
-              useCallStore.getState().markDropped();
-              setError(`connection closed: ${reason}`);
-            }
-          },
-        },
-      );
-      sessionRef.current = session;
+        // 6. Backgrounded calls KEEP RUNNING — Audri behaves like a regular
+        // phone call. iOS keeps our audio session + WebSocket alive via the
+        // `UIBackgroundModes: ["audio"]` entitlement in app.json. Only the
+        // user's explicit End-Call button (or a hard failure: force-quit,
+        // crash, network drop) terminates the session.
+        //
+        // The snapshot keeps getting refreshed via persistSnapshot() on every
+        // transcript change, so a hard failure mid-call still recovers via
+        // the launch sweep. Backgrounding alone doesn't trigger anything.
+        appStateSubRef.current = AppState.addEventListener('change', () => {
+          // Intentional no-op. Background-audio entitlement does the work.
+        });
 
-      if (gen !== generationRef.current) {
-        session.close();
-        return;
+        // 7. Kick the model off. The cue routes through the system prompt — for
+        // onboarding it triggers the structured self-intro + opener; for generic
+        // it's just a casual greeting.
+        session.sendText(
+          callType === 'onboarding'
+            ? "Begin the onboarding call now. Open with your self-introduction, then ask the life-history opener as described in your scaffolding. Don't ask 'what brings you here' or 'what can I help you with' — those are explicitly out of scope for the opener."
+            : 'Greet me now.',
+        );
+      } catch (e) {
+        // Surface to Sentry — silent setError-only handling meant connection
+        // failures were invisible. The dropped-call screen still shows the
+        // user the error message via `error` state; this just adds a server-
+        // side trail.
+        captureClientError('call-start-failed', e, {
+          sessionId: sessionIdRef.current,
+        });
+        setError(e instanceof Error ? e.message : String(e));
+        teardown();
+        useCallStore.getState().markDropped();
       }
-
-      // 5. Wire mic → session
-      input.onFrame((b64) => session.sendAudio(b64));
-      await input.start();
-
-      // 6. Backgrounded calls KEEP RUNNING — Audri behaves like a regular
-      // phone call. iOS keeps our audio session + WebSocket alive via the
-      // `UIBackgroundModes: ["audio"]` entitlement in app.json. Only the
-      // user's explicit End-Call button (or a hard failure: force-quit,
-      // crash, network drop) terminates the session.
-      //
-      // The snapshot keeps getting refreshed via persistSnapshot() on every
-      // transcript change, so a hard failure mid-call still recovers via
-      // the launch sweep. Backgrounding alone doesn't trigger anything.
-      appStateSubRef.current = AppState.addEventListener('change', () => {
-        // Intentional no-op. Background-audio entitlement does the work.
-      });
-
-      // 7. Kick the model off. The cue routes through the system prompt — for
-      // onboarding it triggers the structured self-intro + opener; for generic
-      // it's just a casual greeting.
-      session.sendText(
-        callType === 'onboarding'
-          ? "Begin the onboarding call now. Open with your self-introduction, then ask the life-history opener as described in your scaffolding. Don't ask 'what brings you here' or 'what can I help you with' — those are explicitly out of scope for the opener."
-          : 'Greet me now.',
-      );
-    } catch (e) {
-      // Surface to Sentry — silent setError-only handling meant connection
-      // failures were invisible. The dropped-call screen still shows the
-      // user the error message via `error` state; this just adds a server-
-      // side trail.
-      captureClientError('call-start-failed', e, {
-        sessionId: sessionIdRef.current,
-      });
-      setError(e instanceof Error ? e.message : String(e));
-      teardown();
-      useCallStore.getState().markDropped();
-    }
-  }, [persistSnapshot, refreshTranscript, teardown]);
+    },
+    [persistSnapshot, refreshTranscript, teardown],
+  );
 
   const end = useCallback(async (): Promise<boolean> => {
     generationRef.current++; // invalidate any in-flight start

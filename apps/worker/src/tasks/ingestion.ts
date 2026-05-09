@@ -21,7 +21,6 @@
 import { callTranscripts, db, eq } from '@audri/shared/db';
 import { capture, isFeatureEnabled } from '@audri/shared/posthog';
 import type { Task } from 'graphile-worker';
-import { logger } from '../logger.js';
 import { runAgentScopeIngestion } from '../ingestion/agent-scope.js';
 import { fetchCandidatePages } from '../ingestion/candidate-pages.js';
 import { commitFanOut } from '../ingestion/commit.js';
@@ -31,6 +30,7 @@ import {
 } from '../ingestion/flash-candidate-retrieval.js';
 import { runFanOut } from '../ingestion/pro-fan-out.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
+import { logger } from '../logger.js';
 
 export interface IngestionPayload {
   transcriptId: string;

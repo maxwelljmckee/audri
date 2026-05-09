@@ -1,17 +1,7 @@
-import React from "react";
-import {
-  Canvas,
-  Skia,
-  Shader,
-  Fill,
-  useClock,
-} from "@shopify/react-native-skia";
-import {
-  makeMutable,
-  SharedValue,
-  useDerivedValue,
-} from "react-native-reanimated";
-import { useWindowDimensions } from "react-native";
+import { Canvas, Fill, Shader, Skia, useClock } from '@shopify/react-native-skia';
+import React from 'react';
+import { useWindowDimensions } from 'react-native';
+import { type SharedValue, makeMutable, useDerivedValue } from 'react-native-reanimated';
 
 // Non-null assertion: RuntimeEffect.Make returns SkRuntimeEffect | null
 // (compile failures yield null), but Shader's source prop expects non-null.
@@ -210,8 +200,7 @@ export default function Orb({
     return {
       uResolution: [width, height, width / height],
       uTime: t,
-      uHue:
-        hue + (hueByIntensity ? Math.sin(t * 0.6) * 300 * intensity.value : 0),
+      uHue: hue + (hueByIntensity ? Math.sin(t * 0.6) * 300 * intensity.value : 0),
       uRot: rot,
       uIntensity: intensity.value * (0.8 + breath * 0.2),
       uBreath: breath,

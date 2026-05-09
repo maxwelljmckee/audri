@@ -18,10 +18,7 @@ export function getTopLevelPages(pages: WikiPageDoc[]): WikiPageDoc[] {
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
-export function getChildren(
-  parentId: string | null,
-  pages: WikiPageDoc[],
-): WikiPageDoc[] {
+export function getChildren(parentId: string | null, pages: WikiPageDoc[]): WikiPageDoc[] {
   return pages
     .filter((p) => p.parent_page_id === parentId)
     .sort((a, b) => a.title.localeCompare(b.title));
@@ -32,10 +29,7 @@ export function getChildren(
 // [profile, profile/work, calico-cyber]. The leaf itself is the last entry.
 // Cycles are theoretically impossible (parent_page_id has FK constraints +
 // ingestion enforces tree shape) but guarded against defensively.
-export function getAncestorChain(
-  pageId: string,
-  pages: WikiPageDoc[],
-): WikiPageDoc[] {
+export function getAncestorChain(pageId: string, pages: WikiPageDoc[]): WikiPageDoc[] {
   const byId = new Map(pages.map((p) => [p.id, p]));
   const chain: WikiPageDoc[] = [];
   const seen = new Set<string>();
@@ -54,10 +48,7 @@ export function getAncestorChain(
 // alongside the match. Empty query returns empty array (UI distinguishes
 // "search active with zero results" from "search not active" via the query
 // string itself).
-export function searchPages(
-  query: string,
-  pages: WikiPageDoc[],
-): WikiSearchHit[] {
+export function searchPages(query: string, pages: WikiPageDoc[]): WikiSearchHit[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const matches = pages.filter((p) => {
@@ -80,10 +71,7 @@ export function searchPages(
     });
 }
 
-export function countChildren(
-  parentId: string,
-  pages: WikiPageDoc[],
-): number {
+export function countChildren(parentId: string, pages: WikiPageDoc[]): number {
   let count = 0;
   for (const p of pages) {
     if (p.parent_page_id === parentId) count++;

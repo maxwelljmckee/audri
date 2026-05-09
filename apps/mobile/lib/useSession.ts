@@ -14,7 +14,9 @@ export function useSession(): SessionState {
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setState(data.session ? { status: 'signed-in', session: data.session } : { status: 'signed-out' });
+      setState(
+        data.session ? { status: 'signed-in', session: data.session } : { status: 'signed-out' },
+      );
     });
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;

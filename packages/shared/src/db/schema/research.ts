@@ -1,13 +1,5 @@
 import { sql } from 'drizzle-orm';
-import {
-  index,
-  integer,
-  jsonb,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
 import { agentTasks } from './tasks.js';
 import { wikiPages } from './wiki.js';
@@ -27,10 +19,7 @@ export const researchOutputs = pgTable(
     summary: text('summary').notNull(),
     findings: jsonb('findings').notNull(),
     citations: jsonb('citations').notNull().default(sql`'[]'::jsonb`),
-    followUpQuestions: text('follow_up_questions')
-      .array()
-      .notNull()
-      .default(sql`ARRAY[]::text[]`),
+    followUpQuestions: text('follow_up_questions').array().notNull().default(sql`ARRAY[]::text[]`),
     notesForUser: text('notes_for_user'),
     modelUsed: text('model_used').notNull(),
     tokensIn: integer('tokens_in').notNull().default(0),

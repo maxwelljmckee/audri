@@ -1,21 +1,21 @@
-import { Comfortaa_400Regular, useFonts } from "@expo-google-fonts/comfortaa";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
-import "react-native-reanimated";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { LavaLamp } from "../components/animations/lava-lamp-background-animation";
-import { ProfileOverlay } from "../components/ProfileOverlay";
-import { ResearchOverlay } from "../components/ResearchOverlay";
-import { SplashAnimation } from "../components/SplashAnimation";
-import { TodosOverlay } from "../components/TodosOverlay";
-import { WikiOverlay } from "../components/WikiOverlay";
-import { CallProvider } from "../lib/CallContext";
-import { Sentry, initSentry } from "../lib/sentry";
-import { usePluginOverlay } from "../lib/usePluginOverlay";
-import "../global.css";
+import { Comfortaa_400Regular, useFonts } from '@expo-google-fonts/comfortaa';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
+import 'react-native-reanimated';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ProfileOverlay } from '../components/ProfileOverlay';
+import { ResearchOverlay } from '../components/ResearchOverlay';
+import { SplashAnimation } from '../components/SplashAnimation';
+import { TodosOverlay } from '../components/TodosOverlay';
+import { WikiOverlay } from '../components/WikiOverlay';
+import { LavaLamp } from '../components/animations/lava-lamp-background-animation';
+import { CallProvider } from '../lib/CallContext';
+import { Sentry, initSentry } from '../lib/sentry';
+import { usePluginOverlay } from '../lib/usePluginOverlay';
+import '../global.css';
 
 // Lava lamp blob set — blob color is a brighter step within the same
 // blue family as the azure bg (rgb 10/22/40), so the blobs read as
@@ -27,8 +27,8 @@ import "../global.css";
 // darkens the surface, so the perceived post-blur color is slightly
 // muddier than the input — the matching surfaces are pre-desaturated to
 // match what the eye reads off the lava lamp.
-const LAVA_BG = "#0a1628"; // rgb(10, 22, 40) — azure-bg
-const LAVA_BLOB = "rgba(25, 48, 85, 0.5)"; // azure +1 — barely perceptible
+const LAVA_BG = '#0a1628'; // rgb(10, 22, 40) — azure-bg
+const LAVA_BLOB = 'rgba(25, 48, 85, 0.5)'; // azure +1 — barely perceptible
 const LAVA_COLORS = [LAVA_BLOB, LAVA_BLOB, LAVA_BLOB];
 const INTENSITY = 80;
 
@@ -96,7 +96,7 @@ function RootLayout() {
           <Stack
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: "transparent" },
+              contentStyle: { backgroundColor: 'transparent' },
             }}
           >
             <Stack.Screen name="(auth)" />

@@ -29,10 +29,7 @@ export function Breadcrumbs({ ancestors, onSegmentPress }: Props) {
       {ancestors.map((a) => (
         <View key={a.id} style={styles.segmentGroup}>
           <Ionicons name="chevron-forward" size={12} color="#3f5a83" />
-          <Pressable
-            onPress={() => onSegmentPress(a.id)}
-            style={styles.segment}
-          >
+          <Pressable onPress={() => onSegmentPress(a.id)} style={styles.segment}>
             <Text style={styles.segmentText} numberOfLines={1}>
               {a.title}
             </Text>

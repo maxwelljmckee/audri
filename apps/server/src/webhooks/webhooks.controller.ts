@@ -34,7 +34,10 @@ export class WebhooksController {
     }
 
     if (body.type !== 'INSERT' || body.schema !== 'auth' || body.table !== 'users') {
-      this.logger.log({ type: body.type, table: body.table }, 'webhook ignored — not auth.users INSERT');
+      this.logger.log(
+        { type: body.type, table: body.table },
+        'webhook ignored — not auth.users INSERT',
+      );
       return { status: 'ignored' };
     }
 

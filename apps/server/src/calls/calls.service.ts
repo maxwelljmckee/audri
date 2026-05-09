@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { EndSensitivity, Modality, StartSensitivity } from '@google/genai';
-import { db, agents, callTranscripts, and, eq } from '@audri/shared/db';
+import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
 import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
+import { EndSensitivity, Modality, StartSensitivity } from '@google/genai';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { loadGenericCallContext, renderPreloadBlock } from './preload.js';
 import { composeSystemPrompt } from './system-prompt.js';
 
@@ -37,9 +37,7 @@ export class CallsService {
     // Generic calls preload profile + agent notes + recent activity. Onboarding
     // intentionally starts cold — the user hasn't given the model anything yet.
     const preloadBlock =
-      callType === 'generic'
-        ? renderPreloadBlock(await loadGenericCallContext(userId))
-        : '';
+      callType === 'generic' ? renderPreloadBlock(await loadGenericCallContext(userId)) : '';
 
     const systemInstruction = composeSystemPrompt({
       agentName: agent.name,

@@ -35,8 +35,7 @@ export const useCallStore = create<CallStore>((set) => ({
   markConnected: () => set({ status: 'connected' }),
   endCall: () => set({ status: 'ending' }),
   markDropped: () => set({ status: 'dropped' }),
-  reset: () =>
-    set({ status: 'idle', currentSpeaker: null, amplitude: 0, startedAt: null }),
+  reset: () => set({ status: 'idle', currentSpeaker: null, amplitude: 0, startedAt: null }),
 
   setSpeaker: (currentSpeaker) => set({ currentSpeaker }),
   setAmplitude: (amplitude) => set({ amplitude }),

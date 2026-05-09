@@ -400,10 +400,7 @@ function renderPages(pages: PageWithSections[]): string {
 
 function renderRecentPages(pages: RecentPage[]): string {
   return pages
-    .map(
-      (p) =>
-        `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`,
-    )
+    .map((p) => `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`)
     .join('\n');
 }
 
@@ -415,9 +412,7 @@ function renderWikiStructure(nodes: WikiStructureNode[]): string {
       const childLines = n.children.map(
         (c) => `  - ${c.title} \`${c.slug}\` (\`${c.type}\`) — ${c.agentAbstract}`,
       );
-      const more = n.childrenTruncated
-        ? `  - …and more under \`${n.slug}\` (truncated)`
-        : null;
+      const more = n.childrenTruncated ? `  - …and more under \`${n.slug}\` (truncated)` : null;
       return [head, ...childLines, ...(more ? [more] : [])].join('\n');
     })
     .join('\n');

@@ -1,3 +1,4 @@
+import { and, db, eq, isNotNull, userSettings } from '@audri/shared/db';
 import {
   type CanActivate,
   type ExecutionContext,
@@ -7,7 +8,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { and, db, eq, isNotNull, userSettings } from '@audri/shared/db';
 import { getSupabaseAdmin } from './supabase.client.js';
 
 export interface AuthedRequest extends Request {
@@ -34,12 +34,7 @@ export class SupabaseAuthGuard implements CanActivate {
     const [tombstoned] = await db
       .select({ userId: userSettings.userId })
       .from(userSettings)
-      .where(
-        and(
-          eq(userSettings.userId, data.user.id),
-          isNotNull(userSettings.tombstonedAt),
-        ),
-      )
+      .where(and(eq(userSettings.userId, data.user.id), isNotNull(userSettings.tombstonedAt)))
       .limit(1);
     if (tombstoned) {
       this.logger.warn({ userId: data.user.id }, 'tombstoned account attempted access');

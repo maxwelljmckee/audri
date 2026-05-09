@@ -33,10 +33,7 @@ export const userSettings = pgTable('user_settings', {
   userId: uuid('user_id')
     .primaryKey()
     .references(() => authUsers.id, { onDelete: 'cascade' }),
-  enabledPlugins: text('enabled_plugins')
-    .array()
-    .notNull()
-    .default(sql`ARRAY['research']::text[]`),
+  enabledPlugins: text('enabled_plugins').array().notNull().default(sql`ARRAY['research']::text[]`),
   onboardingComplete: boolean('onboarding_complete').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
