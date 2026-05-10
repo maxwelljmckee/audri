@@ -11,14 +11,18 @@ import { getRxStorageMemory } from 'rxdb/plugins/storage-memory';
 import {
   type AgentOpenItemDoc,
   type AgentTaskDoc,
+  type CallTranscriptDoc,
   type ResearchOutputDoc,
   type WikiPageDoc,
   type WikiSectionDoc,
+  type WikiSectionTranscriptDoc,
   agentOpenItemSchema,
   agentTaskSchema,
+  callTranscriptSchema,
   researchOutputSchema,
   wikiPageSchema,
   wikiSectionSchema,
+  wikiSectionTranscriptSchema,
 } from './schemas';
 
 // RxDB's dev-mode plugin explicitly throws if loaded in production (deliberate
@@ -35,6 +39,8 @@ export type WikiSectionCollection = RxCollection<WikiSectionDoc>;
 export type ResearchOutputCollection = RxCollection<ResearchOutputDoc>;
 export type AgentTaskCollection = RxCollection<AgentTaskDoc>;
 export type AgentOpenItemCollection = RxCollection<AgentOpenItemDoc>;
+export type CallTranscriptCollection = RxCollection<CallTranscriptDoc>;
+export type WikiSectionTranscriptCollection = RxCollection<WikiSectionTranscriptDoc>;
 
 export interface AudriCollections {
   wiki_pages: WikiPageCollection;
@@ -42,6 +48,8 @@ export interface AudriCollections {
   research_outputs: ResearchOutputCollection;
   agent_tasks: AgentTaskCollection;
   agent_open_items: AgentOpenItemCollection;
+  call_transcripts: CallTranscriptCollection;
+  wiki_section_transcripts: WikiSectionTranscriptCollection;
 }
 
 export type AudriDatabase = RxDatabase<AudriCollections>;
@@ -62,6 +70,8 @@ export function getDatabase(): Promise<AudriDatabase> {
         research_outputs: { schema: researchOutputSchema },
         agent_tasks: { schema: agentTaskSchema },
         agent_open_items: { schema: agentOpenItemSchema },
+        call_transcripts: { schema: callTranscriptSchema },
+        wiki_section_transcripts: { schema: wikiSectionTranscriptSchema },
       });
       return db;
     })();

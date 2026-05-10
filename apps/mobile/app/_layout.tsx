@@ -6,8 +6,9 @@ import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 import "react-native-reanimated";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { AccountOverlay } from "../components/AccountOverlay";
 import { AgentsOverlay } from "../components/AgentsOverlay";
-import { ProfileOverlay } from "../components/ProfileOverlay";
+import { ChatHistoryOverlay } from "../components/ChatHistoryOverlay";
 import { ResearchOverlay } from "../components/ResearchOverlay";
 import { SplashAnimation } from "../components/SplashAnimation";
 import { TodosOverlay } from "../components/TodosOverlay";
@@ -32,7 +33,7 @@ const LAVA_BG = "#0a1628"; // rgb(10, 22, 40) — azure-bg
 const LAVA_BLOB = "rgba(33, 72, 143, 0.5)"; // mid-saturated azure — settled 2026-05-10 between the original muted rgba(25, 48, 85, 0.5) and a fully-bumped rgba(40, 95, 200, 0.5); kept the blue hue family, more chroma than original without dominating the surface
 const LAVA_COLORS = [LAVA_BLOB, LAVA_BLOB, LAVA_BLOB];
 const INTENSITY = 80;
-const COUNT = 9;
+const COUNT = 11;
 const DURATION = 30000;
 
 // Init Sentry as early as possible at module load so any error during the
@@ -111,9 +112,10 @@ function RootLayout() {
               plugin-overlay store. */}
           <WikiOverlay />
           <ResearchOverlay />
-          <ProfileOverlay />
+          <AccountOverlay />
           <TodosOverlay />
           <AgentsOverlay />
+          <ChatHistoryOverlay />
           {/* Launch animation — mounted last so it sits above all overlays. Plays
               once per cold start, then unmounts itself. */}
           <SplashAnimation />

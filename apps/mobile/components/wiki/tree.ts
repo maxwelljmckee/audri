@@ -12,15 +12,23 @@ export interface WikiSearchHit {
   ancestors: WikiPageDoc[];
 }
 
+// Notes plugin hides todo pages — they belong in the Todos plugin (single-
+// source-of-truth rule, 2026-05-10). The check is on `type` so it covers
+// both the seeded `todos` bucket page and any individual todo entries that
+// might have leaked into the top-level scan.
+function hideTodoFromNotes(p: WikiPageDoc): boolean {
+  return p.type !== 'todo';
+}
+
 export function getTopLevelPages(pages: WikiPageDoc[]): WikiPageDoc[] {
   return pages
-    .filter((p) => p.parent_page_id === null)
+    .filter((p) => p.parent_page_id === null && hideTodoFromNotes(p))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
 export function getChildren(parentId: string | null, pages: WikiPageDoc[]): WikiPageDoc[] {
   return pages
-    .filter((p) => p.parent_page_id === parentId)
+    .filter((p) => p.parent_page_id === parentId && hideTodoFromNotes(p))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
@@ -52,6 +60,7 @@ export function searchPages(query: string, pages: WikiPageDoc[]): WikiSearchHit[
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const matches = pages.filter((p) => {
+    if (!hideTodoFromNotes(p)) return false;
     const title = p.title.toLowerCase();
     const agentAbs = (p.agent_abstract ?? '').toLowerCase();
     const abs = (p.abstract ?? '').toLowerCase();

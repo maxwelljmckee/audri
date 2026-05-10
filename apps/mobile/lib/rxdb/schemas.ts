@@ -269,6 +269,107 @@ export const agentOpenItemSchema: RxJsonSchema<AgentOpenItemDoc> = {
   indexes: ['agent_id', ['agent_id', 'status', 'priority']],
 };
 
+// call_transcripts — Chat History data source. Mobile reads everything in
+// this shape; heavy/PII columns are excluded server-side via publication
+// allowlist (migration 0016).
+export interface ChatTurn {
+  // Shape inferred from existing call_transcripts.content writes. Kept
+  // permissive (Record<string, unknown>) to avoid schema-validation
+  // tripping on unrecognized turn fields.
+  [key: string]: unknown;
+}
+
+export interface CallTranscriptDoc {
+  id: string;
+  user_id: string;
+  agent_id: string;
+  session_id: string;
+  call_type: 'generic' | 'onboarding';
+  kind: 'voice' | 'text';
+  title: string | null;
+  summary: string | null;
+  started_at: string;
+  ended_at: string | null;
+  content: ChatTurn[];
+  cancelled: boolean;
+  end_reason: string | null;
+  ingestion_status: 'pending' | 'running' | 'succeeded' | 'failed';
+  ingestion_error: string | null;
+  created_at: string;
+}
+
+export const callTranscriptSchema: RxJsonSchema<CallTranscriptDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    user_id: { type: 'string', maxLength: 36 },
+    agent_id: { type: 'string', maxLength: 36 },
+    session_id: { type: 'string' },
+    call_type: { type: 'string', enum: ['generic', 'onboarding'], maxLength: 16 },
+    kind: { type: 'string', enum: ['voice', 'text'], maxLength: 8 },
+    title: { type: ['string', 'null'] },
+    summary: { type: ['string', 'null'] },
+    // Indexed for ORDER BY started_at DESC. ISO timestamp.
+    started_at: { type: 'string', maxLength: 32 },
+    ended_at: { type: ['string', 'null'] },
+    content: { type: 'array' },
+    cancelled: { type: 'boolean' },
+    end_reason: { type: ['string', 'null'] },
+    ingestion_status: {
+      type: 'string',
+      enum: ['pending', 'running', 'succeeded', 'failed'],
+      maxLength: 16,
+    },
+    ingestion_error: { type: ['string', 'null'] },
+    created_at: { type: 'string', maxLength: 32 },
+  },
+  required: [
+    'id',
+    'user_id',
+    'agent_id',
+    'session_id',
+    'call_type',
+    'kind',
+    'started_at',
+    'content',
+    'cancelled',
+    'ingestion_status',
+    'created_at',
+  ],
+  // Primary read pattern: per-user, ORDER BY started_at DESC. Composite
+  // index supports both filter + sort.
+  indexes: ['started_at', 'ingestion_status', ['ingestion_status', 'started_at']],
+};
+
+// wiki_section_transcripts — junction syncing for Chat History cross-refs.
+// Read pattern: "for transcript X, what sections were cited?"
+export interface WikiSectionTranscriptDoc {
+  id: string;
+  section_id: string;
+  transcript_id: string;
+  turn_id: string;
+  snippet: string;
+  cited_at: string;
+}
+
+export const wikiSectionTranscriptSchema: RxJsonSchema<WikiSectionTranscriptDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    section_id: { type: 'string', maxLength: 36 },
+    transcript_id: { type: 'string', maxLength: 36 },
+    turn_id: { type: 'string' },
+    snippet: { type: 'string' },
+    cited_at: { type: 'string', maxLength: 32 },
+  },
+  required: ['id', 'section_id', 'transcript_id', 'turn_id', 'snippet', 'cited_at'],
+  indexes: ['transcript_id', 'section_id'],
+};
+
 export const researchOutputSchema: RxJsonSchema<ResearchOutputDoc> = {
   version: 0,
   primaryKey: 'id',

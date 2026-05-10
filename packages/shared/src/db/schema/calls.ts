@@ -10,7 +10,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
-import { callTypeEnum, endReasonEnum, ingestionStatusEnum } from './enums.js';
+import { callTypeEnum, chatKindEnum, endReasonEnum, ingestionStatusEnum } from './enums.js';
 import { agents } from './identity.js';
 
 export const callTranscripts = pgTable(
@@ -25,6 +25,10 @@ export const callTranscripts = pgTable(
       .references(() => agents.id, { onDelete: 'restrict' }),
     sessionId: text('session_id').notNull(),
     callType: callTypeEnum('call_type').notNull().default('generic'),
+    // Modality flag distinguishing voice calls from (V1+) text chats. Drives
+    // the Chat History UI's per-row avatar + future analytics splits. Default
+    // 'voice' so existing rows (all voice calls today) backfill correctly.
+    kind: chatKindEnum('kind').notNull().default('voice'),
     title: text('title'),
     summary: text('summary'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull(),

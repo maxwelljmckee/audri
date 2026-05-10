@@ -95,6 +95,30 @@ export function startReplication(): Promise<ReplicationHandle> {
       push: {},
     });
 
+    // call_transcripts — Chat History data source + ingestion-status driver
+    // for the Notes pending banner. Read-only client-side (server writes
+    // turns + status; mobile never authors). Heavy/PII columns are excluded
+    // server-side via the publication allowlist (migration 0016).
+    const callTranscriptsRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.call_transcripts,
+      replicationIdentifier: `audri:call_transcripts:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 50, lastModifiedField: 'created_at' },
+    });
+
+    // wiki_section_transcripts — junction synced for Chat detail's
+    // cross-reference panel ("sections this chat produced"). Read-only.
+    // No timestamp updates after insert, so use cited_at as the
+    // lastModifiedField (insert time).
+    const wikiSectionTranscriptsRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.wiki_section_transcripts,
+      replicationIdentifier: `audri:wiki_section_transcripts:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 200, lastModifiedField: 'cited_at' },
+    });
+
     // Surface errors from each replication's error stream — without this,
     // pull/push failures (RLS denials, schema-validation rejections, network
     // hiccups) are silent and the wiki UI just appears empty. Each error
@@ -120,6 +144,8 @@ export function startReplication(): Promise<ReplicationHandle> {
     subscribeErrors(researchOutputsRepl, 'research_outputs');
     subscribeErrors(agentTasksRepl, 'agent_tasks');
     subscribeErrors(agentOpenItemsRepl, 'agent_open_items');
+    subscribeErrors(callTranscriptsRepl, 'call_transcripts');
+    subscribeErrors(wikiSectionTranscriptsRepl, 'wiki_section_transcripts');
 
     const allRepls = [
       wikiPagesRepl,
@@ -127,6 +153,8 @@ export function startReplication(): Promise<ReplicationHandle> {
       researchOutputsRepl,
       agentTasksRepl,
       agentOpenItemsRepl,
+      callTranscriptsRepl,
+      wikiSectionTranscriptsRepl,
     ];
 
     _active = {

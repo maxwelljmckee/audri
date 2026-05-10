@@ -4,7 +4,7 @@ import {
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { Redirect, router, useFocusEffect } from "expo-router";
-import { NotebookTabs } from "lucide-react-native";
+import { MessageCircle, NotebookTabs } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import {
   Pressable,
@@ -133,6 +133,12 @@ export default function HomeScreen() {
             onPressWithOrigin={(origin) => showOverlay("wiki", origin)}
           />
           <PluginTile
+            label="Chat History"
+            icon={<MessageCircle size={36} color="#7aa3d4" strokeWidth={1.5} />}
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("chatHistory", origin)}
+          />
+          <PluginTile
             label="Todos"
             icon={
               <Ionicons name="checkbox-outline" size={36} color="#7aa3d4" />
@@ -147,7 +153,7 @@ export default function HomeScreen() {
             onPressWithOrigin={(origin) => showOverlay("research", origin)}
           />
           <PluginTile
-            label="Profile"
+            label="Account"
             icon={
               <Ionicons
                 name="person-circle-outline"
@@ -156,7 +162,7 @@ export default function HomeScreen() {
               />
             }
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay("profile", origin)}
+            onPressWithOrigin={(origin) => showOverlay("account", origin)}
           />
         </View>
 

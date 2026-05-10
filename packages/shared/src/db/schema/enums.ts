@@ -50,6 +50,11 @@ export const artifactKindEnum = pgEnum('artifact_kind', ['research']);
 
 export const callTypeEnum = pgEnum('call_type', ['generic', 'onboarding']);
 
+// Chat history surfaces both voice calls and (V1+) text-based chats. The
+// `kind` flag on call_transcripts distinguishes them so the UI can render
+// the right turn view + so future analytics can split by modality.
+export const chatKindEnum = pgEnum('chat_kind', ['voice', 'text']);
+
 export const endReasonEnum = pgEnum('end_reason', [
   'user_ended',
   'silence_timeout',

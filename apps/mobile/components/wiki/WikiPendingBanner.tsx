@@ -1,36 +1,74 @@
-// Wiki pending indicator. Surfaced at the top of the Wiki plugin between calls
-// and ingestion completion, telling the user "we know you're expecting new
-// content here, we're working on it." Built on the existing agent_tasks RxDB
-// sync — when an ingestion task is pending or running, this banner shows.
+// Notes pending / failure banner. Surfaced at the top of the Notes plugin.
 //
-// v0.2 substrate. Lifecycle:
-//   - User ends a call → server enqueues `ingestion-${user_id}` job →
-//     agent_tasks row inserted with kind='ingestion', status='pending'
-//   - Worker picks up → status='running'
-//   - Fan-out commits → status='succeeded' → banner clears
-// Failures (status='failed') currently behave like succeeded for this banner —
-// the surface is "is something in flight?" not "did it succeed?". A separate
-// failed-ingestion error surface exists in v0.2.1 (todos retry button).
+// Reads from `call_transcripts.ingestion_status` directly (per DEC-B
+// resolution 2026-05-10): the column already tracks ingestion lifecycle, so
+// no need to pollute agent_tasks with system-job rows. Two states:
 //
-// Note: 'ingestion' isn't yet a registered agent_task_kind — current
-// ingestion runs as a Graphile job directly without an agent_tasks row.
-// This banner becomes load-bearing once v0.2's autonomic-loop work creates
-// agent_tasks rows for ingestion. Until then it's a no-op (good — no false
-// positives). See `worker/src/ingestion/` for the current pipeline.
+//   pending|running → spinner + "we're working on it" message
+//   failed          → error chrome + retry CTA hitting POST /calls/:id/retry-ingest
+//
+// Failures stack: if multiple calls failed ingestion, a single banner
+// surfaces with a "Retry all" affordance. Pending/running and failed are
+// rendered together when both exist, with failed taking priority since
+// it's actionable.
 
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { useActiveAgentTasks } from '../../lib/rxdb/useAgentTasks';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  useActiveIngestionTranscripts,
+  useFailedIngestionTranscripts,
+} from '../../lib/rxdb/useCallTranscripts';
+import { captureClientError } from '../../lib/sentry';
+import { supabase } from '../../lib/supabase';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
 export function WikiPendingBanner() {
-  const tasks = useActiveAgentTasks('ingestion');
-  if (tasks.length === 0) return null;
+  const active = useActiveIngestionTranscripts();
+  const failed = useFailedIngestionTranscripts();
+  const [retrying, setRetrying] = useState(false);
 
+  if (active.length === 0 && failed.length === 0) return null;
+
+  return (
+    <View>
+      {failed.length > 0 && (
+        <FailedBanner
+          count={failed.length}
+          onRetry={async () => {
+            setRetrying(true);
+            try {
+              const { data: sessionData } = await supabase.auth.getSession();
+              const accessToken = sessionData.session?.access_token;
+              if (!accessToken) return;
+              await Promise.all(
+                failed.map((t) =>
+                  fetch(`${API_URL}/calls/${t.id}/retry-ingest`, {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${accessToken}` },
+                  }),
+                ),
+              );
+            } catch (err) {
+              captureClientError('retry-ingest', err);
+            } finally {
+              setRetrying(false);
+            }
+          }}
+          retrying={retrying}
+        />
+      )}
+      {active.length > 0 && <PendingBanner count={active.length} />}
+    </View>
+  );
+}
+
+function PendingBanner({ count }: { count: number }) {
   const message =
-    tasks.length === 1
+    count === 1
       ? 'Ingesting your last call — new notes arrive in a moment.'
-      : `Ingesting ${tasks.length} calls — new notes arrive in a moment.`;
-
+      : `Ingesting ${count} calls — new notes arrive in a moment.`;
   return (
     <View style={styles.banner}>
       <ActivityIndicator color="#4d8fdb" size="small" />
@@ -38,6 +76,41 @@ export function WikiPendingBanner() {
         {message}
       </Text>
       <Ionicons name="time-outline" size={14} color="#7aa3d4" />
+    </View>
+  );
+}
+
+function FailedBanner({
+  count,
+  onRetry,
+  retrying,
+}: {
+  count: number;
+  onRetry: () => void | Promise<void>;
+  retrying: boolean;
+}) {
+  const message =
+    count === 1
+      ? 'A call failed to ingest. Tap retry to try again.'
+      : `${count} calls failed to ingest. Tap retry to try again.`;
+  return (
+    <View style={[styles.banner, styles.bannerFailed]}>
+      <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
+      <Text style={[styles.text, styles.textFailed]} numberOfLines={2}>
+        {message}
+      </Text>
+      <Pressable
+        onPress={() => void onRetry()}
+        disabled={retrying}
+        style={[styles.retryButton, retrying && { opacity: 0.5 }]}
+        hitSlop={6}
+      >
+        {retrying ? (
+          <ActivityIndicator color="#f87171" size="small" />
+        ) : (
+          <Text style={styles.retryLabel}>Retry</Text>
+        )}
+      </Pressable>
     </View>
   );
 }
@@ -53,10 +126,30 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#1f2f4d',
   },
+  bannerFailed: {
+    backgroundColor: '#2a1414',
+    borderBottomColor: '#5a2828',
+  },
   text: {
     flex: 1,
     color: '#7aa3d4',
     fontSize: 12,
     lineHeight: 16,
+  },
+  textFailed: {
+    color: '#f87171',
+  },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: '#3a1c1c',
+    minWidth: 50,
+    alignItems: 'center',
+  },
+  retryLabel: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
