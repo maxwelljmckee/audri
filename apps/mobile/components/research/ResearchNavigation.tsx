@@ -12,7 +12,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -26,6 +25,7 @@ import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { spawnResearch } from '../../lib/spawnResearch';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
 import { ResearchOutputDetail } from '../ResearchOutputDetail';
+import { ResyncControl } from '../ResyncControl';
 
 export type ResearchStackParamList = {
   List: undefined;
@@ -84,9 +84,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<ResearchStackParamLis
         data={rows}
         keyExtractor={(r) => (r.kind === 'pending' ? `task:${r.task.id}` : `out:${r.output.id}`)}
         contentContainerStyle={styles.list}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
-        }
+        refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>

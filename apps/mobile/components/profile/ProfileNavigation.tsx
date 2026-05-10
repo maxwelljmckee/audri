@@ -11,9 +11,11 @@ import {
 import { useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { WikiPageDoc } from '../../lib/rxdb/schemas';
+import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useWikiPages } from '../../lib/rxdb/useWikiPages';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
+import { ResyncControl } from '../ResyncControl';
 import { WikiPageDetail } from '../WikiPageDetail';
 
 export type ProfileStackParamList = {
@@ -38,6 +40,7 @@ export function ProfileStack() {
 function ListScreen({ navigation }: NativeStackScreenProps<ProfileStackParamList, 'List'>) {
   const ready = useRxdbReady();
   const pages = useWikiPages();
+  const { refreshing, onRefresh } = useReplicationResync();
 
   const profilePages = useMemo(() => {
     const profile = pages.filter(
@@ -64,6 +67,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<ProfileStackParamList
       data={profilePages}
       keyExtractor={(p) => p.id}
       contentContainerStyle={styles.list}
+      refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListEmptyComponent={
         <View style={styles.empty}>
           <Text style={styles.emptyText}>

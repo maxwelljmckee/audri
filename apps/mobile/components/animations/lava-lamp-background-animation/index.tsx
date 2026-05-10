@@ -63,7 +63,9 @@ export function LavaLamp({
   const { width, height } = useWindowDimensions();
   // biome-ignore lint/correctness/useExhaustiveDependencies: width/height intentionally excluded — blob positions are stable per mount and shouldn't scramble on rotation
   const circles = useMemo<Circle[]>(() => {
-    const _colors =
+    // Source palette — caller-provided colors take priority; otherwise
+    // randomColor synthesizes `count` colors via the hue param.
+    const palette =
       colors ??
       randomColor({
         count,
@@ -72,7 +74,14 @@ export function LavaLamp({
         luminosity: 'light',
         alpha: 0.3,
       });
-    return _colors.map((color, index) => {
+    if (palette.length === 0) return [];
+    // Always render exactly `count` blobs, cycling through the palette
+    // when `count > palette.length`. Without this, a caller passing a
+    // small fixed `colors` array (e.g. one blob color repeated) would
+    // override `count` entirely — `count` was only honored on the
+    // randomColor fallback path. Bug surfaced 2026-05-10.
+    return Array.from({ length: count }, (_, index) => {
+      const color = palette[index % palette.length] as string;
       // randomNumber(min, max) is inclusive on both ends. /10 maps to
       // a [min/10, max/10] decimal. Radius = blob diameter as fraction
       // of screen width / 2. Lowered the max from 12 → 10 to keep the
@@ -107,6 +116,7 @@ export function LavaLamp({
         color,
       };
     });
+    // (Array.from callback closes above; deps unchanged.)
   }, [count, hue, colors]);
   // Honor the explicit background color when given; otherwise fall back to
   // the original hue-derived dark color.

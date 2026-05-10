@@ -28,8 +28,8 @@ export function WikiPendingBanner() {
 
   const message =
     tasks.length === 1
-      ? 'Ingesting your last call — new wiki content arrives in a moment.'
-      : `Ingesting ${tasks.length} calls — new wiki content arrives in a moment.`;
+      ? 'Ingesting your last call — new notes arrive in a moment.'
+      : `Ingesting ${tasks.length} calls — new notes arrive in a moment.`;
 
   return (
     <View style={styles.banner}>

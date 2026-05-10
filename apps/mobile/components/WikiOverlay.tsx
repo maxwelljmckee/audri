@@ -8,7 +8,7 @@ import { WikiStack } from './wiki/WikiNavigation';
 
 export function WikiOverlay() {
   return (
-    <PluginOverlay kind="wiki" title="Wiki">
+    <PluginOverlay kind="wiki" title="Notes">
       <PluginNavigationContainer>
         <WikiStack />
       </PluginNavigationContainer>

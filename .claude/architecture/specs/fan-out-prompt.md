@@ -65,6 +65,8 @@ Atomic granularity simplifies downstream stages: each claim can skip or write in
 
 The atoms aren't emitted in the output — they're an internal reasoning unit. The output is section writes, aggregated per page.
 
+> **v0.2 forward note (substrate landed 2026-05-09; populator not yet wired):** the `extracted_claims` table now exists as the per-claim audit trail. When the producer for this prompt is updated as part of v0.2 item #4 (agent-scope ingestion / Stage 3 of DP-7), each atomic claim should also produce an `extracted_claims` row with `status` (default `'supported'`), `confidence` (0–100 int when expressible, else NULL), `evidence[]` (free-form source-reference array — typical entries cite a transcript turn or URL plus a snippet), and bi-temporal fields (`recorded_at` defaulted, `valid_from` / `valid_until` set when the claim itself states a temporal range). The atoms-as-internal-reasoning model still holds for *section writes*; the new table adds a parallel persistent record. See `db-schema-plan.md` §13a for the full schema.
+
 #### Implicit commitment extraction
 
 When a surface claim contains a commitment pattern, extract BOTH the surface fact AND an implicit todo claim:

@@ -21,7 +21,6 @@ import { useMemo, useState } from 'react';
 import {
   FlatList,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -34,6 +33,7 @@ import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useWikiPages, useWikiSectionsForPage } from '../../lib/rxdb/useWikiPages';
 import { pluginStackScreenOptions } from '../PluginStack';
+import { ResyncControl } from '../ResyncControl';
 import { WikiSectionEditor } from '../WikiSectionEditor';
 import { Breadcrumbs } from './Breadcrumbs';
 import { WikiPendingBanner } from './WikiPendingBanner';
@@ -99,7 +99,7 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
   if (!ready) {
     return (
       <View style={styles.loading}>
-        <Text style={styles.loadingText}>Syncing your wiki…</Text>
+        <Text style={styles.loadingText}>Syncing your notes…</Text>
       </View>
     );
   }
@@ -112,7 +112,7 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search your wiki"
+          placeholder="Search your notes"
           placeholderTextColor="#3f5a83"
           style={styles.searchInput}
           autoCorrect={false}
@@ -136,13 +136,11 @@ function FoldersScreen({ navigation }: NativeStackScreenProps<WikiStackParamList
           data={topLevel}
           keyExtractor={(p) => p.id}
           contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
-          }
+          refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyText}>
-                No pages yet. Have a call with Audri and your wiki will start to populate.
+                No notes yet. Have a call with Audri and your notes will start to populate.
               </Text>
             </View>
           }

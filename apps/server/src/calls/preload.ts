@@ -339,14 +339,14 @@ export function renderPreloadBlock(data: PreloadData): string {
   if (data.wikiStructure.length > 0) {
     parts.push(
       '',
-      '## Wiki structure (top-level pages + immediate children)',
-      "Use this to reason about WHERE in the user's wiki a new topic might fit. When the user introduces a substantial new entity and the structure is ambiguous, ask them — see the wiki-structure section in your scaffolding.",
+      '## Notes structure (top-level pages + immediate children)',
+      "Use this to reason about WHERE in the user's notes a new topic might fit. When the user introduces a substantial new entity and the structure is ambiguous, ask them — see the notes-structure section in your scaffolding.",
       renderWikiStructure(data.wikiStructure),
     );
   }
 
   if (data.recentPages.length > 0) {
-    parts.push('', '## Recently active wiki pages', renderRecentPages(data.recentPages));
+    parts.push('', '## Recently active notes', renderRecentPages(data.recentPages));
   }
 
   parts.push(

@@ -1,35 +1,54 @@
-import { FontAwesome6, Ionicons } from '@expo/vector-icons';
-import { Redirect, router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { PluginTile } from '../../components/PluginTile';
-import { CallButton } from '../../components/buttons';
-import { firstNameFromUser, timeAwareGreeting } from '../../lib/greeting';
-import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
-import { supabase } from '../../lib/supabase';
-import { useCallStore } from '../../lib/useCallStore';
-import { useCallRecoverySweep } from '../../lib/useCallSweep';
-import { useMe } from '../../lib/useMe';
-import { usePluginOverlay } from '../../lib/usePluginOverlay';
-import { useSession } from '../../lib/useSession';
+import {
+  FontAwesome6,
+  Ionicons,
+  MaterialCommunityIcons,
+} from "@expo/vector-icons";
+import { Redirect, router, useFocusEffect } from "expo-router";
+import { NotebookTabs } from "lucide-react-native";
+import { useCallback, useState } from "react";
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { PluginTile } from "../../components/PluginTile";
+import { CallButton } from "../../components/buttons";
+import { firstNameFromUser, timeAwareGreeting } from "../../lib/greeting";
+import { useRxdbReady } from "../../lib/rxdb/useRxdbReady";
+import { supabase } from "../../lib/supabase";
+import { useCallStore } from "../../lib/useCallStore";
+import { useCallRecoverySweep } from "../../lib/useCallSweep";
+import { useMe } from "../../lib/useMe";
+import { usePluginOverlay } from "../../lib/usePluginOverlay";
+import { useSession } from "../../lib/useSession";
 
 export default function HomeScreen() {
   const session = useSession();
-  const accessToken = session.status === 'signed-in' ? session.session.access_token : null;
+  const accessToken =
+    session.status === "signed-in" ? session.session.access_token : null;
   const me = useMe(accessToken);
-  const sessionUser = session.status === 'signed-in' ? session.session.user : null;
-
-  const greeting = timeAwareGreeting();
-  const firstName = firstNameFromUser(sessionUser);
 
   const callStatus = useCallStore((s) => s.status);
   const showOverlay = usePluginOverlay((s) => s.show);
 
+  // Compute exact tile width so 4 fit per row across all device sizes.
+  // Percentage widths + columnGap caused 4×23% + 3×12px to overshoot the
+  // inner width (3-per-row on real devices). Pixel math is exact.
+  const { width: screenWidth } = useWindowDimensions();
+  const GRID_PADDING = 24;
+  const GRID_GAP = 20;
+  const TILES_PER_ROW = 4;
+  const tileWidth =
+    (screenWidth - 2 * GRID_PADDING - (TILES_PER_ROW - 1) * GRID_GAP) /
+    TILES_PER_ROW;
+
   // True when a call is alive somewhere in the background. Idle = no
   // active session. Anything else (connecting / connected / ending /
   // dropped) means the FAB should rejoin instead of starting fresh.
-  const callActive = callStatus !== 'idle';
+  const callActive = callStatus !== "idle";
 
   // The FAB visuals (icon + helper text) lag behind callActive on the
   // call-START path so the stack-nav animation finishes before the icon
@@ -69,7 +88,7 @@ export default function HomeScreen() {
   // "Call in progress" during the route transition AND short-circuit
   // call.tsx's idle gate so the new session never gets opened.
   function openCall() {
-    router.push('/call');
+    router.push("/call");
   }
 
   // First-run / loading gate (must come AFTER all hooks above to keep hook
@@ -79,14 +98,18 @@ export default function HomeScreen() {
   // first-time users. Once /me is ready and onboarding is incomplete, redirect
   // synchronously via the Redirect component so home never paints. Errors
   // fall through to the home render so the user isn't stuck on a blank screen.
-  if (me.status === 'loading') return null;
-  if (me.status === 'ready' && me.data.userSettings && !me.data.userSettings.onboardingComplete) {
+  if (me.status === "loading") return null;
+  if (
+    me.status === "ready" &&
+    me.data.userSettings &&
+    !me.data.userSettings.onboardingComplete
+  ) {
     return <Redirect href="/(app)/onboarding" />;
   }
 
   return (
     <View style={styles.root}>
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
+      <SafeAreaView edges={["top", "bottom"]} style={styles.safe}>
         <View style={styles.header}>
           <Text style={styles.wordmark}>Audri</Text>
           <Pressable onPress={signOut} style={styles.avatar}>
@@ -94,50 +117,46 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        {/* <View style={styles.greetingBlock}>
-          <Text style={styles.greeting}>
-            {greeting}
-            {firstName ? `, ${firstName}` : ''}.
-          </Text>
-          {me.status === "ready" && (
-            <Text style={styles.subtext}>
-              {me.data.agents.length} agent ·{" "}
-              {me.data.userSettings?.enabledPlugins.length ?? 0} plugin
-              {(me.data.userSettings?.enabledPlugins.length ?? 0) === 1
-                ? ""
-                : "s"}
-            </Text>
-          )}
-          {me.status === "error" && (
-            <Text style={styles.errorText}>/me error: {me.error}</Text>
-          )}
-        </View> */}
-
         <View style={styles.grid}>
           <PluginTile
-            label="Wiki"
-            icon="library-outline"
-            onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
+            label="Agents"
+            icon={
+              <MaterialCommunityIcons name="robot" size={36} color="#7aa3d4" />
+            }
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("agents", origin)}
+          />
+          <PluginTile
+            label="Notes"
+            icon={<NotebookTabs size={36} color="#7aa3d4" strokeWidth={1.5} />}
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("wiki", origin)}
           />
           <PluginTile
             label="Todos"
-            icon="checkbox-outline"
-            onPressWithOrigin={(origin) => showOverlay('todos', origin)}
+            icon={
+              <Ionicons name="checkbox-outline" size={36} color="#7aa3d4" />
+            }
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("todos", origin)}
           />
           <PluginTile
             label="Research"
-            icon="search-outline"
-            onPressWithOrigin={(origin) => showOverlay('research', origin)}
+            icon={<Ionicons name="search-outline" size={36} color="#7aa3d4" />}
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("research", origin)}
           />
           <PluginTile
             label="Profile"
-            icon="person-circle-outline"
-            onPressWithOrigin={(origin) => showOverlay('profile', origin)}
-          />
-          <PluginTile
-            label="Agents"
-            icon="sparkles-outline"
-            onPressWithOrigin={(origin) => showOverlay('agents', origin)}
+            icon={
+              <Ionicons
+                name="person-circle-outline"
+                size={36}
+                color="#7aa3d4"
+              />
+            }
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("profile", origin)}
           />
         </View>
 
@@ -145,7 +164,9 @@ export default function HomeScreen() {
           <CallButton
             mode="start"
             onPress={openCall}
-            accessibilityLabel={displayCallActive ? 'Return to call in progress' : 'Start call'}
+            accessibilityLabel={
+              displayCallActive ? "Return to call in progress" : "Start call"
+            }
           >
             {displayCallActive ? (
               <FontAwesome6 name="arrow-right" size={28} color="#ffffff" />
@@ -161,7 +182,7 @@ export default function HomeScreen() {
             style={[styles.fabSubtext, { opacity: displayCallActive ? 1 : 0 }]}
             numberOfLines={1}
           >
-            {displayCallActive ? 'Call in progress' : ' '}
+            {displayCallActive ? "Call in progress" : " "}
           </Text>
         </View>
       </SafeAreaView>
@@ -173,44 +194,50 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 24,
     paddingTop: 8,
   },
   wordmark: {
-    color: '#e8f1ff',
+    color: "#e8f1ff",
     fontSize: 24,
-    fontFamily: 'Comfortaa_400Regular',
+    fontFamily: "Comfortaa_400Regular",
   },
   avatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#11203a',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#11203a",
+    alignItems: "center",
+    justifyContent: "center",
   },
   greetingBlock: { marginTop: 48, paddingHorizontal: 24, gap: 8 },
-  greeting: { color: '#e8f1ff', fontSize: 28, fontWeight: '500' },
-  subtext: { color: '#7aa3d4', fontSize: 14 },
-  errorText: { color: '#f87171', fontSize: 12 },
+  greeting: { color: "#e8f1ff", fontSize: 28, fontWeight: "500" },
+  subtext: { color: "#7aa3d4", fontSize: 14 },
+  errorText: { color: "#f87171", fontSize: 12 },
   grid: {
     marginTop: 40,
     paddingHorizontal: 24,
-    flexDirection: 'row',
-    gap: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    // Tile widths are computed in JS from `useWindowDimensions` to ensure
+    // 4-per-row exactly across devices; this stylesheet only owns the
+    // surrounding gaps. Keep `rowGap` and `columnGap` in sync with the
+    // `GRID_GAP` constant in the screen so the math stays right.
+    rowGap: 20,
+    columnGap: 20,
   },
   fabRow: {
     flex: 1,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
+    justifyContent: "flex-end",
+    alignItems: "center",
     paddingBottom: 16,
     gap: 8,
   },
   fabSubtext: {
-    color: '#7aa3d4',
+    color: "#7aa3d4",
     fontSize: 13,
     letterSpacing: 1,
   },

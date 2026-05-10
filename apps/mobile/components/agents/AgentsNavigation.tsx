@@ -13,15 +13,7 @@ import {
   type NativeStackScreenProps,
   createNativeStackNavigator,
 } from '@react-navigation/native-stack';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AgentOpenItemDoc } from '../../lib/rxdb/schemas';
 import { updateOpenItemStatus, useAgentOpenItems } from '../../lib/rxdb/useAgentOpenItems';
 import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
@@ -29,6 +21,7 @@ import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useMe } from '../../lib/useMe';
 import { useSession } from '../../lib/useSession';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
+import { ResyncControl } from '../ResyncControl';
 
 export type AgentsStackParamList = {
   List: undefined;
@@ -76,9 +69,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<AgentsStackParamList,
       data={agents}
       keyExtractor={(a) => a.id}
       contentContainerStyle={styles.list}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
-      }
+      refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListEmptyComponent={
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No agents yet.</Text>
@@ -128,9 +119,7 @@ function DetailScreen({
         data={visibleItems}
         keyExtractor={(i) => i.id}
         contentContainerStyle={styles.detailList}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#7aa3d4" />
-        }
+        refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListHeaderComponent={
           <View>
             <View style={styles.detailHeader}>

@@ -26,10 +26,12 @@ import {
 import { getDatabase } from '../../lib/rxdb/database';
 import type { AgentTaskDoc, WikiPageDoc } from '../../lib/rxdb/schemas';
 import { useActiveAgentTasks } from '../../lib/rxdb/useAgentTasks';
+import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { useWikiPages } from '../../lib/rxdb/useWikiPages';
 import { spawnTodo } from '../../lib/spawnTodo';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
+import { ResyncControl } from '../ResyncControl';
 import { WikiPageDetail } from '../WikiPageDetail';
 
 const BUCKET_SLUGS = ['todos/todo', 'todos/in-progress', 'todos/done', 'todos/archived'] as const;
@@ -66,6 +68,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
   const pages = useWikiPages();
   const activeResearch = useActiveAgentTasks('research');
   const [activeBucket, setActiveBucket] = useState<BucketSlug>('todos/todo');
+  const { refreshing, onRefresh } = useReplicationResync();
 
   // Build a map of todo_page_id → in-flight task so each row can show its
   // live state (spinner + label) without each row having to subscribe.
@@ -138,6 +141,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
         data={items}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.list}
+        refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No todos in this bucket.</Text>

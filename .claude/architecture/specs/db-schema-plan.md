@@ -86,6 +86,14 @@ artifact_kind_enum: 'research'
 call_type_enum:     'generic' | 'onboarding'
 end_reason_enum:    'user_ended' | 'silence_timeout' | 'network_drop'
                   | 'app_backgrounded' | 'cancelled'
+ingestion_status:   'pending' | 'running' | 'succeeded' | 'failed'
+
+-- v0.2 substrate (migration 0014):
+claim_status:           'supported' | 'contested' | 'rejected'
+agent_open_item_kind:   'question' | 'info_share'
+agent_open_item_status: 'pending' | 'surfaced' | 'answered'
+                      | 'engaged' | 'dismissed' | 'expired'
+wiki_maturity:          'stub' | 'moderate' | 'full'
 ```
 
 **Why pgEnum across the board:** Drizzle gets exhaustive type narrowing at the column type, server-side enforcement is automatic, and storage is minimal. Postgres makes additive value changes cheap (`ALTER TYPE ... ADD VALUE 'bar'` — non-blocking, no table lock, no rewrite). The expensive operations (remove / rename / reorder values) require recreating the type and rewriting the column — but those map to "we changed our mind about a category," which is rare in this codebase by design.
@@ -170,6 +178,8 @@ The knowledge graph's primary entity.
 | `agent_abstract` | `text` | NOT NULL — terse, machine-consumed |
 | `abstract` | `text` | NULL — human-readable lead |
 | `frontmatter` | `jsonb` | NOT NULL DEFAULT `'{}'::jsonb` |
+| `person_metadata` | `jsonb` | NULL — structured per-person fields (handles, socials, ask-for, avoid-asking-for, privacy). Always-null for non-person pages by convention. Added in v0.2 substrate (migration 0014); shape evolves with the populator prompt. |
+| `maturity` | `wiki_maturity` | NULL — coarse signal of how much we know about an entity (`stub` / `moderate` / `full`). Added in v0.2 substrate; **not auto-maintained** (no read sites depend on it yet — populator strategy is a v0.2 open question). |
 | `agent_id` | `uuid` | FK → `agents.id`, NULL allowed (CHECK enforces presence vs scope) |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() |
 | `updated_at` | `timestamptz` | NOT NULL DEFAULT now() |
@@ -398,6 +408,68 @@ The universal trigger table — every agent-executed action lives here.
 
 **CHECK constraints:**
 - `priority BETWEEN 0 AND 10` — sanity bound
+
+---
+
+### 13a. `extracted_claims` *(added in v0.2 substrate, migration 0014)*
+
+Structured per-claim audit trail. Bi-temporal model per DP-6 (2026-05-09): separate axes for *when we learned the claim* vs. *when the claim is/was true in the world*.
+
+| Column | Type | Constraints / Notes |
+|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` |
+| `user_id` | `uuid` | FK → `auth.users.id`, ON DELETE CASCADE, NOT NULL |
+| `subject_page_id` | `uuid` | FK → `wiki_pages.id`, ON DELETE CASCADE, NOT NULL — the entity the claim is about |
+| `wiki_section_id` | `uuid` | FK → `wiki_sections.id`, ON DELETE SET NULL, NULL until promoted |
+| `call_transcript_id` | `uuid` | FK → `call_transcripts.id`, ON DELETE CASCADE, NULL for non-call sources (V1+ connectors) |
+| `claim_text` | `text` | NOT NULL |
+| `status` | `claim_status` | NOT NULL DEFAULT `'supported'` — `supported` / `contested` / `rejected` |
+| `confidence` | `integer` | NULL — 0-100 percent |
+| `evidence` | `jsonb` | NOT NULL DEFAULT `'[]'::jsonb` — free-form source-reference array |
+| `recorded_at` | `timestamptz` | NOT NULL DEFAULT now() — when WE learned it |
+| `last_refreshed_at` | `timestamptz` | NOT NULL DEFAULT now() — when last reconfirmed |
+| `valid_from` | `timestamptz` | NULL — when claim became true (NULL = unknown start) |
+| `valid_until` | `timestamptz` | NULL — when claim ceased (NULL = ongoing) |
+| `created_at` | `timestamptz` | NOT NULL DEFAULT now() |
+| `updated_at` | `timestamptz` | NOT NULL DEFAULT now() |
+
+**Indexes:**
+- `(user_id, subject_page_id)` — entity-scoped claim lookup
+- `(wiki_section_id)`
+- `(call_transcript_id)`
+- `(status, last_refreshed_at)` — drives stale + contested queries
+
+**RLS:** Server-only. Enabled, no `authenticated` policies. (V1+ candidate: a client-readable subset for surfacing claim provenance in the Wiki UI; design the policy subset deliberately when that feature lands.)
+
+---
+
+### 13b. `agent_open_items` *(added in v0.2 substrate, migrations 0014 + 0015)*
+
+Per-persona queue of agent-initiated content. Two `kind`s share one table per DP-5 (2026-05-09): `question` (gap-filling) and `info_share` (proactive enrichment). Read by the call-side prompt composer; written by agent-scope ingestion fan-out (item #4) and the hygiene sweep (item #9).
+
+| Column | Type | Constraints / Notes |
+|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` |
+| `user_id` | `uuid` | FK → `auth.users.id`, ON DELETE CASCADE, NOT NULL |
+| `agent_id` | `uuid` | FK → `agents.id`, ON DELETE CASCADE, NOT NULL |
+| `kind` | `agent_open_item_kind` | NOT NULL — `question` / `info_share` |
+| `topic` | `text` | NOT NULL — short label, dedup hint |
+| `body_text` | `text` | NOT NULL — the question / fact text |
+| `priority` | `integer` | NOT NULL DEFAULT 5 — composer ranks priority desc + recency |
+| `status` | `agent_open_item_status` | NOT NULL DEFAULT `'pending'` — `pending` / `surfaced` / `answered` / `engaged` / `dismissed` / `expired` |
+| `created_by_task_id` | `uuid` | NULL — provenance to the agent-scope ingestion run |
+| `cross_domain_links` | `jsonb` | NOT NULL DEFAULT `'[]'::jsonb` |
+| `created_at` | `timestamptz` | NOT NULL DEFAULT now() |
+| `updated_at` | `timestamptz` | NOT NULL DEFAULT now() — bumped on every write; required for replication's `lastModifiedField` |
+| `surfaced_at` | `timestamptz` | NULL |
+| `resolved_at` | `timestamptz` | NULL |
+
+**Indexes:**
+- `(agent_id, status, priority)` — composer's primary read
+- `(status, created_at)` — hygiene sweep
+- `(user_id)` — per-user reads
+
+**RLS + sync:** Mirrors `agent_tasks` pattern. RLS SELECT + UPDATE policies for own user. `_deleted` GENERATED column. `REPLICA IDENTITY FULL` + `supabase_realtime` publication membership. Mobile push enabled (snooze/dismiss flows up).
 
 ---
 
