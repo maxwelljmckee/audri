@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react';
-import { useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import type { OriginRect } from '../lib/usePluginOverlay';
-import { GlassButton } from './buttons';
+import type { ReactNode } from "react";
+import { useRef } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import type { OriginRect } from "../lib/usePluginOverlay";
+import { GlassButton } from "./buttons";
 
 interface Props {
   label: string;
@@ -26,7 +26,13 @@ interface Props {
 // overlay for the scale-from-tile launch animation. The wrapping View
 // holds the ref since GlassButton's hit-target is the right surface to
 // measure from.
-export function PluginTile({ label, icon, widthPx, onPress, onPressWithOrigin }: Props) {
+export function PluginTile({
+  label,
+  icon,
+  widthPx,
+  onPress,
+  onPressWithOrigin,
+}: Props) {
   const ref = useRef<View>(null);
 
   const handlePress = () => {
@@ -60,12 +66,15 @@ export function PluginTile({ label, icon, widthPx, onPress, onPressWithOrigin }:
 const styles = StyleSheet.create({
   // Width is set inline via the `widthPx` prop; this stylesheet just covers
   // alignment + gap between the card and label.
-  column: { alignItems: 'center', gap: 6 },
-  cardWrap: { width: '100%', aspectRatio: 1 },
+  column: { alignItems: "center", gap: 6 },
+  cardWrap: { width: "100%", aspectRatio: 1 },
   card: { flex: 1, borderRadius: 16 },
   label: {
-    color: '#e8f1ff',
+    color: "#e8f1ff",
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: "500",
+    textShadowColor: "rgba(0, 0, 0, 0.5)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
 });

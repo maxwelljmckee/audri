@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   AGENT_SCOPE_PAGES,
   ASSISTANT_AGENT,
+  BRAINDUMP_PAGES,
   PROFILE_PAGES,
   PROJECT_PAGES,
   TODO_PAGES,
@@ -16,8 +17,8 @@ export type SeedResult =
 export class SeedService {
   private readonly logger = new Logger(SeedService.name);
 
-  // Atomic seed of 1 agents row + 8 wiki_pages + 1 user_settings.
-  // (1 agent-scope root + 1 profile root + 5 todos + 1 projects.)
+  // Atomic seed of 1 agents row + 9 wiki_pages + 1 user_settings.
+  // (1 agent-scope root + 1 profile root + 5 todos + 1 projects + 1 braindump.)
   // Idempotent on user_id (re-firing webhook is safe).
   async seedNewUser(userId: string): Promise<SeedResult> {
     const existing = await db
@@ -47,7 +48,11 @@ export class SeedService {
       const agentId = agentRow.id;
 
       const totalPages =
-        AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length + PROJECT_PAGES.length;
+        AGENT_SCOPE_PAGES.length +
+        PROFILE_PAGES.length +
+        TODO_PAGES.length +
+        PROJECT_PAGES.length +
+        BRAINDUMP_PAGES.length;
       const idRows = (await tx.execute(
         sql`SELECT gen_random_uuid() AS id FROM generate_series(1, ${totalPages})`,
       )) as { id: string }[];
@@ -57,6 +62,11 @@ export class SeedService {
       const profileRootIdx = AGENT_SCOPE_PAGES.length;
       const todosRootIdx = AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length;
       const projectsRootIdx = AGENT_SCOPE_PAGES.length + PROFILE_PAGES.length + TODO_PAGES.length;
+      const braindumpRootIdx =
+        AGENT_SCOPE_PAGES.length +
+        PROFILE_PAGES.length +
+        TODO_PAGES.length +
+        PROJECT_PAGES.length;
 
       const allPages = [
         ...AGENT_SCOPE_PAGES.map((p, i) => ({
@@ -68,6 +78,9 @@ export class SeedService {
           parentPageId: i === 0 ? null : (pageIds[agentRootIdx] as string),
           title: p.title,
           agentAbstract: p.agentAbstract,
+          // No human-readable abstract on agent-scope pages — they're persona-
+          // private and never surface in user-facing UI.
+          abstract: null,
           agentId,
         })),
         ...PROFILE_PAGES.map((p, i) => ({
@@ -79,6 +92,7 @@ export class SeedService {
           parentPageId: i === 0 ? null : (pageIds[profileRootIdx] as string),
           title: p.title,
           agentAbstract: p.agentAbstract,
+          abstract: 'abstract' in p ? p.abstract : null,
           agentId: null,
         })),
         ...TODO_PAGES.map((p, i) => ({
@@ -90,6 +104,9 @@ export class SeedService {
           parentPageId: i === 0 ? null : (pageIds[todosRootIdx] as string),
           title: p.title,
           agentAbstract: p.agentAbstract,
+          // Todo bucket pages get no subtitle in the UI per the v0.2 design
+          // call (per-bucket descriptions would clutter the tab strip).
+          abstract: null,
           agentId: null,
         })),
         ...PROJECT_PAGES.map((p, i) => ({
@@ -101,6 +118,19 @@ export class SeedService {
           parentPageId: i === 0 ? null : (pageIds[projectsRootIdx] as string),
           title: p.title,
           agentAbstract: p.agentAbstract,
+          abstract: 'abstract' in p ? p.abstract : null,
+          agentId: null,
+        })),
+        ...BRAINDUMP_PAGES.map((p, i) => ({
+          id: pageIds[braindumpRootIdx + i] as string,
+          userId,
+          scope: 'user' as const,
+          type: 'braindump' as const,
+          slug: p.slug,
+          parentPageId: i === 0 ? null : (pageIds[braindumpRootIdx] as string),
+          title: p.title,
+          agentAbstract: p.agentAbstract,
+          abstract: 'abstract' in p ? p.abstract : null,
           agentId: null,
         })),
       ];

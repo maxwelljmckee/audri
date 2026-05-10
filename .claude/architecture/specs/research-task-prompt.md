@@ -60,6 +60,7 @@ type ResearchPayload = {
 ```ts
 type ResearchOutput = {
   query: string                              // echoes input query verbatim
+  title: string                              // 6-10 word abbreviated title
   summary: string                            // 2–4 sentence executive summary
   findings: Array<{
     heading: string
@@ -73,10 +74,61 @@ type ResearchOutput = {
   }>
   follow_up_questions?: string[]             // 2–4 questions the research surfaced; for the user to consider next
   notes_for_user?: string                    // any caveats, gaps, or "couldn't find" notes
+
+  // v0.2 vault-first delta — additive wiki updates the model derived from
+  // the research, given the user's existing notes on the topic. Applied
+  // atomically in the same commit transaction as the research artifact.
+  delta: {
+    creates: Array<{
+      slug: string                           // kebab-case, scoped under parent
+      type: 'person' | 'concept' | 'project' | 'place' | 'org'
+            | 'source' | 'event' | 'note'
+      parent_slug: string                    // existing wiki slug (typically profile/<area>)
+      title: string
+      agent_abstract: string                 // 1-2 sentence terse summary
+      sections: Array<{ title: string; content: string }>
+    }>
+    section_appends: Array<{
+      page_id: string                        // UUID from the vault scan
+      title: string                          // section heading (unique per page)
+      content: string                        // terse personal-notes prose
+      reason?: string                        // why this section is being added
+    }>
+    notes?: string                           // model's rationale for what was added
+  }
 }
 ```
 
 Validated post-handler against `ResearchOutputZ` (zod). Validation failure → `ValidationError` (fail-fast per §11 Chunk 3 error handling).
+
+**Delta is additive-only in v0.2:** no overwrites, no contradictions, no edits to existing sections. Contradictions handled by V1+ work on top of the claim-model substrate.
+
+---
+
+## Vault-first delta flow (v0.2)
+
+The handler is a **two-stage pipeline**, not a single LLM call:
+
+1. **Stage 1 — Vault scan.** Postgres FTS query against `wiki_sections.content` (scoped to the user, top 12 by `ts_rank`). Returns matching sections with their parent page metadata (`page_id`, `slug`, `title`, `type`).
+2. **Stage 2 — Research with vault context.** The Pro call receives both the original query AND the rendered vault scan (`## Existing knowledge` section in the prompt). The model:
+    - Reads what the user already has
+    - Identifies gaps and stale facts
+    - Targets external (web-grounded) research at those gaps specifically
+    - Produces both the human-readable artifact AND a structured delta (creates + section_appends)
+
+The commit transaction (`research/commit.ts`) writes:
+- `research_outputs` row (the artifact, unchanged from MVP)
+- `research_output_sources` rows (per-citation, unchanged)
+- **Delta application:** `wiki_pages` inserts for `creates`; `wiki_sections` inserts for both create-sections and `section_appends`. Atomic — if the delta fails, the artifact also rolls back.
+- agent_task → succeeded, todo reparented, usage event, wiki_log breadcrumb (existing)
+
+**Why "vault-first":** the original research handler re-derived everything from scratch every time. With the user's existing notes feeding the prompt, research compounds rather than duplicating. Source: `notes/llm-wiki-ecosystem-survey.md` insight #2 + v0.2 build phase doc item #8.
+
+**Defensive behaviors in the commit:**
+- Unresolvable `parent_slug` in a create → skip with a warn log (don't fail the whole commit)
+- Slug already taken by an existing page → fall back to appending the create's sections under the existing page
+- Unresolvable `page_id` in a section_append → skip with a warn log (model hallucination defense)
+- Section title already exists on the target page → skip the append (duplicate-suggestion defense)
 
 ---
 

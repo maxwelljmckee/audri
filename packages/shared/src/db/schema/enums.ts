@@ -14,6 +14,13 @@ export const pageTypeEnum = pgEnum('page_type', [
   'profile',
   'todo',
   'agent',
+  // 'braindump' — top-level bucket for unstructured / transient / exploratory
+  // notes. Distinct conceptual category from `note` (which is the generic
+  // textual page type used for arbitrary notes nested inside a hierarchy).
+  // Matches the bucket-page-as-typed-root pattern (profile → 'profile',
+  // todos → 'todo', projects → 'project', braindump → 'braindump'). Added
+  // 2026-05-10.
+  'braindump',
 ]);
 
 export const editedByEnum = pgEnum('edited_by', ['ai', 'user', 'lint', 'task']);

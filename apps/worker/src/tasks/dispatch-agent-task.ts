@@ -71,7 +71,7 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
     if (task.kind === 'research') {
       const validatedPayload = ResearchPayloadZ.parse(task.payload);
       log('research handler starting', { query: validatedPayload.query });
-      const result = await runResearch(validatedPayload);
+      const result = await runResearch(task.userId, validatedPayload);
       log('research handler complete', {
         findings: result.output.findings.length,
         citations: result.output.citations.length,

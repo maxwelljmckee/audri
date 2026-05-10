@@ -73,6 +73,10 @@ All as `pgEnum` (Postgres-native enum types). Listed once here; referenced by ta
 wiki_scope_enum:    'user' | 'agent'
 page_type_enum:     'person' | 'concept' | 'project' | 'place' | 'org' | 'source'
                   | 'event' | 'note' | 'profile' | 'todo' | 'agent'
+                  | 'braindump'    -- v0.2 (migration 0017): top-level
+                                   --   bucket for transient / exploratory
+                                   --   thoughts. Distinct from 'note'
+                                   --   (generic textual page).
 edited_by_enum:     'ai' | 'user' | 'lint' | 'task'
 agent_task_status:  'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 agent_task_kind:    'research'

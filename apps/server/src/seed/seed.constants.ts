@@ -59,11 +59,39 @@ export const AGENT_SCOPE_PAGES = [
 // warrants and no canonical sub-page fits. The vocabulary lives in the
 // Flash + Pro prompts so the ingestion pipeline knows when to propose +
 // route. See specs/onboarding.md for the askable/emergent split.
+//
+// `abstract` is the human-readable subtitle shown in the Notes UI under
+// the page title. Distinct from `agentAbstract` (terse, machine-consumed).
+// Profile is the evergreen-about-you bucket — content that defines who
+// the user IS, not what they're doing transiently.
 export const PROFILE_PAGES = [
   {
     slug: 'profile',
     title: 'Profile',
-    agentAbstract: "The user's profile — who they are, what matters to them.",
+    agentAbstract:
+      "The user's profile — evergreen content about who they are, what matters to them, what defines them. Seven askable canonical sub-pages: goals, life-history, health, work, interests, relationships, preferences. Emergent: values, psychology.",
+    abstract: 'Everything that makes you, you',
+    isRoot: true,
+  },
+] as const;
+
+// User-scope braindump root (1). Top-level catchall for unstructured /
+// transient / exploratory thoughts. Distinct from Profile (evergreen-
+// about-you), Projects (active work), Todos (action items). Added
+// 2026-05-10 to give transient content a real home — previously it
+// awkwardly landed in profile/<area> via fan-out fallback heuristics.
+//
+// Sub-pages emerge on-demand when content clusters; the root holds
+// loose sections by default. Fan-out routing rule (per the v0.2
+// prompt revision): if content isn't project-related, isn't evergreen-
+// about-the-user, and isn't a task → braindump.
+export const BRAINDUMP_PAGES = [
+  {
+    slug: 'braindump',
+    title: 'Braindump',
+    agentAbstract:
+      "Unstructured/transient/exploratory thoughts. Catchall for stuff that isn't yet a project, isn't evergreen-about-the-user, and isn't a task. Sub-pages emerge as content clusters.",
+    abstract: 'Unstructured notes and ideas',
     isRoot: true,
   },
 ] as const;
@@ -82,11 +110,18 @@ export const TODO_PAGES = [
 // User-scope project bucket (1). Root only — flat at MVP. Individual project
 // pages are created on-demand by ingestion as direct children. Status sub-
 // buckets like `projects/archived` may be added later if/when projects start
-// being completed or abandoned. The bucket is one of three legitimate type-
-// organized hierarchies (alongside `profile/*` and `todos/*`); all other page
-// types (concept, person, place, etc.) nest under semantic parents or live
-// top-level — never under invented type-bucket pages like `concepts` or
-// `places`. See specs/fan-out-prompt.md §4.3 for the full rule.
+// being completed or abandoned. The bucket is one of FOUR legitimate type-
+// organized hierarchies (alongside `profile/*`, `todos/*`, `braindump/*`);
+// all other page types (concept, person, place, etc.) nest under semantic
+// parents or live top-level — never under invented type-bucket pages like
+// `concepts` or `places`. See specs/fan-out-prompt.md §4.3 for the full rule.
 export const PROJECT_PAGES = [
-  { slug: 'projects', title: 'Projects', agentAbstract: "The user's projects.", isRoot: true },
+  {
+    slug: 'projects',
+    title: 'Projects',
+    agentAbstract:
+      "The user's active projects. Each project lives as a direct child page; sub-topics nest under their parent project. Active work — distinct from braindump (unstructured exploration) or profile (evergreen about-the-user).",
+    abstract: "Things you're working on",
+    isRoot: true,
+  },
 ] as const;

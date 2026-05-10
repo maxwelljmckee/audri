@@ -1,0 +1,15 @@
+-- Add 'braindump' to page_type. Postgres requires the new enum value to be
+-- COMMITTED in its own transaction before it can be used in casts. Drizzle's
+-- postgres-js migrator runs all pending migrations in a single shared
+-- transaction, so the backfill in 0018 trips error 55P04 ("unsafe use of
+-- new enum value") even though it lives in a separate file.
+--
+-- WORKAROUND: run this ALTER TYPE manually via the Supabase SQL editor
+-- (or psql) BEFORE invoking `pnpm db:migrate`. That commits the new value
+-- in its own transaction. Then `IF NOT EXISTS` here makes this migration
+-- a no-op when re-run inside drizzle's batch, and 0018's backfill sees the
+-- already-committed value.
+--
+-- Manual SQL to run once before db:migrate:
+--   ALTER TYPE page_type ADD VALUE IF NOT EXISTS 'braindump';
+ALTER TYPE "public"."page_type" ADD VALUE IF NOT EXISTS 'braindump';

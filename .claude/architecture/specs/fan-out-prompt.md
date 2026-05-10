@@ -156,25 +156,26 @@ For each claim, in order:
 
 3. **New-candidate match.** If the claim introduces an entity Flash flagged in `new_pages`, route to that proposed create. Pro may override Flash's proposed `type` if the transcript makes a different choice clearer (e.g., Flash said `concept`, transcript clearly establishes it's a `project`). The override is silent — no need to flag.
 
-**Type-bucket allow-list — load-bearing.** The wiki has exactly **three** legitimate top-level type-organized hierarchies, all seeded at signup:
-- `profile` (with on-demand sub-pages like `profile/goals`, `profile/work`, etc.)
-- `todos` (with status buckets `todos/todo`, `todos/done`, etc.)
-- `projects` (with individual project pages as direct children)
+**Type-bucket allow-list — load-bearing.** The wiki has exactly **four** legitimate top-level type-organized hierarchies, all seeded at signup (v0.2 added braindump):
+- `profile` (with on-demand sub-pages like `profile/goals`, `profile/work`, etc.) — **evergreen content about who the user IS**
+- `todos` (with status buckets `todos/todo`, `todos/done`, etc.) — action items
+- `projects` (with individual project pages as direct children) — **active work**
+- `braindump` (sub-pages emerge on-demand as content clusters) — **unstructured / transient / exploratory thoughts**
 
 For every other page type (concept, person, place, org, source, event, note), **there is no type-bucket parent**. Pro must never invent or use parents like `concepts`, `places`, `people`, `events` — those buckets are explicitly *not allowed to exist*. Setting `parent_slug` is a SEMANTIC choice, not a type-categorical one.
 
-**Top-level pages are RARE.** The bar is HIGH: emit `parent_slug: null` ONLY when the transcript explicitly indicates the user wants top-level treatment. Almost everything has a natural home under one of the seeded roots — the user's wiki is organized around dimensions of their life, and almost every entity fits somewhere. Heuristics in priority order:
+**Top-level pages are RARE.** The bar is HIGH: emit `parent_slug: null` ONLY when the transcript explicitly indicates the user wants top-level treatment. Almost everything has a natural home under one of the seeded roots. Heuristics — read in order, take the FIRST that fits:
 
-- A new project → `parent_slug: "projects"` (default), or a more specific parent if obvious (a sub-project under its parent project).
-- A new todo → `parent_slug: "todos/todo"` (or a different status bucket if the user specified one).
-- A new sub-profile area → parent is `profile`.
-- A new concept developed in a project's context → parent is that project.
-- A new person → default `profile/relationships` (or non-canonical `profile/people` if the user uses that framing; or a project slug if the person is primarily project-relevant).
-- A new organization → `profile/work` if work-related; non-canonical `profile/communities` if community/social; project slug if project-specific.
-- A new standalone concept / interest / book → default `profile/interests`.
-- A new place / source / event / note → `profile/interests` is the broad fallback for user-relevant content; pick a more specific profile sub-page if context warrants.
-- Genuinely orphan content with no clear home → pick the closest profile-area parent rather than null. The Live Agent should have asked the user mid-call; if it didn't, bias toward `profile/interests` for ideas/topics, `profile/relationships` for people.
-- `parent_slug: null` ONLY when the transcript explicitly directs top-level treatment.
+1. A new project → `parent_slug: "projects"` (default), or a more specific parent if obvious.
+2. A new todo → `parent_slug: "todos/todo"` (or a different status bucket if specified).
+3. Project-scoped sub-content (concept, sub-project, doc clearly tied to an existing project) → that project's slug.
+4. **Evergreen content ABOUT THE USER** (relationships, work, health, goals, life-history, interests, preferences, values, psychology) → `profile/<area>`:
+    - A new person → default `profile/relationships` (or non-canonical `profile/people`; or a project slug if primarily project-relevant).
+    - A new organization → `profile/work` if work-related; non-canonical `profile/communities` if social.
+    - A new sub-profile area (e.g. `profile/finances`) → parent is `profile`.
+5. **Transient / exploratory / unstructured thoughts** that aren't a project, aren't about-the-user, and aren't a task → `braindump` (or a `braindump/<cluster>` sub-page if Flash proposed one). Examples: "movies I want to watch," "half-baked ideas," "stuff I'm noodling on," one-off observations.
+6. Genuinely orphan content with no clear home → bias toward `braindump` (transient/in-motion content) rather than stretching into `profile/interests` (which is for content the user has actually integrated into who-they-are).
+7. `parent_slug: null` ONLY when the transcript explicitly directs top-level treatment.
 
 When `parent_slug` references another create from the same response, order creates parent-before-child in the array so the backend's lookup resolves correctly.
 

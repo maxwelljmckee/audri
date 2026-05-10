@@ -57,6 +57,7 @@ const TYPE_ICONS: Record<string, React.ComponentProps<typeof Ionicons>['name']> 
   note: 'create-outline',
   profile: 'person-circle-outline',
   todo: 'checkbox-outline',
+  braindump: 'cloud-outline',
 };
 
 function iconFor(type: string): React.ComponentProps<typeof Ionicons>['name'] {

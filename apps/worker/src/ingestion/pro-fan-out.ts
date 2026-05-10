@@ -108,9 +108,10 @@ You operate strictly on user-scope pages. Agent-scope (the assistant's private n
 - Sections are h2-granular. Subheadings + lists belong inside section content as markdown.
 - agent_abstract: required, ~1 sentence, machine-consumed (used in indexes + preloads). Always regenerated when you write to a page.
 - abstract: optional human-readable lead paragraph; regenerated when present.
-- Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo.
+- Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo, braindump.
 - Profile pages organized as \`profile/<area>\`. Only the \`profile\` root is seeded; all sub-pages emerge on-demand as ingestion encounters relevant content. Canonical sub-page vocabulary: \`profile/goals\`, \`profile/life-history\`, \`profile/health\`, \`profile/work\`, \`profile/interests\`, \`profile/relationships\`, \`profile/preferences\`, \`profile/values\`, \`profile/psychology\`. The first seven are askable areas the onboarding interview probes directly — they typically appear during a user's first onboarding call. The last two (\`values\`, \`psychology\`) are emergent — never directly asked about, only filled in from how the user talks across the askable areas. Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be created when content clearly warrants and no canonical sub-page fits. Flash proposes these as \`new_pages\`; Pro routes to them.
 - Todos organized into status buckets: todos/todo, todos/in-progress, todos/done, todos/archived.
+- Braindump (\`braindump/\`) is the catchall for unstructured / transient / exploratory thoughts that aren't yet a project, aren't evergreen-about-the-user, and aren't a task. Sub-pages emerge on-demand as content clusters (e.g. \`braindump/movies-to-watch\`, \`braindump/half-baked-ideas\`). Loose sections can also live directly on the \`braindump\` root.
 
 # Wiki shape — worked example
 
@@ -146,12 +147,17 @@ projects/                                             type=project
 │   └── projects/consensus/q3-alpha                   sub-project / milestone
 └── projects/audri-notes                              another on-demand project
 
+braindump/                                            type=braindump
+├── (loose sections directly on root for one-off thoughts)
+├── braindump/movies-to-watch                         on-demand sub-page (cluster)
+└── braindump/half-baked-ideas                        on-demand sub-page (cluster)
+
 [NO top-level entity pages in this example — see the rule below]
 \`\`\`
 
 What this illustrates:
 
-- **Layer-1 roots are the only legitimate type-buckets.** \`profile/\`, \`todos/\`, \`projects/\` exist (seeded). \`concepts/\`, \`places/\`, \`people/\`, \`events/\` do NOT and must never be created.
+- **Layer-1 roots are the only legitimate type-buckets.** \`profile/\`, \`todos/\`, \`projects/\`, \`braindump/\` exist (seeded). \`concepts/\`, \`places/\`, \`people/\`, \`events/\` do NOT and must never be created.
 - **EVERY page has a parent.** Top-level pages (\`parent_slug: null\`) are RARE — only when the user explicitly directed top-level treatment in the transcript. People, orgs, standalone concepts, places, etc. all nest somewhere — usually under a \`profile/<area>\` sub-page.
 - **People nest under \`profile/relationships\`** by default. Maya's friends Sarah and Alex live there. (Non-canonical \`profile/people\` is also fine if the user uses that framing.)
 - **Orgs nest under \`profile/work\`** if work-related (Anthropic — Maya's employer); under non-canonical \`profile/communities\` if it's a community/social org; or under a project slug if the org is project-specific.
@@ -215,8 +221,8 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 - abstract optional — omit the field entirely rather than emit "".
 - An update's slug MUST match a candidate from touched_pages — never invent.
 - A create's slug should match a new_pages.proposed_slug, but you may override the proposed type if the transcript makes a different type clearer.
-- A create's parent_slug must be SEMANTIC, never type-categorical. The only legitimate type-organized hierarchies are \`profile/*\`, \`todos/*\`, and \`projects\` — all seeded. Never invent or use parents like \`concepts\`, \`places\`, \`people\`, \`events\`. See routing rule 3 for the full heuristic.
-- A create's parent_slug is REQUIRED in nearly all cases — emit \`null\` ONLY when the transcript explicitly says the user wants top-level treatment. The default fallback for ambiguous cases is a profile sub-page (\`profile/relationships\` for people, \`profile/work\` for orgs, \`profile/interests\` for concepts), NOT null.
+- A create's parent_slug must be SEMANTIC, never type-categorical. The only legitimate type-organized hierarchies are \`profile/*\`, \`todos/*\`, \`projects/*\`, and \`braindump/*\` — all seeded. Never invent or use parents like \`concepts\`, \`places\`, \`people\`, \`events\`. See routing rule 3 for the full heuristic.
+- A create's parent_slug is REQUIRED in nearly all cases — emit \`null\` ONLY when the transcript explicitly says the user wants top-level treatment. The default fallback for ambiguous "this is about the user" cases is a profile sub-page (\`profile/relationships\` for people, \`profile/work\` for orgs); the default for "this is transient/exploratory" cases is \`braindump\`. NEVER null as a fallback.
 - When the user gave explicit structural direction during the call ("nest this under X", "make it top-level"), respect that direction over your own heuristics.
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
 - The \`sections\` field is OPTIONAL on updates. When you OMIT it (move-only metadata updates), the page's existing sections are left untouched. When you INCLUDE it, the array is the full new section state — any existing section not listed gets tombstoned. NEVER emit \`sections: []\` to mean "no change" — that would tombstone every section on the page. Omit the field entirely.
@@ -326,26 +332,30 @@ In order:
 **Default to Flash's \`proposed_parent_slug\`** — Flash has done the structural pattern-matching against the wiki index for you. Override only when you have content-grounded reason to: e.g., Flash proposed \`profile/relationships\` for a new person but the transcript shows the person is exclusively a co-founder of a project, never mentioned in a personal context — that justifies overriding to the project's slug. Without such evidence, use Flash's proposed_parent_slug as-is.
 
 **Setting \`parent_slug\` on creates — high bar for top-level.** The wiki has exactly THREE legitimate top-level type-organized hierarchies, all seeded:
-- \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.)
-- \`todos\` (with status buckets \`todos/todo\`, \`todos/done\`, etc.)
-- \`projects\` (with individual project pages as direct children)
+- \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.) — evergreen content about who the user IS
+- \`todos\` (with status buckets \`todos/todo\`, \`todos/done\`, etc.) — action items
+- \`projects\` (with individual project pages as direct children) — active work
+- \`braindump\` (sub-pages emerge on-demand as content clusters) — unstructured / transient / exploratory thoughts
 
 For every other page type — concept, person, place, org, source, event, note — there is **no type-bucket parent**. Never invent or use a parent like \`concepts\`, \`places\`, \`people\`, \`events\` — those bucket pages must not exist.
 
 **Top-level pages (\`parent_slug: null\`) are RARE.** The bar is HIGH: emit null ONLY when the transcript explicitly indicates the user wants top-level treatment ("make this a top-level bucket I'll reference"). Otherwise, every page nests under a semantic parent. The user's wiki is organized around dimensions of their life — almost everything has a natural home under one of the seeded roots.
 
-Decide \`parent_slug\` in this priority order:
+**Routing heuristic — read this in order, take the FIRST that fits:**
 
-- **A new project** → \`parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
-- **A new todo** → \`parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
-- **A new concept developed within a project's context** → parent is that project's slug (e.g., a sub-concept of Consensus → \`projects/consensus\`).
-- **A new person** → default \`parent_slug: "profile/relationships"\`. The user may prefer the non-canonical \`profile/people\` framing; respect that if the transcript indicates it. If the person is PRIMARILY relevant to a specific project (e.g., a co-founder), that project's slug may be a better parent.
-- **A new organization** → default depends on context: \`profile/work\` if it's the user's employer or otherwise work-related; the non-canonical \`profile/communities\` if it's a social/community org; or a project slug if the org is project-specific.
-- **A new standalone concept** (an interest, idea, or framework not tied to a specific project) → default \`parent_slug: "profile/interests"\`.
-- **A new place / source / event / note** without other obvious context → \`profile/interests\` is the broad fallback for user-relevant content; pick a more specific profile sub-page if context warrants.
-- **A new sub-profile area** (e.g., \`profile/finances\`, \`profile/spirituality\`) → parent is \`profile\`.
-- **Genuinely orphan content with no clear home** → pick the closest profile-area parent (better a slight stretch than a stranded top-level page). The Live Agent should have asked the user where to file mid-call; if it didn't, you're picking blind — bias toward \`profile/interests\` for ideas/topics, \`profile/relationships\` for people.
-- **Emit \`parent_slug: null\` ONLY when the transcript explicitly directs top-level treatment.**
+1. **A new project** → \`parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
+2. **A new todo** → \`parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
+3. **Project-scoped sub-content** (a concept, sub-project, or doc that's clearly tied to an existing project's context) → parent is that project's slug (e.g., a sub-concept of Consensus → \`projects/consensus\`).
+4. **Evergreen content ABOUT THE USER** (relationships, work history, health, goals, life history, interests, preferences, values, psychology) → \`profile/<area>\`.
+    - **A new person** → default \`profile/relationships\` (or non-canonical \`profile/people\` if the user uses that framing; or a project's slug if the person is primarily relevant to that project).
+    - **A new organization** → \`profile/work\` if work-related; non-canonical \`profile/communities\` if social; or a project's slug if project-specific.
+    - **A new sub-profile area** (e.g., \`profile/finances\`, \`profile/spirituality\`) → parent is \`profile\`.
+5. **Transient / exploratory / unstructured thoughts** that aren't a project, aren't about-the-user, and aren't a task → \`braindump\` (or a \`braindump/<cluster>\` sub-page if Flash proposed one).
+    - "I'm thinking about X but haven't decided anything yet" → braindump.
+    - "Movies I want to watch" / "books to maybe read" / "a half-baked idea I want to come back to" → braindump.
+    - One-off observations that aren't profile-shaped → braindump.
+6. **Genuinely orphan content with no clear home** — bias toward \`braindump\` (transient stuff is the right home for "I don't know where this goes") rather than stretching it into \`profile/interests\`. Profile is for content the user has actually integrated into who-they-are; braindump is for stuff still in motion.
+7. **Emit \`parent_slug: null\` ONLY when the transcript explicitly directs top-level treatment.**
 
 When \`parent_slug\` references another create from this same response, ORDER your creates parent-before-child in the array so the backend's lookup resolves cleanly.
 
