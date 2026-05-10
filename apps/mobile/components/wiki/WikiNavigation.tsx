@@ -189,9 +189,9 @@ function SearchResultsList({
                 {item.ancestors.map((a) => a.title).join(' › ')}
               </Text>
             )}
-            {item.page.agent_abstract && (
+            {(item.page.abstract || item.page.agent_abstract) && (
               <Text style={styles.pageRowAbstract} numberOfLines={2}>
-                {item.page.agent_abstract}
+                {item.page.abstract ?? item.page.agent_abstract}
               </Text>
             )}
           </View>
@@ -340,9 +340,14 @@ function PageRow({
         <Text style={styles.pageRowTitle} numberOfLines={1}>
           {page.title}
         </Text>
-        {page.agent_abstract && (
+        {/* Index rows show the user-facing `abstract` (short subtitle) when
+            present, falling back to the model-facing `agent_abstract` only for
+            sub-pages that don't have an authored abstract yet. Per 2026-05-10
+            UX call: the verbose agent_abstract is too model-y for the index;
+            it's fine on the page detail surface where the user is committed. */}
+        {(page.abstract || page.agent_abstract) && (
           <Text style={styles.pageRowAbstract} numberOfLines={2}>
-            {page.agent_abstract}
+            {page.abstract ?? page.agent_abstract}
           </Text>
         )}
       </View>

@@ -119,6 +119,18 @@ export function startReplication(): Promise<ReplicationHandle> {
       pull: { batchSize: 200, lastModifiedField: 'cited_at' },
     });
 
+    // todos sidecar — owns todo lifecycle (status + parent_page_id
+    // association). Mobile reads to render swimlane Todos UX and pushes
+    // status/parent updates (check-off, archive, re-associate). v0.2.1.
+    const todosRepl = new SupabaseReplication({
+      supabaseClient: supabase,
+      collection: db.collections.todos,
+      replicationIdentifier: `audri:todos:${REPLICATION_VERSION}`,
+      deletedField: '_deleted',
+      pull: { batchSize: 200, lastModifiedField: 'updated_at' },
+      push: {},
+    });
+
     // Surface errors from each replication's error stream — without this,
     // pull/push failures (RLS denials, schema-validation rejections, network
     // hiccups) are silent and the wiki UI just appears empty. Each error
@@ -146,6 +158,7 @@ export function startReplication(): Promise<ReplicationHandle> {
     subscribeErrors(agentOpenItemsRepl, 'agent_open_items');
     subscribeErrors(callTranscriptsRepl, 'call_transcripts');
     subscribeErrors(wikiSectionTranscriptsRepl, 'wiki_section_transcripts');
+    subscribeErrors(todosRepl, 'todos');
 
     const allRepls = [
       wikiPagesRepl,
@@ -155,6 +168,7 @@ export function startReplication(): Promise<ReplicationHandle> {
       agentOpenItemsRepl,
       callTranscriptsRepl,
       wikiSectionTranscriptsRepl,
+      todosRepl,
     ];
 
     _active = {

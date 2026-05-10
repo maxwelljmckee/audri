@@ -17,9 +17,10 @@ export type SeedResult =
 export class SeedService {
   private readonly logger = new Logger(SeedService.name);
 
-  // Atomic seed of 1 agents row + 9 wiki_pages + 1 user_settings.
-  // (1 agent-scope root + 1 profile root + 5 todos + 1 projects + 1 braindump.)
-  // Idempotent on user_id (re-firing webhook is safe).
+  // Atomic seed of 1 agents row + 5 wiki_pages + 1 user_settings.
+  // (1 agent-scope root + 1 profile root + 1 todos root + 1 projects root +
+  // 1 braindump root.) Idempotent on user_id (re-firing webhook is safe).
+  // v0.2.1: todo status buckets dropped — sidecar owns status now.
   async seedNewUser(userId: string): Promise<SeedResult> {
     const existing = await db
       .select({ id: wikiPages.id })

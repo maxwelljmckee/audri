@@ -18,6 +18,7 @@ import {
   inArray,
   isNull,
   sql,
+  todos,
   wikiLog,
   wikiPages,
   wikiSectionHistory,
@@ -98,6 +99,7 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     'note',
     'profile',
     'todo',
+    'braindump',
   ]);
 
   await db.transaction(async (tx) => {
@@ -155,6 +157,43 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
       if (!pageRow) continue;
 
       result.pagesCreated++;
+
+      // v0.2.1 sidecar — every type='todo' wiki create gets a sidecar row.
+      // Status defaults to 'todo'; parent_page_id resolves the optional
+      // todo_parent_slug to a wiki page UUID (NULL when absent or unresolvable).
+      // Default-to-NULL is load-bearing: per the prompt rules, the model
+      // should ONLY emit todo_parent_slug when the transcript explicitly
+      // directs association. Anything else stays unassigned ("General").
+      if (create.type === 'todo') {
+        let todoParentPageId: string | null = null;
+        if (create.todo_parent_slug) {
+          const [parentForTodo] = await tx
+            .select({ id: wikiPages.id })
+            .from(wikiPages)
+            .where(
+              and(
+                eq(wikiPages.userId, userId),
+                eq(wikiPages.scope, 'user'),
+                eq(wikiPages.slug, create.todo_parent_slug),
+                isNull(wikiPages.tombstonedAt),
+              ),
+            )
+            .limit(1);
+          if (parentForTodo) todoParentPageId = parentForTodo.id;
+          else {
+            logger.warn(
+              { slug: create.slug, todoParentSlug: create.todo_parent_slug },
+              'commit: todo_parent_slug unresolvable — leaving sidecar parent_page_id NULL',
+            );
+          }
+        }
+        await tx.insert(todos).values({
+          userId,
+          pageId: pageRow.id,
+          parentPageId: todoParentPageId,
+          status: 'todo',
+        });
+      }
 
       // Sections, in declared order.
       for (let i = 0; i < create.sections.length; i++) {
@@ -395,23 +434,25 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     //   2. An agent_tasks(kind='research') row
     //   3. A Graphile job (added in same tx — no enqueue-before-commit race)
     if (fanOut.tasks.length > 0) {
-      const [todoBucket] = await tx
+      // v0.2.1: status buckets dropped. Todos nest directly under the
+      // `todos` root; status lives on the sidecar.
+      const [todosRoot] = await tx
         .select({ id: wikiPages.id })
         .from(wikiPages)
         .where(
           and(
             eq(wikiPages.userId, userId),
             eq(wikiPages.scope, 'user'),
-            eq(wikiPages.slug, 'todos/todo'),
+            eq(wikiPages.slug, 'todos'),
             isNull(wikiPages.tombstonedAt),
           ),
         )
         .limit(1);
 
-      if (!todoBucket) {
+      if (!todosRoot) {
         logger.warn(
           { userId, taskCount: fanOut.tasks.length },
-          'todos/todo bucket missing — skipping task creation',
+          'todos root missing — skipping task creation',
         );
       } else {
         for (const task of fanOut.tasks) {
@@ -428,12 +469,22 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
               // Suffix with current ms + a random tail to avoid collisions when
               // ingestion produces several research tasks in the same call.
               slug: `todos/research-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-              parentPageId: todoBucket.id,
+              parentPageId: todosRoot.id,
               title: placeholderTitle,
               agentAbstract: `Research request: ${task.query}`,
             })
             .returning({ id: wikiPages.id });
           if (!todoRow) continue;
+
+          // Sidecar for the spawned research-tracking todo. Starts as 'todo';
+          // research handler's commit flips to 'done' when the task completes
+          // (in research/commit.ts, alongside the agent_tasks status update).
+          await tx.insert(todos).values({
+            userId,
+            pageId: todoRow.id,
+            parentPageId: null,
+            status: 'todo',
+          });
 
           const [taskRow] = await tx
             .insert(agentTasks)

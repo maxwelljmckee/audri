@@ -55,7 +55,7 @@ The wiki is a graph of pages. Each page has:
 - agent_abstract: terse one-sentence machine summary of what the page is about
 
 Profile pages: organized as profile/goals, profile/health, profile/work, etc.
-Todos: organized into status buckets — todos/todo (pending), todos/in-progress, todos/done, todos/archived. Individual todos live under those buckets.
+Todos: every individual todo nests directly under the seeded \`todos\` root (flat). Status (\`todo\` / \`in-progress\` / \`done\` / \`archived\`) lives on the \`todos\` sidecar table — NOT in the wiki hierarchy. New todos always have parent_slug="todos".
 
 # Output contract
 
@@ -103,9 +103,9 @@ Propose a new page when the transcript introduces an entity / project / concept 
 
 If the transcript contains an explicit hierarchy move directive — patterns like "move X under Y", "put X under Z", "nest these under W", "make X top-level" — you MUST flag BOTH the source page(s) being moved AND the target parent (when the target is an existing page) as touched_pages. Pro depends on having both ends of the move in its candidate set to emit the parent_slug update. If the target parent is a new entity not yet in the index, propose it as a new_page and flag the source(s) as touched_pages.
 
-## Commitment patterns → ALWAYS flag todos/todo
+## Commitment patterns → ALWAYS flag the todos root
 
-If the transcript contains ANY of these commitment patterns from the user, you MUST flag "todos/todo" as a touched page (assuming it appears in the index):
+If the transcript contains ANY of these commitment patterns from the user, you MUST flag "todos" as a touched page (assuming it appears in the index):
 - "I'll <verb>"
 - "I told <person> I'd <verb>"
 - "I need to <verb>"
@@ -116,7 +116,7 @@ If the transcript contains ANY of these commitment patterns from the user, you M
 - "I want to <verb>"
 - "I have to <verb>"
 
-This is unconditional — not a judgment call. Pro depends on todos/todo being in the candidate set to extract implicit todos.
+This is unconditional — not a judgment call. Pro depends on the todos root being in the candidate set to extract implicit todos.
 
 ## Profile sub-pages → propose on-demand when content matches
 
@@ -142,7 +142,7 @@ Output shape for these proposals: {"proposed_slug": "profile/goals", "proposed_t
 Every new_pages entry must include a \`proposed_parent_slug\`. The bar for top-level (\`null\`) is HIGH — emit null ONLY when the transcript explicitly directs top-level treatment. Otherwise every page nests under a semantic parent. The user's wiki is organized around dimensions of their life, and almost everything has a natural home under one of FOUR legitimate top-level type-organized hierarchies (all seeded):
 
 - \`profile\` (with on-demand sub-pages like \`profile/goals\`, \`profile/work\`, etc.) — evergreen content about who the user IS
-- \`todos\` (with status buckets \`todos/todo\`, \`todos/done\`, etc.) — action items
+- \`todos\` (flat — individual todos as direct children, status owned by sidecar) — action items
 - \`projects\` (with individual project pages as direct children) — active work
 - \`braindump\` (sub-pages emerge on-demand as content clusters) — unstructured / transient / exploratory thoughts
 
@@ -151,7 +151,7 @@ For every other page type — concept, person, place, org, source, event, note �
 Heuristics — read in order, take the FIRST that fits:
 
 - **A new project** → \`proposed_parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
-- **A new todo** → \`proposed_parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
+- **A new todo** → \`proposed_parent_slug: "todos"\` (always — todos are flat under the root; status lives on the sidecar).
 - **Project-scoped sub-content** (concept, sub-project, doc clearly tied to an existing project) → parent is that project's slug.
 - **Evergreen content ABOUT THE USER** (relationships, work, health, goals, life-history, interests, preferences) → \`profile/<area>\`:
     - **A new person** → \`profile/relationships\` (or non-canonical \`profile/people\`; or a project's slug if primarily relevant to that project).
@@ -201,10 +201,10 @@ Transcript:
 
 Index includes:
 {"slug": "alex-rivera", "title": "Alex Rivera", "type": "person", "parent_slug": null, "agent_abstract": "..."}
-{"slug": "todos/todo", "title": "To do", "type": "todo", "parent_slug": "todos", "agent_abstract": "Todos that are pending."}
+{"slug": "todos", "title": "Todos", "type": "todo", "parent_slug": null, "agent_abstract": "The user's todos."}
 
 Output:
-{"touched_pages": [{"slug": "alex-rivera"}, {"slug": "todos/todo"}], "new_pages": []}
+{"touched_pages": [{"slug": "alex-rivera"}, {"slug": "todos"}], "new_pages": []}
 
 ## Example 3: new entity introduction
 

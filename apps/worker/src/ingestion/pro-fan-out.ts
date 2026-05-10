@@ -50,6 +50,13 @@ export interface PageCreate {
   agent_abstract: string;
   abstract?: string;
   sections: NewSectionWrite[];
+  // Only meaningful when type === 'todo'. Optional slug of the wiki page
+  // this todo is associated with (project, goal sub-page, person, concept,
+  // etc.) — surfaces as the todo's swimlane in the Todos plugin UX. Default
+  // is omitted/undefined → NULL parent_page_id on the sidecar = "General"
+  // swimlane. Set ONLY when the transcript explicitly directs association.
+  // See pro prompt §"Todo associations" rule + commit.ts sidecar insert.
+  todo_parent_slug?: string;
 }
 
 export interface PageUpdate {
@@ -110,7 +117,7 @@ You operate strictly on user-scope pages. Agent-scope (the assistant's private n
 - abstract: optional human-readable lead paragraph; regenerated when present.
 - Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo, braindump.
 - Profile pages organized as \`profile/<area>\`. Only the \`profile\` root is seeded; all sub-pages emerge on-demand as ingestion encounters relevant content. Canonical sub-page vocabulary: \`profile/goals\`, \`profile/life-history\`, \`profile/health\`, \`profile/work\`, \`profile/interests\`, \`profile/relationships\`, \`profile/preferences\`, \`profile/values\`, \`profile/psychology\`. The first seven are askable areas the onboarding interview probes directly — they typically appear during a user's first onboarding call. The last two (\`values\`, \`psychology\`) are emergent — never directly asked about, only filled in from how the user talks across the askable areas. Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be created when content clearly warrants and no canonical sub-page fits. Flash proposes these as \`new_pages\`; Pro routes to them.
-- Todos organized into status buckets: todos/todo, todos/in-progress, todos/done, todos/archived.
+- Todos: every individual todo nests directly under the seeded \`todos\` root (flat). Status (\`todo\` / \`in-progress\` / \`done\` / \`archived\`) lives on the \`todos\` sidecar table — NOT in the wiki hierarchy. New todo creates always land at \`parent_slug: "todos"\` and start with sidecar status='todo'. Status changes happen through plugin UX or task lifecycles, not through ingestion.
 - Braindump (\`braindump/\`) is the catchall for unstructured / transient / exploratory thoughts that aren't yet a project, aren't evergreen-about-the-user, and aren't a task. Sub-pages emerge on-demand as content clusters (e.g. \`braindump/movies-to-watch\`, \`braindump/half-baked-ideas\`). Loose sections can also live directly on the \`braindump\` root.
 
 # Wiki shape — worked example
@@ -133,12 +140,11 @@ profile/                                              type=profile
 │   └── profile/relationships/alex-rivera             type=person
 └── profile/preferences                               on-demand sub-page
 
-todos/                                                type=todo
-├── todos/todo                                        seeded status bucket
-│   └── todos/todo/send-alex-the-paper                on-demand individual todo
-├── todos/in-progress                                 seeded status bucket
-├── todos/done                                        seeded status bucket
-└── todos/archived                                    seeded status bucket
+todos/                                                type=todo (seeded root)
+├── todos/<slug-1>                                    individual todo (flat)
+├── todos/<slug-2>                                    individual todo
+└── ...                                               (status + project association live on the
+                                                       todos sidecar table, NOT the wiki tree)
 
 projects/                                             type=project
 ├── projects/consensus                                on-demand project
@@ -262,7 +268,7 @@ The atoms + frameworks aren't in your output as such — they're the substance y
 ### Implicit commitment extraction
 
 When a surface claim contains a commitment pattern, extract BOTH the surface fact AND an implicit todo:
-- "I told Alex I'd send him the paper" → surface: routes to alex-* page; implicit: "Send Alex the paper" → routes to todos/todo
+- "I told Alex I'd send him the paper" → surface: routes to alex-* page; implicit: "Send Alex the paper" → new todo at parent_slug="todos"
 
 Commitment patterns: "I'll do X" / "I will do X" / "I'm going to do X" / "I told [person] I'd do X" / "Remind me to do X" / "I should do X" (when stated as commitment) / "I need to do X" (when stated as commitment).
 
@@ -344,7 +350,7 @@ For every other page type — concept, person, place, org, source, event, note �
 **Routing heuristic — read this in order, take the FIRST that fits:**
 
 1. **A new project** → \`parent_slug: "projects"\` (default), OR a more specific parent if the transcript makes one obvious (a sub-project of an existing project nests under that project).
-2. **A new todo** → \`parent_slug: "todos/todo"\` (or another status bucket if the user specified one).
+2. **A new todo** → \`parent_slug: "todos"\` (always — todos are flat under the root; status lives on the sidecar). May also include \`todo_parent_slug\` to associate the todo with another wiki page (project, goal, person, etc.) — see the Todo associations rule below.
 3. **Project-scoped sub-content** (a concept, sub-project, or doc that's clearly tied to an existing project's context) → parent is that project's slug (e.g., a sub-concept of Consensus → \`projects/consensus\`).
 4. **Evergreen content ABOUT THE USER** (relationships, work history, health, goals, life history, interests, preferences, values, psychology) → \`profile/<area>\`.
     - **A new person** → default \`profile/relationships\` (or non-canonical \`profile/people\` if the user uses that framing; or a project's slug if the person is primarily relevant to that project).
@@ -369,6 +375,22 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 If after extraction + filtering you have no meaningful claim to write to a touched_pages candidate, OMIT it from updates entirely and add to skipped: reason: "no substantive claim on re-read".
 
 **Exception:** if the only operation on a page is a hierarchy move (a \`parent_slug\` change directed explicitly by the user), the update is NOT empty and must NOT be suppressed. Metadata-only updates are valid — see "Hierarchy moves on existing pages" below.
+
+### Todo associations (\`todo_parent_slug\`)
+
+A todo's \`todo_parent_slug\` field associates the todo with another wiki page — surfaces in the Todos plugin UX as a vertical swimlane (project, goal, person, concept, etc.). It is OPTIONAL on todo creates and **MUST default to omitted/null** unless the transcript EXPLICITLY directs association.
+
+**Emit \`todo_parent_slug\` ONLY when the user explicitly says so.** Examples:
+
+- ✅ "Add a todo to call mom — put it under my mom's page" → \`todo_parent_slug: "profile/relationships/mom"\` (assuming that page exists).
+- ✅ "Make a todo for the Consensus project — research alternative frameworks" → \`todo_parent_slug: "projects/consensus"\`.
+- ✅ "Add this to my Q3 goals: ship the new editor" → \`todo_parent_slug: "profile/goals"\` (or a more specific goal sub-page if it exists).
+- ❌ User says "I should send Alex the paper" — DO NOT auto-associate with the alex-* page. The mention isn't an association directive. Leave \`todo_parent_slug\` omitted; the Todos plugin shows it under "General." The user can re-associate later if they want.
+- ❌ User says "this would be useful for Consensus" while creating an unrelated todo. Mention isn't a directive. Omit.
+
+The Live Agent should be the one ASKING the user about associations during the call ("Should I add this to your Consensus list?"); fan-out's job is just to faithfully record the user's explicit answer. When in doubt, omit.
+
+If \`todo_parent_slug\` references a slug that doesn't resolve at commit time, the backend keeps the sidecar's parent_page_id NULL (logged as a warn) — better silent General-bucket placement than a broken reference.
 
 ### Hierarchy moves on existing pages
 
@@ -553,6 +575,10 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
                 parent_slug: { type: Type.STRING, nullable: true },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
+                // Only meaningful for type='todo'. Optional wiki slug the todo
+                // associates with (project, goal sub-page, person, concept).
+                // Omit unless transcript explicitly directs association.
+                todo_parent_slug: { type: Type.STRING, nullable: true },
                 sections: {
                   type: Type.ARRAY,
                   items: {

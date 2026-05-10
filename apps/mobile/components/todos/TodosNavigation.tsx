@@ -1,10 +1,17 @@
-// Todos plugin's stack navigation. Three screens: list (with status-bucket
-// tabs), detail (reuses WikiPageDetail), and a manual-create form.
+// Todos plugin's stack navigation. v0.2.1 sidecar refactor (2026-05-10):
 //
-// Status is encoded by parent_page_id pointing at one of the four bucket
-// pages. Check-off reparents the page to todos/done — that's a single
-// UPDATE on wiki_pages, which RxDB can push directly via the existing RLS
-// policy (UPDATE allowed for own user-scope pages).
+// Status no longer encodes as wiki hierarchy; the `todos` sidecar table
+// owns lifecycle. Two-axis UX:
+//
+//   - **Horizontal (top tab strip):** filter by status — To do / In progress
+//     / Done / Archived. Default tab is "To do."
+//   - **Vertical (within the active tab):** todos grouped into collapsible
+//     swimlanes by `parent_page_id` association — "General" (NULL parent)
+//     plus one swimlane per associated wiki page (project / goal / person /
+//     etc.). Within a swimlane, todos render newest-first.
+//
+// Wiki layer: type='todo' wiki rows still exist as ingestion + agent-task
+// triggering shells (hidden from Notes UI). The sidecar drives the UX.
 
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -14,34 +21,25 @@ import {
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { getDatabase } from '../../lib/rxdb/database';
-import type { AgentTaskDoc, WikiPageDoc } from '../../lib/rxdb/schemas';
+import type { AgentTaskDoc, TodoDoc, WikiPageDoc } from '../../lib/rxdb/schemas';
 import { useActiveAgentTasks } from '../../lib/rxdb/useAgentTasks';
 import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
 import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
+import { updateTodoStatus, useTodos } from '../../lib/rxdb/useTodos';
 import { useWikiPages } from '../../lib/rxdb/useWikiPages';
 import { spawnTodo } from '../../lib/spawnTodo';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
 import { ResyncControl } from '../ResyncControl';
 import { WikiPageDetail } from '../WikiPageDetail';
-
-const BUCKET_SLUGS = ['todos/todo', 'todos/in-progress', 'todos/done', 'todos/archived'] as const;
-type BucketSlug = (typeof BUCKET_SLUGS)[number];
-const BUCKET_LABELS: Record<BucketSlug, string> = {
-  'todos/todo': 'To do',
-  'todos/in-progress': 'In progress',
-  'todos/done': 'Done',
-  'todos/archived': 'Archived',
-};
 
 export type TodosStackParamList = {
   List: undefined;
@@ -61,41 +59,116 @@ export function TodosStack() {
   );
 }
 
-// ── List with bucket tabs ──────────────────────────────────────────────────
+// ── Swimlane list ──────────────────────────────────────────────────────────
+
+interface Swimlane {
+  // null parentPageId → "General" lane (no wiki page association).
+  parentPageId: string | null;
+  parentTitle: string;
+  // All todos for this lane, already filtered to the active status; sorted
+  // newest-first within the lane.
+  todos: TodoDoc[];
+}
+
+const STATUS_TABS: { slug: TodoDoc['status']; label: string }[] = [
+  { slug: 'todo', label: 'To do' },
+  { slug: 'in-progress', label: 'In progress' },
+  { slug: 'done', label: 'Done' },
+  { slug: 'archived', label: 'Archived' },
+];
+
+// Group an already-status-filtered todo list into swimlanes by parent_page_id.
+// "General" (NULL parent) lane sorts first; named lanes follow alphabetically.
+function buildSwimlanes(todos: TodoDoc[], pages: WikiPageDoc[]): Swimlane[] {
+  const titleByPageId = new Map<string, string>();
+  for (const p of pages) titleByPageId.set(p.id, p.title);
+
+  const byParent = new Map<string | null, TodoDoc[]>();
+  for (const t of todos) {
+    const key = t.parent_page_id ?? null;
+    const list = byParent.get(key) ?? [];
+    list.push(t);
+    byParent.set(key, list);
+  }
+
+  const sortLane = (list: TodoDoc[]): TodoDoc[] =>
+    [...list].sort((a, b) => (b.updated_at ?? '').localeCompare(a.updated_at ?? ''));
+
+  const lanes: Swimlane[] = [];
+  const general = byParent.get(null);
+  if (general && general.length > 0) {
+    lanes.push({ parentPageId: null, parentTitle: 'General', todos: sortLane(general) });
+  }
+  const named: Swimlane[] = [];
+  for (const [parentId, list] of byParent.entries()) {
+    if (parentId === null) continue;
+    named.push({
+      parentPageId: parentId,
+      parentTitle: titleByPageId.get(parentId) ?? '(unknown)',
+      todos: sortLane(list),
+    });
+  }
+  named.sort((a, b) => a.parentTitle.localeCompare(b.parentTitle));
+  lanes.push(...named);
+  return lanes;
+}
 
 function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 'List'>) {
   const ready = useRxdbReady();
+  const allTodos = useTodos();
   const pages = useWikiPages();
   const activeResearch = useActiveAgentTasks('research');
-  const [activeBucket, setActiveBucket] = useState<BucketSlug>('todos/todo');
   const { refreshing, onRefresh } = useReplicationResync();
 
-  // Build a map of todo_page_id → in-flight task so each row can show its
-  // live state (spinner + label) without each row having to subscribe.
+  // Active status tab — horizontal axis. Defaults to "To do" since that's
+  // the user's most-frequent landing context. The tab strip shows counts
+  // per status so the user knows what's queued elsewhere.
+  const [activeStatus, setActiveStatus] = useState<TodoDoc['status']>('todo');
+
+  // Counts per status for the tab strip badges.
+  const countByStatus = useMemo(() => {
+    const m: Record<TodoDoc['status'], number> = {
+      todo: 0,
+      'in-progress': 0,
+      done: 0,
+      archived: 0,
+    };
+    for (const t of allTodos) m[t.status]++;
+    return m;
+  }, [allTodos]);
+
+  // Map pageId → in-flight research task so each row can render the spinner
+  // + "Researching now…" indicator without each row subscribing.
   const activeByPageId = useMemo(() => {
     const m = new Map<string, AgentTaskDoc>();
     for (const t of activeResearch) m.set(t.todo_page_id, t);
     return m;
   }, [activeResearch]);
 
-  const { bucketBySlug, childrenByBucketId } = useMemo(() => {
-    const todos = pages.filter((p) => p.scope === 'user' && p.type === 'todo');
-    const bySlug = new Map<BucketSlug, WikiPageDoc>(
-      todos
-        .filter((p) => (BUCKET_SLUGS as readonly string[]).includes(p.slug))
-        .map((b) => [b.slug as BucketSlug, b]),
-    );
-    const byId = new Map<string, WikiPageDoc[]>();
-    for (const p of todos) {
-      if (!p.parent_page_id) continue;
-      if ((BUCKET_SLUGS as readonly string[]).includes(p.slug)) continue;
-      if (p.slug === 'todos') continue;
-      const list = byId.get(p.parent_page_id) ?? [];
-      list.push(p);
-      byId.set(p.parent_page_id, list);
-    }
-    return { bucketBySlug: bySlug, childrenByBucketId: byId };
+  // Page lookup by id for per-row title display.
+  const titleByPageId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of pages) m.set(p.id, p.title);
+    return m;
   }, [pages]);
+
+  // Swimlanes — filtered to the active status, then grouped by parent_page_id.
+  const swimlanes = useMemo(() => {
+    const filtered = allTodos.filter((t) => t.status === activeStatus);
+    return buildSwimlanes(filtered, pages);
+  }, [allTodos, pages, activeStatus]);
+
+  // Per-lane collapsed state. Lanes default OPEN. Component-memory only;
+  // V1+ can move to AsyncStorage if state-across-reloads becomes desirable.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  function toggleCollapsed(key: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   if (!ready) {
     return (
@@ -105,24 +178,21 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
     );
   }
 
-  const activeBucketPage = bucketBySlug.get(activeBucket);
-  const items = activeBucketPage ? (childrenByBucketId.get(activeBucketPage.id) ?? []) : [];
-
   return (
     <View style={styles.flex}>
+      {/* Status tab strip — horizontal axis. */}
       <View style={styles.tabBar}>
-        {BUCKET_SLUGS.map((slug) => {
-          const bucket = bucketBySlug.get(slug);
-          const count = bucket ? (childrenByBucketId.get(bucket.id)?.length ?? 0) : 0;
-          const isActive = slug === activeBucket;
+        {STATUS_TABS.map((tab) => {
+          const isActive = tab.slug === activeStatus;
+          const count = countByStatus[tab.slug];
           return (
             <Pressable
-              key={slug}
+              key={tab.slug}
               style={[styles.tab, isActive && styles.tabActive]}
-              onPress={() => setActiveBucket(slug)}
+              onPress={() => setActiveStatus(tab.slug)}
             >
               <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                {BUCKET_LABELS[slug]}
+                {tab.label}
               </Text>
               {count > 0 ? (
                 <Text style={[styles.tabCount, isActive && styles.tabCountActive]}>{count}</Text>
@@ -137,75 +207,71 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
         <Text style={styles.createRowLabel}>New todo</Text>
       </Pressable>
 
-      <FlatList
-        data={items}
-        keyExtractor={(p) => p.id}
+      <ScrollView
         contentContainerStyle={styles.list}
         refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListEmptyComponent={
+      >
+        {swimlanes.length === 0 && (
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>No todos in this bucket.</Text>
+            <Text style={styles.emptyText}>
+              {activeStatus === 'todo'
+                ? 'No todos yet. Tap "New todo" to add one.'
+                : `No ${STATUS_TABS.find((t) => t.slug === activeStatus)?.label.toLowerCase()} todos.`}
+            </Text>
           </View>
-        }
-        renderItem={({ item }) => (
-          <TodoRow
-            page={item}
-            activeTask={activeByPageId.get(item.id) ?? null}
-            doneBucketId={bucketBySlug.get('todos/done')?.id ?? null}
-            onOpen={() => navigation.push('Detail', { pageId: item.id })}
-          />
         )}
-      />
+        {swimlanes.map((lane) => {
+          const key = lane.parentPageId ?? '__general__';
+          const isCollapsed = collapsed.has(key);
+          return (
+            <View key={key} style={styles.lane}>
+              <Pressable style={styles.laneHeader} onPress={() => toggleCollapsed(key)}>
+                <Ionicons
+                  name={isCollapsed ? 'chevron-forward' : 'chevron-down'}
+                  size={16}
+                  color="#7aa3d4"
+                />
+                <Text style={styles.laneTitle} numberOfLines={1}>
+                  {lane.parentTitle}
+                </Text>
+                <Text style={styles.laneCount}>{lane.todos.length}</Text>
+              </Pressable>
+              {!isCollapsed &&
+                lane.todos.map((t) => (
+                  <TodoRow
+                    key={t.id}
+                    todo={t}
+                    pageTitle={titleByPageId.get(t.page_id) ?? '(unknown)'}
+                    activeTask={activeByPageId.get(t.page_id) ?? null}
+                    onOpen={() => navigation.push('Detail', { pageId: t.page_id })}
+                  />
+                ))}
+            </View>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
 
-// Tap the title to drill into the page; tap the round checkbox to toggle the
-// page between its current bucket and `todos/done`. Toggle uses RxDB's
-// reactive .patch() so the row swaps tabs immediately + propagates to the
-// server via the existing replication push.
-//
-// If the row has an in-flight agent_task (e.g. research is still running),
-// we replace the abstract with a "Researching now…" line + spinner and the
-// checkbox is disabled — checking off a todo whose work hasn't completed
-// would leave the artifact orphaned.
 function TodoRow({
-  page,
+  todo,
+  pageTitle,
   activeTask,
-  doneBucketId,
   onOpen,
 }: {
-  page: WikiPageDoc;
+  todo: TodoDoc;
+  pageTitle: string;
   activeTask: AgentTaskDoc | null;
-  doneBucketId: string | null;
   onOpen: () => void;
 }) {
-  const isDone = doneBucketId !== null && page.parent_page_id === doneBucketId;
+  const isDone = todo.status === 'done' || todo.status === 'archived';
   const isActive = activeTask !== null;
-  // Stash where the row was BEFORE it got moved to done so toggling back
-  // returns it to its previous bucket. We only need this when the row is
-  // already done — for everything else, "uncheck" doesn't make sense.
-  const [previousParent, setPreviousParent] = useState<string | null>(null);
 
   async function toggle() {
-    if (!doneBucketId) return;
-    const db = await getDatabase();
-    const doc = await db.collections.wiki_pages.findOne(page.id).exec();
-    if (!doc) return;
-    if (isDone) {
-      const target = previousParent ?? page.parent_page_id;
-      if (!target) return;
-      await doc.patch({
-        parent_page_id: target,
-        updated_at: new Date().toISOString(),
-      });
-    } else {
-      setPreviousParent(page.parent_page_id);
-      await doc.patch({
-        parent_page_id: doneBucketId,
-        updated_at: new Date().toISOString(),
-      });
-    }
+    if (isActive) return;
+    const next: TodoDoc['status'] = isDone ? 'todo' : 'done';
+    await updateTodoStatus(todo.id, next);
   }
 
   return (
@@ -223,22 +289,24 @@ function TodoRow({
       )}
       <Pressable style={styles.rowMain} onPress={onOpen}>
         <Text style={[styles.rowTitle, isDone && styles.rowTitleDone]} numberOfLines={2}>
-          {page.title}
+          {pageTitle}
         </Text>
-        <Text style={styles.rowAbstract} numberOfLines={2}>
-          {isActive
-            ? activeTask?.status === 'running'
+        {isActive ? (
+          <Text style={styles.rowAbstract} numberOfLines={1}>
+            {activeTask?.status === 'running'
               ? 'Researching now · usually 1–3 min'
-              : 'Queued for research'
-            : page.agent_abstract}
-        </Text>
+              : 'Queued for research'}
+          </Text>
+        ) : todo.status === 'in-progress' ? (
+          <Text style={styles.rowStatus}>In progress</Text>
+        ) : null}
       </Pressable>
       <Ionicons name="chevron-forward" size={18} color="#3f5a83" />
     </View>
   );
 }
 
-// ── Detail ──────────────────────────────────────────────────────────────────
+// ── Detail ─────────────────────────────────────────────────────────────────
 
 function DetailScreen({
   navigation,
@@ -261,7 +329,7 @@ function DetailScreen({
   return <WikiPageDetail page={page} onBack={() => navigation.goBack()} />;
 }
 
-// ── Create ──────────────────────────────────────────────────────────────────
+// ── Create ─────────────────────────────────────────────────────────────────
 
 function CreateScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 'Create'>) {
   const [title, setTitle] = useState('');
@@ -297,15 +365,15 @@ function CreateScreen({ navigation }: NativeStackScreenProps<TodosStackParamList
           onChangeText={setTitle}
           placeholder="What needs doing?"
           placeholderTextColor="#3f5a83"
-          style={styles.titleInput}
+          style={styles.createInput}
           autoFocus
         />
         <TextInput
           value={content}
           onChangeText={setContent}
-          placeholder="Notes (optional)…"
+          placeholder="Notes (optional)"
           placeholderTextColor="#3f5a83"
-          style={styles.contentInput}
+          style={[styles.createInput, styles.createNotes]}
           multiline
         />
         {error && (
@@ -317,14 +385,14 @@ function CreateScreen({ navigation }: NativeStackScreenProps<TodosStackParamList
           onPress={submit}
           disabled={submitting || title.trim().length === 0}
           style={[
-            styles.submitButton,
+            styles.createButton,
             (submitting || title.trim().length === 0) && { opacity: 0.4 },
           ]}
         >
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.submitButtonLabel}>Add todo</Text>
+            <Text style={styles.createButtonLabel}>Add todo</Text>
           )}
         </Pressable>
       </View>
@@ -336,16 +404,15 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: '#7aa3d4' },
-  list: { paddingVertical: 4 },
   empty: { padding: 24, alignItems: 'center' },
-  emptyText: { color: '#7aa3d4', fontSize: 14, textAlign: 'center' },
+  emptyText: { color: '#7aa3d4', fontSize: 14, textAlign: 'center', lineHeight: 20 },
 
   tabBar: {
     flexDirection: 'row',
     paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 4,
-    gap: 6,
+    gap: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#1f2f4d',
   },
@@ -353,24 +420,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
   tabActive: { backgroundColor: '#11203a' },
   tabLabel: { color: '#7aa3d4', fontSize: 13, fontWeight: '500' },
-  tabLabelActive: { color: '#e8f1ff' },
+  tabLabelActive: { color: '#e8f1ff', fontWeight: '600' },
   tabCount: {
-    color: '#3f5a83',
+    color: '#7aa3d4',
     fontSize: 11,
     fontWeight: '600',
+    backgroundColor: '#0e1c30',
     paddingHorizontal: 6,
+    paddingVertical: 1,
     borderRadius: 8,
-    backgroundColor: '#0a1628',
     overflow: 'hidden',
+    minWidth: 18,
+    textAlign: 'center',
   },
-  tabCountActive: { color: '#7aa3d4' },
+  tabCountActive: { color: '#e8f1ff', backgroundColor: '#1f3a66' },
 
   createRow: {
     flexDirection: 'row',
@@ -383,6 +452,35 @@ const styles = StyleSheet.create({
   },
   createRowLabel: { color: '#4d8fdb', fontSize: 15, fontWeight: '500' },
 
+  list: { paddingVertical: 4 },
+
+  lane: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#1f2f4d',
+    paddingBottom: 4,
+  },
+  laneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  laneTitle: {
+    flex: 1,
+    color: '#e8f1ff',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  laneCount: {
+    color: '#7aa3d4',
+    fontSize: 12,
+    fontWeight: '500',
+    minWidth: 18,
+    textAlign: 'right',
+  },
+
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -391,52 +489,51 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   rowActive: { backgroundColor: '#0e1c30' },
-  activeSpinner: { width: 28, alignItems: 'center', justifyContent: 'center' },
-  checkbox: { padding: 4 },
+  checkbox: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
   checkboxInner: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     borderWidth: 1.5,
-    borderColor: '#3f5a83',
+    borderColor: '#4d8fdb',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxInnerDone: { backgroundColor: '#4d8fdb', borderColor: '#4d8fdb' },
-  rowMain: { flex: 1, gap: 4 },
-  rowTitle: { color: '#e8f1ff', fontSize: 15, fontWeight: '500' },
+  checkboxInnerDone: {
+    backgroundColor: '#4d8fdb',
+    borderColor: '#4d8fdb',
+  },
+  activeSpinner: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowMain: { flex: 1, gap: 2 },
+  rowTitle: { color: '#e8f1ff', fontSize: 15 },
   rowTitleDone: { color: '#7aa3d4', textDecorationLine: 'line-through' },
-  rowAbstract: { color: '#7aa3d4', fontSize: 12, lineHeight: 16 },
+  rowAbstract: { color: '#7aa3d4', fontSize: 12 },
+  rowStatus: { color: '#4d8fdb', fontSize: 11, fontWeight: '600' },
 
   createBody: { padding: 16, gap: 12, flex: 1 },
   createTitle: { color: '#e8f1ff', fontSize: 18, fontWeight: '600' },
-  titleInput: {
+  createInput: {
     color: '#e8f1ff',
-    fontSize: 17,
-    fontWeight: '500',
+    fontSize: 15,
     backgroundColor: '#11203a',
     borderRadius: 8,
     padding: 12,
   },
-  contentInput: {
-    color: '#cbd9eb',
-    fontSize: 14,
-    lineHeight: 20,
-    backgroundColor: '#11203a',
-    borderRadius: 8,
-    padding: 12,
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  submitButton: {
+  createNotes: { minHeight: 100, textAlignVertical: 'top' },
+  createButton: {
     alignSelf: 'flex-start',
     backgroundColor: '#4d8fdb',
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 6,
-    minWidth: 120,
+    minWidth: 140,
     alignItems: 'center',
   },
-  submitButtonLabel: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  createButtonLabel: { color: '#fff', fontSize: 14, fontWeight: '600' },
   errorText: { color: '#f87171', fontSize: 12 },
 });

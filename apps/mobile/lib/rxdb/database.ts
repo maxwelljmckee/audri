@@ -13,6 +13,7 @@ import {
   type AgentTaskDoc,
   type CallTranscriptDoc,
   type ResearchOutputDoc,
+  type TodoDoc,
   type WikiPageDoc,
   type WikiSectionDoc,
   type WikiSectionTranscriptDoc,
@@ -20,6 +21,7 @@ import {
   agentTaskSchema,
   callTranscriptSchema,
   researchOutputSchema,
+  todoSchema,
   wikiPageSchema,
   wikiSectionSchema,
   wikiSectionTranscriptSchema,
@@ -41,6 +43,7 @@ export type AgentTaskCollection = RxCollection<AgentTaskDoc>;
 export type AgentOpenItemCollection = RxCollection<AgentOpenItemDoc>;
 export type CallTranscriptCollection = RxCollection<CallTranscriptDoc>;
 export type WikiSectionTranscriptCollection = RxCollection<WikiSectionTranscriptDoc>;
+export type TodoCollection = RxCollection<TodoDoc>;
 
 export interface AudriCollections {
   wiki_pages: WikiPageCollection;
@@ -50,6 +53,7 @@ export interface AudriCollections {
   agent_open_items: AgentOpenItemCollection;
   call_transcripts: CallTranscriptCollection;
   wiki_section_transcripts: WikiSectionTranscriptCollection;
+  todos: TodoCollection;
 }
 
 export type AudriDatabase = RxDatabase<AudriCollections>;
@@ -72,6 +76,7 @@ export function getDatabase(): Promise<AudriDatabase> {
         agent_open_items: { schema: agentOpenItemSchema },
         call_transcripts: { schema: callTranscriptSchema },
         wiki_section_transcripts: { schema: wikiSectionTranscriptSchema },
+        todos: { schema: todoSchema },
       });
       return db;
     })();

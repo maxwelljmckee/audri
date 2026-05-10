@@ -96,15 +96,19 @@ export const BRAINDUMP_PAGES = [
   },
 ] as const;
 
-// User-scope todo pages (5). Root + 4 status buckets, all `type='todo'`.
-// Slugs are path-style per specs/onboarding.md so server/worker code can
-// look up buckets by canonical slug (e.g. `todos/todo`, `todos/done`).
+// User-scope todo root (1). v0.2.1 sidecar refactor (2026-05-10): status
+// buckets dropped — status now lives on the `todos` sidecar table column.
+// All individual todo wiki pages nest as direct children of this root
+// (flat). The wiki layer is a creation/triggering shell; the Todos plugin
+// reads from the sidecar for status + project association rendering.
 export const TODO_PAGES = [
-  { slug: 'todos', title: 'Todos', agentAbstract: "The user's todos.", isRoot: true },
-  { slug: 'todos/todo', title: 'To do', agentAbstract: 'Todos that are pending.' },
-  { slug: 'todos/in-progress', title: 'In progress', agentAbstract: 'Todos that are in-progress.' },
-  { slug: 'todos/done', title: 'Done', agentAbstract: 'Todos that are done.' },
-  { slug: 'todos/archived', title: 'Archived', agentAbstract: 'Todos that are archived.' },
+  {
+    slug: 'todos',
+    title: 'Todos',
+    agentAbstract:
+      "The user's todos. Action items the user wants done. Each individual todo lives as a direct child here; status + project association live on the `todos` sidecar table (not the wiki hierarchy). Hidden from the Notes UI — surfaced via the dedicated Todos plugin.",
+    isRoot: true,
+  },
 ] as const;
 
 // User-scope project bucket (1). Root only — flat at MVP. Individual project

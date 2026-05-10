@@ -77,6 +77,18 @@ export const ingestionStatusEnum = pgEnum('ingestion_status', [
   'failed',
 ]);
 
+// Todo lifecycle status. v0.2.1 sidecar refactor — status moved off the
+// wiki hierarchy (no more `todos/todo` / `todos/in-progress` / etc. bucket
+// pages) and into a column on the `todos` sidecar table. Lifecycle owned
+// entirely by the sidecar from now on; wiki-side todos are creation-only
+// shells.
+export const todoStatusEnum = pgEnum('todo_status', [
+  'todo',
+  'in-progress',
+  'done',
+  'archived',
+]);
+
 // Claim model (v0.2 substrate). `status` is the contestability of a claim
 // against the wiki it lives in: 'supported' = backed by current evidence;
 // 'contested' = newer evidence conflicts; 'rejected' = explicitly rebutted

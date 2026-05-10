@@ -1,11 +1,15 @@
 // Research output commit — single transaction. Writes the artifact +
 // citations + ancestor sources, **applies the vault-first delta to the
 // user's wiki** (creates new pages + appends new sections), marks the
-// agent_task succeeded, reparents the originating todo wiki page →
-// todos/done, emits usage_event + wiki_log.
+// agent_task succeeded, **flips the originating todo's sidecar status to
+// 'done'**, emits usage_event + wiki_log.
 //
-// v0.2 added the delta-application step (item #8). Same transaction as the
-// rest of the commit — if delta application fails, nothing commits.
+// v0.2 added the delta-application step (item #8).
+// v0.2.1 swapped the todo-reparent-to-`todos/done` step for a sidecar
+// status update — status lives on the `todos` table column now, not the
+// wiki hierarchy.
+//
+// All in one transaction — if delta application fails, nothing commits.
 //
 // Per specs/research-task-prompt.md.
 
@@ -19,6 +23,7 @@ import {
   researchOutputSources,
   researchOutputs,
   sql,
+  todos,
   usageEvents,
   wikiLog,
   wikiPages,
@@ -103,31 +108,29 @@ export async function commitResearchOutput(args: CommitArgs): Promise<CommitResu
       })
       .where(eq(agentTasks.id, agentTaskId));
 
-    // 4. Reparent the originating todo page → todos/done, AND replace its
-    //    placeholder title with the LLM-generated abbreviated title (kept
-    //    user-friendly and consistent with the artifact's title).
-    const [doneBucket] = await tx
-      .select({ id: wikiPages.id })
-      .from(wikiPages)
-      .where(
-        and(
-          eq(wikiPages.userId, userId),
-          eq(wikiPages.scope, 'user'),
-          eq(wikiPages.slug, 'todos/done'),
-          isNull(wikiPages.tombstonedAt),
-        ),
-      )
-      .limit(1);
+    // 4. Replace the originating todo's placeholder title with the LLM-
+    //    generated abbreviated title (kept user-friendly + consistent with
+    //    the artifact's title), AND flip the sidecar status → 'done'.
+    //    v0.2.1: status used to live on parent_page_id (todos/done bucket);
+    //    now it's a column on the `todos` sidecar.
     const todoTitle = `Research: ${output.title}`;
     await tx
       .update(wikiPages)
       .set({
         title: todoTitle,
         agentAbstract: `Research: ${output.title}`,
-        ...(doneBucket ? { parentPageId: doneBucket.id } : {}),
         updatedAt: new Date(),
       })
       .where(eq(wikiPages.id, todoPageId));
+
+    await tx
+      .update(todos)
+      .set({
+        status: 'done',
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(todos.pageId, todoPageId));
 
     // 5. Usage event.
     await tx.insert(usageEvents).values({

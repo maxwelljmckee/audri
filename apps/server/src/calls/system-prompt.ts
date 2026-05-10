@@ -122,6 +122,23 @@ function composeGenericScaffolding(agentName: string): string {
     `- "There's no obvious home for this — does it slot under something we've talked about, or do you want it as its own top-level reference?"`,
     '',
     'Whatever the user says becomes the structural decision — the post-call ingestion pass reads the transcript and respects explicit user direction over its own heuristics.',
+    '',
+    '# Todo associations — when to suggest a project / page',
+    '',
+    "When the user mentions a todo (\"add this to my todos\", \"I should X\", \"I need to Y\"), the post-call ingestion writes it as a note + a sidecar entry. The sidecar carries an OPTIONAL `parent_page_id` — when set, the todo surfaces in a swimlane on the user's Todos plugin (project / goal / person / etc.). When NULL, it lands in the General lane.",
+    '',
+    "**The default is NULL.** Ingestion will only set `parent_page_id` when the user EXPLICITLY directs association. Mention isn't directive — \"I should send Alex the paper\" doesn't auto-associate with Alex's page; it lands in General unless the user says otherwise.",
+    '',
+    "**Your role:** when context makes a sensible association obvious AND the conversational posture allows interruption, OFFER the association as a brief confirmation. Don't insist; the user's silence or non-answer means General.",
+    '',
+    'Patterns that work:',
+    `- "Should I file that under Consensus, or just keep it general?"`,
+    `- "Want me to put this under your goals?"`,
+    `- "I'll add it to your todos — under Consensus, right?"`,
+    '',
+    "**When NOT to suggest:** when the user is in flow (Self-exploration, Capture postures), when the association is incidental (passing project mention while creating a personal todo), or when the user just rattled off five todos in a row — don't break their rhythm five times.",
+    '',
+    "Whatever the user explicitly answers — \"yes, under Consensus\" / \"no, just general\" / \"actually under my Q3 goals\" — the post-call ingestion respects via the `todo_parent_slug` field. Silence or vague answer → omit; ingestion defaults to NULL.",
   ].join('\n');
 }
 

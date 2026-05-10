@@ -206,6 +206,48 @@ export const agentTaskSchema: RxJsonSchema<AgentTaskDoc> = {
   indexes: ['kind', 'status', ['kind', 'status', 'updated_at']],
 };
 
+// todos sidecar — owns todo lifecycle (status, parent_page_id association,
+// due, completed_at). Mobile reads to render swimlane Todos UX; mobile
+// updates status (check-off / archive) and parent_page_id (re-associate
+// across swimlanes). Inserts go through ingestion + manual-create paths
+// server-side. v0.2.1.
+export interface TodoDoc {
+  id: string;
+  user_id: string;
+  page_id: string;
+  parent_page_id: string | null;
+  status: 'todo' | 'in-progress' | 'done' | 'archived';
+  due_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const todoSchema: RxJsonSchema<TodoDoc> = {
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 36 },
+    user_id: { type: 'string', maxLength: 36 },
+    page_id: { type: 'string', maxLength: 36 },
+    parent_page_id: { type: ['string', 'null'] },
+    status: {
+      type: 'string',
+      enum: ['todo', 'in-progress', 'done', 'archived'],
+      maxLength: 16,
+    },
+    due_date: { type: ['string', 'null'] },
+    completed_at: { type: ['string', 'null'] },
+    created_at: { type: 'string', maxLength: 32 },
+    updated_at: { type: 'string', maxLength: 32 },
+  },
+  required: ['id', 'user_id', 'page_id', 'status', 'created_at', 'updated_at'],
+  // Read patterns: per-status grouping within a parent_page_id swimlane;
+  // sidecar lookup by page_id (1:1 with wiki page).
+  indexes: ['page_id', 'status', ['status', 'updated_at']],
+};
+
 // agent_open_items — per-persona queue of agent-initiated content (questions
 // + info-shares) that the call-side prompt composer reads to drive proactive
 // behavior. Mobile reads via the Agents tile; mobile pushes status updates
