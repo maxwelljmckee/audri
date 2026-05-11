@@ -1,0 +1,24 @@
+-- Hotfix 2026-05-11: `/calls/:sessionId/end` was returning 500 in prod with
+-- the Postgres error "cannot update table 'call_transcripts' because of
+-- insufficient column information" (truncated in Sentry to just "cannot
+-- update table 'call_transcripts'"). See Sentry issue AUDRI-MOBILE-5.
+--
+-- Root cause introduced by migration 0016: that migration paired a
+-- column-filtered Supabase Realtime publication on call_transcripts (the
+-- column list deliberately excludes tool_calls, pro_fan_out_response,
+-- dropped_turn_ids, _deleted) with `REPLICA IDENTITY FULL`. Postgres 15+
+-- requires the replica-identity columns to be a subset of the publication's
+-- column list whenever the publication publishes UPDATE/DELETE. FULL makes
+-- every column part of the replica identity → the column list would have
+-- to include every column, but it doesn't → every UPDATE on the table is
+-- rejected.
+--
+-- Fix: switch back to REPLICA IDENTITY DEFAULT (primary key `id`, which IS
+-- in the column list). Realtime UPDATE events continue to flow; rows are
+-- identified by PK rather than full-row contents, which is the standard
+-- and cheaper mode anyway.
+--
+-- wiki_section_transcripts keeps REPLICA IDENTITY FULL: its publication
+-- has no column list, so the column-list-subset constraint doesn't apply.
+
+ALTER TABLE "call_transcripts" REPLICA IDENTITY DEFAULT;

@@ -1,6 +1,6 @@
 # SPEC — Agent-scope ingestion pass
 
-Status: **draft** — Chunks 1 + 2 both locked. Prompt-text drafting + worked examples + evals remain.
+Status: **draft** — Chunks 1 + 2 both locked. Prompt-text drafting + worked examples + evals remain. **v0.2 extension landed 2026-05-11:** this pass now ALSO maintains the `agent_open_items` queue (producer + resolver). See "Open-items queue maintenance" below.
 
 The agent-scope ingestion pass writes observational notes from a call transcript into the **active agent's private wiki** (scope='agent', agent_id={active_agent}). It runs in parallel with the user-scope Pro fan-out (`specs/fan-out-prompt.md`), shares the same `ingestion-${user_id}` Graphile queue for per-user serialization, and is strictly isolated from user-scope content. Each agent persona accumulates its own private observations of the user; cross-agent reads are disallowed.
 
@@ -264,6 +264,71 @@ Soft guidance in prompt:
 Empty output is valid (short or pure-action calls). Server commits no rows; logs the empty-output event. No hard cap — soft guidance shapes the default; agent's judgment governs the actual count.
 
 ---
+
+## Open-items queue maintenance (v0.2, added 2026-05-11)
+
+The same Flash pass also drives the `agent_open_items` queue — both producing new candidates and resolving items the persona had at call-start. Folded into this pass rather than user-scope fan-out for three reasons: (a) the queue is agent-scope state (per-persona, partitioned by `agent_id`); (b) Flash is cheap and well-suited to the resolver's matching task; (c) keeps all queue-related state — observation writes, new items, resolutions — in one transaction with the agent-scope wiki writes.
+
+### Input addition
+
+```ts
+pending_items: Array<{
+  id: string                         // uuid — must echo back in resolutions
+  kind: 'question' | 'info_share'
+  topic: string                      // dedup label
+  body_text: string
+  priority: number                   // 0-10
+  created_at: string                 // ISO timestamp
+}>
+```
+
+Capped at 20 in the fetch — generous compared to the composer's K=5 to ensure the resolver can see anything that might have surfaced.
+
+### Output additions
+
+```ts
+resolutions: Array<{
+  id: string                                // MUST appear in pending_items
+  status: 'surfaced' | 'answered' | 'engaged' | 'dismissed'
+  rationale?: string                        // optional audit hint
+}>
+new_items: Array<{
+  kind: 'question' | 'info_share'
+  topic: string                              // 3-6 word label for dedup + UI
+  body_text: string                          // first-person, conversational
+  priority?: number                          // 0-10, default 5
+}>
+```
+
+### Resolution semantics
+
+- `answered` (question only) — user gave a substantive answer; gap filled. Terminal.
+- `surfaced` — item was raised by the persona, regardless of user engagement. Non-terminal; `surfaced_at` stamped (COALESCE so the first surface wins).
+- `engaged` (info_share only) — raised AND user engaged substantively. Non-terminal; treats the info-share as having landed.
+- `dismissed` — item is no longer worth holding (user opted out, item went stale, framing was wrong). Terminal.
+- Items NOT in `resolutions` stay pending. Items the model can't see (not in input) cannot be resolved.
+- `expired` is NOT model-emitted. Hygiene sweep owns it.
+
+### Generation rules (new items)
+
+- Specific + anchored to call evidence — a good item names a concrete entity, area, or thread; "what's their relationship to their dad like" beats "ask about family."
+- Useful for future conversations, not curiosity for curiosity's sake.
+- Dedup against pending via topic.
+- Volume guidance: 0–2 typical / 3–4 rich call / >5 suspicious. Matches observation cadence.
+- Priority defaults to 5; 7–8 for time-sensitive, 3 for nice-to-have.
+
+### Commit invariants
+
+- `resolutions[].id` validated against the call-start pending-id set; unknown ids are dropped with a warning (the model cannot fabricate ids).
+- Status validated against the explicit allowlist.
+- New items have kind + topic + body_text required; priority clamped to 0–10.
+- All writes execute in the same transaction as the wiki writes; partial failures roll back together.
+
+### What's NOT in this pass
+
+- **Item surface mechanics on the live agent side** — that's the call-side prompt composer (`apps/server/src/calls/preload.ts`), which reads `pending` items at call start. Separate concern.
+- **Saturation budgets beyond per-call K** — weekly-budget-per-persona deferred as iteration.
+- **Hygiene / expiry** — `apps/worker/src/tasks/hygiene-sweep.ts` runs daily and expires stale `pending` items.
 
 ## Related decisions
 

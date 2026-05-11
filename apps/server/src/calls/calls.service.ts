@@ -37,7 +37,9 @@ export class CallsService {
     // Generic calls preload profile + agent notes + recent activity. Onboarding
     // intentionally starts cold — the user hasn't given the model anything yet.
     const preloadBlock =
-      callType === 'generic' ? renderPreloadBlock(await loadGenericCallContext(userId)) : '';
+      callType === 'generic'
+        ? renderPreloadBlock(await loadGenericCallContext(userId, agent.id))
+        : '';
 
     const systemInstruction = composeSystemPrompt({
       agentName: agent.name,

@@ -11,7 +11,7 @@
 // they reflect what was actually extracted and considered worth remembering.
 
 import { and, db, desc, eq, inArray, isNotNull, isNull, sql } from '@audri/shared/db';
-import { callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
+import { agentOpenItems, callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
 
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
@@ -20,6 +20,11 @@ const INCOMPLETE_CALL_LOOKBACK_HOURS = 24;
 // Keeps token budget bounded as the user's wiki grows; deeper exploration
 // happens via Flash candidate retrieval at ingestion time, not at call start.
 const STRUCTURE_CHILDREN_PER_PARENT_LIMIT = 12;
+// Per-call cap on agent_open_items injected into the prompt. Composer reads
+// top-K pending for this persona, ranked by priority then recency. Saturation
+// guard — bumped/tuned once we have field signal on delivery feel. Stage 2
+// (manual seed) keeps the list short on purpose.
+const OPEN_ITEMS_PER_CALL_LIMIT = 5;
 
 interface PageWithSections {
   slug: string;
@@ -46,6 +51,18 @@ interface IncompleteCall {
   touchedSlugs: string[];
 }
 
+// One row from agent_open_items, ranked + capped for prompt injection.
+// `kind` drives delivery framing (curiosity vs. proactive enrichment); see
+// renderOpenItems for prompt-side guidance.
+interface OpenItem {
+  id: string;
+  kind: 'question' | 'info_share';
+  topic: string;
+  bodyText: string;
+  priority: number;
+  createdAt: Date;
+}
+
 // Structural snapshot of the wiki — top-level pages + their immediate children
 // (depth 2). Powers the Live Agent's ability to reason about "where does this
 // new thing fit" — see specs/conversational-routing.md (Autonomy principle
@@ -67,18 +84,24 @@ interface PreloadData {
   recentPages: RecentPage[];
   wikiStructure: WikiStructureNode[];
   incompleteCall: IncompleteCall | null;
+  openItems: OpenItem[];
 }
 
-export async function loadGenericCallContext(userId: string): Promise<PreloadData> {
-  const [profile, agentNotes, recentPages, wikiStructure, incompleteCall] = await Promise.all([
-    fetchPagesByPrefix(userId, 'user', 'profile'),
-    fetchPagesByPrefix(userId, 'agent', 'assistant'),
-    fetchRecentPages(userId),
-    fetchWikiStructure(userId),
-    fetchMostRecentIncompleteCall(userId),
-  ]);
+export async function loadGenericCallContext(
+  userId: string,
+  agentId: string,
+): Promise<PreloadData> {
+  const [profile, agentNotes, recentPages, wikiStructure, incompleteCall, openItems] =
+    await Promise.all([
+      fetchPagesByPrefix(userId, 'user', 'profile'),
+      fetchPagesByPrefix(userId, 'agent', 'assistant'),
+      fetchRecentPages(userId),
+      fetchWikiStructure(userId),
+      fetchMostRecentIncompleteCall(userId),
+      fetchPendingOpenItems(userId, agentId),
+    ]);
 
-  return { profile, agentNotes, recentPages, wikiStructure, incompleteCall };
+  return { profile, agentNotes, recentPages, wikiStructure, incompleteCall, openItems };
 }
 
 async function fetchPagesByPrefix(
@@ -298,6 +321,36 @@ async function fetchMostRecentIncompleteCall(userId: string): Promise<Incomplete
   };
 }
 
+// Pull pending agent_open_items for this (user, agent) pair, ranked by
+// priority desc, createdAt desc. Composer-only read — does NOT bump
+// `surfaced_at`; that's the post-call resolution pass's job (v0.2 item #6).
+// Keeping the write separate means items stay surfacable across multiple
+// calls until the agent actually delivers them, which is the right behavior
+// for Stage-2 manual-seed testing.
+async function fetchPendingOpenItems(userId: string, agentId: string): Promise<OpenItem[]> {
+  const rows = await db
+    .select({
+      id: agentOpenItems.id,
+      kind: agentOpenItems.kind,
+      topic: agentOpenItems.topic,
+      bodyText: agentOpenItems.bodyText,
+      priority: agentOpenItems.priority,
+      createdAt: agentOpenItems.createdAt,
+    })
+    .from(agentOpenItems)
+    .where(
+      and(
+        eq(agentOpenItems.userId, userId),
+        eq(agentOpenItems.agentId, agentId),
+        eq(agentOpenItems.status, 'pending'),
+      ),
+    )
+    .orderBy(desc(agentOpenItems.priority), desc(agentOpenItems.createdAt))
+    .limit(OPEN_ITEMS_PER_CALL_LIMIT);
+
+  return rows as OpenItem[];
+}
+
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : `${s.slice(0, n).trimEnd()}…`;
 }
@@ -312,6 +365,7 @@ export function renderPreloadBlock(data: PreloadData): string {
     data.agentNotes.length === 0 &&
     data.recentPages.length === 0 &&
     data.wikiStructure.length === 0 &&
+    data.openItems.length === 0 &&
     !data.incompleteCall
   ) {
     return '';
@@ -347,6 +401,14 @@ export function renderPreloadBlock(data: PreloadData): string {
 
   if (data.recentPages.length > 0) {
     parts.push('', '## Recently active notes', renderRecentPages(data.recentPages));
+  }
+
+  if (data.openItems.length > 0) {
+    parts.push(
+      '',
+      '## Open items you’ve been holding for this user',
+      renderOpenItems(data.openItems),
+    );
   }
 
   parts.push(
@@ -402,6 +464,44 @@ function renderRecentPages(pages: RecentPage[]): string {
   return pages
     .map((p) => `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`)
     .join('\n');
+}
+
+// Render the open-items queue with delivery guidance. Two kinds need very
+// different framing: `question` items are gap-fillers the persona has been
+// quietly wondering about (deliver as light curiosity, never an interrogation),
+// `info_share` items are proactive enrichments the persona wants to introduce
+// (deliver only when contextually earned, never as a non-sequitur). The body
+// of each item is the candidate content; the persona handles natural-language
+// framing on its own.
+function renderOpenItems(items: OpenItem[]): string {
+  const questions = items.filter((i) => i.kind === 'question');
+  const infoShares = items.filter((i) => i.kind === 'info_share');
+
+  const parts: string[] = [
+    'These are items you (this persona specifically) have been holding to raise with the user. They were emitted by your own reflection between calls — they represent your curiosity and what you’d like to share, not the user’s pending work.',
+    '',
+    '**Delivery posture:**',
+    '- **Questions** are gentle curiosity, not an interview. Surface ONE per call at most, and only when a natural opening appears — never break flow to ask. If no opening surfaces, drop it; you’ll see it again next call.',
+    '- **Info-shares** must be contextually earned. Only weave one in when the conversation is already in its neighborhood. A non-sequitur info-share is worse than not delivering it.',
+    '- Never list these or announce them ("I had a few things to ask..."). They are private prompts to YOU, delivered only as the moment allows.',
+    "- Don't try to clear the queue. Most calls will surface zero or one of these. That's fine — the user's conversation comes first.",
+  ];
+
+  if (questions.length > 0) {
+    parts.push('', '### Questions you’d like to ask');
+    for (const q of questions) {
+      parts.push(`- *${q.topic}* — ${q.bodyText}`);
+    }
+  }
+
+  if (infoShares.length > 0) {
+    parts.push('', '### Things you’d like to share');
+    for (const s of infoShares) {
+      parts.push(`- *${s.topic}* — ${s.bodyText}`);
+    }
+  }
+
+  return parts.join('\n');
 }
 
 function renderWikiStructure(nodes: WikiStructureNode[]): string {

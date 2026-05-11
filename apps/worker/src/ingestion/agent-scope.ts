@@ -15,11 +15,13 @@
 //   - Soft volume guidance — typical calls produce 0-2 writes, max 5.
 
 import {
+  agentOpenItems,
   agents,
   and,
   asc,
   callTranscripts,
   db,
+  desc,
   eq,
   inArray,
   isNull,
@@ -75,10 +77,43 @@ interface AgentScopeSkipped {
   reason: string;
 }
 
+// One per pending item at call-start. The persona decides what to do with it
+// based on whether/how it surfaced in the transcript. Terminal states
+// (answered/dismissed) stamp `resolved_at`; intermediate (surfaced/engaged)
+// stamp `surfaced_at` if not already set.
+interface OpenItemResolution {
+  id: string;
+  status: 'surfaced' | 'answered' | 'engaged' | 'dismissed';
+  rationale?: string;
+}
+
+// New candidate items the persona wants to hold for future calls. Inserted
+// into agent_open_items with status='pending'. Default priority 5.
+interface OpenItemCandidate {
+  kind: 'question' | 'info_share';
+  topic: string;
+  body_text: string;
+  priority?: number;
+}
+
 interface AgentScopeResult {
   creates: AgentScopeCreate[];
   updates: AgentScopeUpdate[];
   skipped: AgentScopeSkipped[];
+  resolutions: OpenItemResolution[];
+  new_items: OpenItemCandidate[];
+}
+
+// Pending agent_open_items at call-start. Passed into Flash so the persona
+// can (a) check whether any surfaced in the transcript (resolution) and (b)
+// avoid proposing duplicate new items (dedup via `topic`).
+interface PendingItemInput {
+  id: string;
+  kind: 'question' | 'info_share';
+  topic: string;
+  body_text: string;
+  priority: number;
+  created_at: string;
 }
 
 const SYSTEM_PROMPT = `You are an AI assistant maintaining your OWN private observation wiki about a user you've spoken with. The wiki is visible only to you — not to the user, not to other agents.
@@ -130,6 +165,38 @@ For deeper patterns within a sub-page (e.g., a recurring theme of career-uncerta
 
 Each observation lands on exactly ONE page — no multi-target writes.
 
+# The open-items queue — questions and info-shares you've been holding
+
+You also maintain a per-call queue of OPEN ITEMS — items you (this persona) want to raise with the user. Two kinds:
+
+- **\`question\`** — a gap-filling question. You noticed missing context (something the user mentioned in passing but never elaborated; an area of life you don't yet have any read on; an inconsistency you'd like to resolve). Holds until a future call surfaces it.
+- **\`info_share\`** — a proactive enrichment. Something you'd like to introduce to the user — a relevant fact, a connection back to something they cared about, an observation about their notes worth surfacing.
+
+Each call you do TWO things with this queue:
+
+## 1. Resolve pending items
+
+You'll receive a list of pending items in input. For each, decide whether the transcript shows it was addressed, and emit a resolution. Possible statuses:
+
+- **\`answered\`** (question only) — the user gave a substantive answer. The question's gap is filled.
+- **\`surfaced\`** (info_share OR question delivered without a clear answer) — you (or this persona's earlier turn) raised the item. Mark surfaced even if the user didn't engage; the item is no longer waiting to be delivered.
+- **\`engaged\`** (info_share only) — you raised it AND the user engaged substantively (asked follow-up, expanded, reacted). The info-share landed.
+- **\`dismissed\`** — the item is no longer worth holding. Reasons: the user explicitly opted out, the item is now stale (resolved by other context), the question's framing was wrong. Use sparingly.
+
+If a pending item DIDN'T surface in the transcript, OMIT it from \`resolutions\` — it stays pending and will be considered for future calls.
+
+## 2. Propose new candidate items
+
+Reflecting on this call, propose new candidates for the queue. Generation discipline:
+
+- **Specific + anchored.** A good question or info-share names a concrete entity, area, or thread. "What's their relationship to their dad like?" beats "ask about family." Anchor to what the user actually said.
+- **Useful for future conversations.** The item should make a FUTURE call go better — not just record curiosity for its own sake.
+- **Dedup against pending.** If a pending item already covers the same topic, don't propose a duplicate. (Topic field aids matching.)
+- **Don't drain the call dry.** Most calls produce 0–2 new items. A rich call may produce 3–4. More than 5 is suspicious.
+- **\`priority\` 0–10.** Default 5. Bump higher (7–8) for time-sensitive items (something they're actively deciding about); lower (3) for nice-to-have curiosity.
+
+\`topic\` is a short label (3–6 words) — used for dedup + UI surface. \`body_text\` is the actual content the live agent will deliver: phrased naturally, as you'd want to hear yourself say it.
+
 # Output contract
 
 Return ONLY a single JSON object:
@@ -158,6 +225,12 @@ Return ONLY a single JSON object:
   ],
   "skipped": [
     {"reason": "<why>"}
+  ],
+  "resolutions": [
+    {"id": "<pending item uuid>", "status": "surfaced|answered|engaged|dismissed", "rationale": "<optional short note>"}
+  ],
+  "new_items": [
+    {"kind": "question|info_share", "topic": "<3-6 word label>", "body_text": "<the actual content>", "priority": 5}
   ]
 }
 
@@ -170,13 +243,15 @@ Return ONLY a single JSON object:
 - Never reference user-scope facts directly. Never reference other agents' observations.
 - Never emit user_id, agent_id, scope, page_id, section_id, or timestamps. Backend concerns.
 - The user CANNOT see this wiki. Write in whatever style best serves YOUR future recall — terse bullet notes, paragraphs, tagged shorthand. Voice-readability is irrelevant here.
+- Every \`resolutions[].id\` MUST appear in the input pending-items list. Never invent ids.
+- \`new_items[].body_text\` is what YOU would say — first-person, conversational. NOT a wiki note about the user.
 
 # Volume guidance
 
-Most calls produce **0-2 observation writes**. A long content-rich call may produce **3-5**. More than 5 is suspicious — you may be over-recording.
+Most calls produce **0-2 observation writes**. A long content-rich call may produce **3-5**. More than 5 is suspicious — you may be over-recording. New items follow the same shape — 0-2 typical, 3-4 for rich calls, more than 5 suspicious.
 
 Empty output is valid. If a call was short, low-substance, or purely action-oriented, return:
-{"creates": [], "updates": [], "skipped": [{"reason": "no substantive observations from this call"}]}`;
+{"creates": [], "updates": [], "skipped": [{"reason": "no substantive observations from this call"}], "resolutions": [], "new_items": []}`;
 
 interface AgentScopeInput {
   transcript: IngestionTranscriptTurn[];
@@ -187,6 +262,7 @@ interface AgentScopeInput {
   };
   userProfileBrief: { name?: string };
   callMetadata: { started_at: string; ended_at: string; end_reason: string };
+  pendingItems: PendingItemInput[];
 }
 
 async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeResult> {
@@ -202,7 +278,12 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeRes
   // that they're for update references not for the model to invent.
   const wikiJson = JSON.stringify(input.agentWiki, null, 2);
 
-  const userMessage = `# Persona summary\n${input.agentWiki.persona_summary}\n\n# User profile brief\n${JSON.stringify(input.userProfileBrief)}\n\n# Call metadata\n${JSON.stringify(input.callMetadata)}\n\n# Your existing private wiki\n${wikiJson}\n\n# Transcript\n\n${flat}`;
+  const pendingItemsBlock =
+    input.pendingItems.length > 0
+      ? `# Pending open items at call-start\n${JSON.stringify(input.pendingItems, null, 2)}`
+      : '# Pending open items at call-start\n(none — queue is empty)';
+
+  const userMessage = `# Persona summary\n${input.agentWiki.persona_summary}\n\n# User profile brief\n${JSON.stringify(input.userProfileBrief)}\n\n# Call metadata\n${JSON.stringify(input.callMetadata)}\n\n${pendingItemsBlock}\n\n# Your existing private wiki\n${wikiJson}\n\n# Transcript\n\n${flat}`;
 
   const resp = await getGeminiClient().models.generateContent({
     model: FLASH_MODEL,
@@ -290,20 +371,87 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeRes
               required: ['reason'],
             },
           },
+          resolutions: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                status: { type: Type.STRING },
+                rationale: { type: Type.STRING, nullable: true },
+              },
+              required: ['id', 'status'],
+            },
+          },
+          new_items: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                kind: { type: Type.STRING },
+                topic: { type: Type.STRING },
+                body_text: { type: Type.STRING },
+                priority: { type: Type.INTEGER, nullable: true },
+              },
+              required: ['kind', 'topic', 'body_text'],
+            },
+          },
         },
-        required: ['creates', 'updates', 'skipped'],
+        required: ['creates', 'updates', 'skipped', 'resolutions', 'new_items'],
       },
       temperature: 0.4,
     },
   });
 
   const parsed = parseGeminiJson<Partial<AgentScopeResult>>(resp, 'agent-scope-flash');
-  if (!parsed) return { creates: [], updates: [], skipped: [] };
+  if (!parsed) return { creates: [], updates: [], skipped: [], resolutions: [], new_items: [] };
   return {
     creates: Array.isArray(parsed.creates) ? parsed.creates : [],
     updates: Array.isArray(parsed.updates) ? parsed.updates : [],
     skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
+    resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions : [],
+    new_items: Array.isArray(parsed.new_items) ? parsed.new_items : [],
   };
+}
+
+// Fetch pending agent_open_items for this (user, agent) pair, ranked by
+// priority desc then creation. Cap matches the prompt's volume guidance —
+// passing too many would (a) overflow the input budget for big queues and
+// (b) make the resolution task unwieldy. The Composer (preload.ts) uses its
+// own K=5 cap on the call-side; this Flash-side cap is generous to ensure
+// resolution can see anything that might have surfaced. Stage-2 manual seed
+// keeps things short anyway.
+const PENDING_ITEM_FETCH_LIMIT = 20;
+
+async function fetchPendingItems(userId: string, agentId: string): Promise<PendingItemInput[]> {
+  const rows = await db
+    .select({
+      id: agentOpenItems.id,
+      kind: agentOpenItems.kind,
+      topic: agentOpenItems.topic,
+      bodyText: agentOpenItems.bodyText,
+      priority: agentOpenItems.priority,
+      createdAt: agentOpenItems.createdAt,
+    })
+    .from(agentOpenItems)
+    .where(
+      and(
+        eq(agentOpenItems.userId, userId),
+        eq(agentOpenItems.agentId, agentId),
+        eq(agentOpenItems.status, 'pending'),
+      ),
+    )
+    .orderBy(desc(agentOpenItems.priority), desc(agentOpenItems.createdAt))
+    .limit(PENDING_ITEM_FETCH_LIMIT);
+
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    topic: r.topic,
+    body_text: r.bodyText,
+    priority: r.priority,
+    created_at: r.createdAt.toISOString(),
+  }));
 }
 
 async function fetchAgentWiki(agentId: string): Promise<{
@@ -380,14 +528,17 @@ async function commitAgentScope(opts: {
   transcriptId: string;
   result: AgentScopeResult;
   agentWiki: { pages: AgentWikiPage[] };
+  pendingItemIds: Set<string>;
 }): Promise<{
   pagesCreated: number;
   pagesUpdated: number;
   sectionsCreated: number;
   sectionsUpdated: number;
   sectionsTombstoned: number;
+  itemsResolved: number;
+  itemsCreated: number;
 }> {
-  const { userId, agentId, agentRootSlug, transcriptId, result, agentWiki } = opts;
+  const { userId, agentId, agentRootSlug, transcriptId, result, agentWiki, pendingItemIds } = opts;
   const pageBySlug = new Map(agentWiki.pages.map((p) => [p.slug, p]));
 
   const counts = {
@@ -396,6 +547,8 @@ async function commitAgentScope(opts: {
     sectionsCreated: 0,
     sectionsUpdated: 0,
     sectionsTombstoned: 0,
+    itemsResolved: 0,
+    itemsCreated: 0,
   };
 
   await db.transaction(async (tx) => {
@@ -565,11 +718,79 @@ async function commitAgentScope(opts: {
       }
     }
 
+    // ── OPEN-ITEM RESOLUTIONS ──
+    // Apply status transitions to pending items the persona judged surfaced/
+    // answered/engaged/dismissed in this transcript. Items NOT in the
+    // resolutions list stay pending. We validate each id against the
+    // call-start pending set to prevent the model from inventing ids or
+    // resolving items it wasn't shown.
+    const VALID_STATUSES = new Set(['surfaced', 'answered', 'engaged', 'dismissed']);
+    const TERMINAL_STATUSES = new Set(['answered', 'dismissed']);
+    const now = new Date();
+    for (const r of result.resolutions) {
+      if (!r.id || !r.status) continue;
+      if (!pendingItemIds.has(r.id)) {
+        logger.warn(
+          { id: r.id, validIds: [...pendingItemIds] },
+          'agent-scope commit: resolution id not in pending set, skipping',
+        );
+        continue;
+      }
+      if (!VALID_STATUSES.has(r.status)) {
+        logger.warn(
+          { id: r.id, status: r.status },
+          'agent-scope commit: invalid resolution status',
+        );
+        continue;
+      }
+      const isTerminal = TERMINAL_STATUSES.has(r.status);
+      await tx
+        .update(agentOpenItems)
+        .set({
+          status: r.status as 'surfaced' | 'answered' | 'engaged' | 'dismissed',
+          surfacedAt: sql`COALESCE(${agentOpenItems.surfacedAt}, ${now.toISOString()})`,
+          resolvedAt: isTerminal ? now : null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(agentOpenItems.id, r.id),
+            eq(agentOpenItems.userId, userId),
+            eq(agentOpenItems.agentId, agentId),
+          ),
+        );
+      counts.itemsResolved++;
+    }
+
+    // ── NEW OPEN-ITEM CANDIDATES ──
+    // Inserted as pending. Hygiene sweep handles staleness; composer reads
+    // the queue on subsequent calls.
+    const VALID_KINDS = new Set(['question', 'info_share']);
+    for (const item of result.new_items) {
+      if (!item.kind || !item.topic || !item.body_text) continue;
+      if (!VALID_KINDS.has(item.kind)) {
+        logger.warn({ kind: item.kind }, 'agent-scope commit: invalid new-item kind');
+        continue;
+      }
+      const priority = Math.max(0, Math.min(10, item.priority ?? 5));
+      await tx.insert(agentOpenItems).values({
+        userId,
+        agentId,
+        kind: item.kind,
+        topic: item.topic,
+        bodyText: item.body_text,
+        priority,
+        status: 'pending',
+      });
+      counts.itemsCreated++;
+    }
+
     // wiki_log entry — distinct kind so we can audit agent-scope writes.
     const summary =
       `Agent-scope ingestion: +${counts.pagesCreated} pages, ~${counts.pagesUpdated} pages, ` +
       `+${counts.sectionsCreated} sections, ~${counts.sectionsUpdated} sections, ` +
-      `−${counts.sectionsTombstoned} sections, ${result.skipped.length} skipped`;
+      `−${counts.sectionsTombstoned} sections, ${result.skipped.length} skipped, ` +
+      `+${counts.itemsCreated} open-items, ~${counts.itemsResolved} open-items resolved`;
 
     await tx.insert(wikiLog).values({
       userId,
@@ -601,8 +822,14 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
   sectionsUpdated: number;
   sectionsTombstoned: number;
   skippedCount: number;
+  itemsResolved: number;
+  itemsCreated: number;
 }> {
-  const agentWiki = await fetchAgentWiki(opts.agentId);
+  const [agentWiki, pendingItems] = await Promise.all([
+    fetchAgentWiki(opts.agentId),
+    fetchPendingItems(opts.userId, opts.agentId),
+  ]);
+
   if (agentWiki.pages.length === 0) {
     // No agent root yet (shouldn't happen for seeded users; safe early-out).
     return {
@@ -613,6 +840,8 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
       sectionsUpdated: 0,
       sectionsTombstoned: 0,
       skippedCount: 0,
+      itemsResolved: 0,
+      itemsCreated: 0,
     };
   }
 
@@ -621,6 +850,7 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
     agentWiki,
     userProfileBrief: opts.userFirstName ? { name: opts.userFirstName } : {},
     callMetadata: opts.callMetadata,
+    pendingItems,
   });
 
   const counts = await commitAgentScope({
@@ -630,6 +860,7 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
     transcriptId: opts.transcriptId,
     result,
     agentWiki,
+    pendingItemIds: new Set(pendingItems.map((p) => p.id)),
   });
 
   return {
