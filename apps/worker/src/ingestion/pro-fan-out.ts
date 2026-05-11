@@ -33,6 +33,11 @@ export interface SectionRef {
   title?: string;
   content?: string;
   snippets?: SnippetWrite[];
+  // External URLs that supported this section's content. Populated when the
+  // live agent grounded a claim against a web source via googleSearch
+  // during the call, and the claim got promoted into this section. Backend
+  // writes wiki_section_urls rows per URL. See "Source citations" rule.
+  cited_urls?: string[];
 }
 
 // On a `create`, every section is new.
@@ -40,6 +45,7 @@ export interface NewSectionWrite {
   title?: string;
   content: string;
   snippets: SnippetWrite[];
+  cited_urls?: string[];
 }
 
 export interface PageCreate {
@@ -447,6 +453,25 @@ Each target's section reflects the claim from THAT target's perspective:
 - On sarah-chen: "Started Consensus together with [the user]."
 - On consensus: "Joint project between [the user] and Sarah Chen."
 
+### Source citations (\`cited_urls\`)
+
+The input may include a \`grounding_sources\` block — web URLs (with titles + domains) that Audri retrieved via googleSearch during the call. Each section write can declare which of those URLs supported its content via \`cited_urls: ["uri1", "uri2", ...]\`.
+
+**When to cite:** include a URL in \`cited_urls\` if the section's content was meaningfully informed by the agent's web lookup of that source. The bar is "without this URL, this section's content wouldn't exist or would be materially different."
+
+**When NOT to cite:**
+- The user stated a fact that overlaps with a grounded URL's topic, but the user is the actual source (e.g. the user said where they live; a URL about that city was grounded, but the city-name claim came from the user). Don't cite.
+- The URL was grounded but only as ambient context to Audri's reply; nothing from it landed as a structured claim. Don't cite.
+- Sections that capture pure user disclosures (the user's own goals, relationships, projects). Don't cite — the user is the source.
+
+**Multiple URLs per section** are fine when several sources informed the same content.
+
+**Same URL across multiple sections** is fine — emit on each section it supports. Backend writes one \`wiki_section_urls\` row per (section, URL) pair.
+
+**Emit \`cited_urls\` ONLY on sections that incorporate grounded external content.** Omit (or empty array) when no web grounding is involved. Most calls have zero grounding hits — \`cited_urls\` should be absent from every section in those cases.
+
+The \`url\` strings in \`cited_urls\` MUST match URIs that appear in the input \`grounding_sources\` list verbatim. Don't invent URLs.
+
 ## 4. Contradiction handling
 
 A contradiction = two claims about the same subject that cannot simultaneously be true.
@@ -562,11 +587,24 @@ For each detected research commitment, emit a task entry:
 
 If no research commitments, emit \`"tasks": []\`. Most calls will have zero. A typical call with one research ask will have exactly one.`;
 
+// External URLs the live agent cited via googleSearch grounding during
+// the call. Deduplicated by uri. Pro uses these to populate `cited_urls`
+// on any section whose content was informed by web grounding.
+export interface GroundingSource {
+  uri: string;
+  title?: string;
+  domain?: string;
+}
+
 export interface ProFanOutInput {
   transcript: IngestionTranscriptTurn[] & { id?: string }[];
   newPages: NewPage[];
   touchedPages: CandidatePage[];
   callTimestamp: Date;
+  // Sources Audri grounded against via web search during the call. Empty
+  // (or undefined) for calls with no grounding activity. Pro reads this
+  // to decide which sections deserve `cited_urls` attribution.
+  groundingSources?: GroundingSource[];
 }
 
 export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult> {
@@ -577,7 +615,12 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
 
   const flat = transcriptWithIds.map((t) => `[turn_id=${t.id}] [${t.role}] ${t.text}`).join('\n');
 
-  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
+  const groundingBlock =
+    input.groundingSources && input.groundingSources.length > 0
+      ? `# grounding_sources (web URLs Audri cited via googleSearch during the call — use for cited_urls attribution)\n${JSON.stringify(input.groundingSources, null, 2)}\n\n`
+      : '';
+
+  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${groundingBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
 
   const resp = await callProWithRetry({
     model: PRO_MODEL,
@@ -625,6 +668,13 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
                           required: ['turn_id', 'text'],
                         },
                       },
+                      // External URLs (from grounding_sources) that supported
+                      // this section's content. See "Source citations" rule.
+                      cited_urls: {
+                        type: Type.ARRAY,
+                        nullable: true,
+                        items: { type: Type.STRING },
+                      },
                     },
                     required: ['content', 'snippets'],
                   },
@@ -663,6 +713,11 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
                           },
                           required: ['turn_id', 'text'],
                         },
+                      },
+                      cited_urls: {
+                        type: Type.ARRAY,
+                        nullable: true,
+                        items: { type: Type.STRING },
                       },
                     },
                   },

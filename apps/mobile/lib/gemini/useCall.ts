@@ -14,6 +14,7 @@ import { useCallStore } from '../useCallStore';
 import { type AudioInputHandle, createAudioInput } from './audio-input';
 import { type AudioOutputHandle, createAudioOutput } from './audio-output';
 import { type SessionHandle, openSession } from './session';
+import { createToolCallLog } from './tool-log';
 import { handleToolCalls } from './tool-runtime';
 import { type TranscriptTurn, createTranscript } from './transcript';
 
@@ -45,6 +46,7 @@ export function useCall(): UseCallResult {
   const inputRef = useRef<AudioInputHandle | null>(null);
   const outputRef = useRef<AudioOutputHandle | null>(null);
   const transcriptRef = useRef(createTranscript());
+  const toolLogRef = useRef(createToolCallLog());
   const sessionIdRef = useRef<string | null>(null);
   const startedAtRef = useRef<Date | null>(null);
   const appStateSubRef = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
@@ -97,6 +99,7 @@ export function useCall(): UseCallResult {
       callTypeRef.current = callType;
       setError(null);
       transcriptRef.current.reset();
+      toolLogRef.current.reset();
       setTranscript([]);
 
       const store = useCallStore.getState();
@@ -222,11 +225,16 @@ export function useCall(): UseCallResult {
               // when ready. handleToolCalls catches its own errors and
               // ensures every call gets a response (success or error
               // payload) so Gemini Live isn't left waiting.
+              toolLogRef.current.recordCustomCalls(calls);
               void handleToolCalls(calls, (responses) => {
+                toolLogRef.current.recordCustomResponses(responses);
                 if (sessionRef.current?.isOpen()) {
                   sessionRef.current.sendToolResponse(responses);
                 }
               });
+            },
+            onGroundingMetadata: (metadata) => {
+              toolLogRef.current.recordGrounding(metadata);
             },
           },
         );
@@ -316,6 +324,7 @@ export function useCall(): UseCallResult {
           },
           body: JSON.stringify({
             transcript: finalTranscript,
+            tool_calls: toolLogRef.current.snapshot(),
             started_at: startedAt.toISOString(),
             ended_at: new Date().toISOString(),
             end_reason: 'user_ended',

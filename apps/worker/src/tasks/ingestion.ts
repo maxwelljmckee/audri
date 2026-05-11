@@ -100,11 +100,20 @@ export const ingestion: Task = async (payload, helpers) => {
     end_reason: transcriptRow.endReason ?? 'user_ended',
   };
 
+  // Extract URL citations from the live call's tool-call log. The mobile
+  // client writes `tool_calls.groundingHits` on /end; we flatten + dedup
+  // here, then pass into the fan-out pipeline so Pro can attribute claims
+  // to the URLs that grounded them. Empty for calls with no web grounding.
+  const groundingSources = extractGroundingSources(transcriptRow.toolCalls);
+  if (groundingSources.length > 0) {
+    log('grounding sources from live call', { count: groundingSources.length });
+  }
+
   // ── User-scope and agent-scope passes run in parallel. Independent
   //    lifecycles per specs/agent-scope-ingestion.md — one failing doesn't
   //    block the other.
   const [userScopeResult, agentScopeResult] = await Promise.allSettled([
-    runUserScopePipeline(p, transcript, transcriptRow.startedAt, log),
+    runUserScopePipeline(p, transcript, transcriptRow.startedAt, groundingSources, log),
     runAgentScopeIngestion({
       transcriptId: p.transcriptId,
       userId: p.userId,
@@ -162,6 +171,7 @@ async function runUserScopePipeline(
   p: IngestionPayload,
   transcript: IngestionTranscriptTurn[],
   callTimestamp: Date,
+  groundingSources: Array<{ uri: string; title?: string; domain?: string }>,
   log: (msg: string, extra?: Record<string, unknown>) => void,
 ) {
   const wikiIndex = await fetchUserWikiIndex(p.userId);
@@ -186,6 +196,7 @@ async function runUserScopePipeline(
     newPages: candidates.new_pages,
     touchedPages: candidatePages,
     callTimestamp,
+    groundingSources,
   });
   log(
     `pro fan-out: creates=${fanOut.creates.length}, updates=${fanOut.updates.length}, skipped=${fanOut.skipped.length}, tasks=${fanOut.tasks.length}`,
@@ -197,6 +208,42 @@ async function runUserScopePipeline(
     agentId: p.agentId,
     fanOut,
     candidatePages,
+    groundingSources,
   });
   log('user-scope commit complete', { ...commitResult });
+}
+
+// Flatten + dedup the mobile client's tool-call log into a list of unique
+// grounding-source URLs. Defensive against shape drift — the log is jsonb
+// and the mobile schema can evolve faster than the worker recompiles.
+// Returns [] if the log is missing, malformed, or empty.
+function extractGroundingSources(
+  raw: unknown,
+): Array<{ uri: string; title?: string; domain?: string }> {
+  if (!raw || typeof raw !== 'object') return [];
+  const log = raw as { groundingHits?: unknown };
+  if (!Array.isArray(log.groundingHits)) return [];
+  const seen = new Map<string, { uri: string; title?: string; domain?: string }>();
+  for (const hit of log.groundingHits) {
+    if (!hit || typeof hit !== 'object') continue;
+    const chunks = (hit as { chunks?: unknown }).chunks;
+    if (!Array.isArray(chunks)) continue;
+    for (const chunk of chunks) {
+      if (!chunk || typeof chunk !== 'object') continue;
+      const c = chunk as { uri?: unknown; title?: unknown; domain?: unknown };
+      const uri = typeof c.uri === 'string' ? c.uri : undefined;
+      if (!uri) continue;
+      // First occurrence wins — duplicates across hits collapse, keeping
+      // whatever title/domain came first (typically all hits for the same
+      // URL carry identical metadata anyway).
+      if (!seen.has(uri)) {
+        seen.set(uri, {
+          uri,
+          title: typeof c.title === 'string' ? c.title : undefined,
+          domain: typeof c.domain === 'string' ? c.domain : undefined,
+        });
+      }
+    }
+  }
+  return [...seen.values()];
 }

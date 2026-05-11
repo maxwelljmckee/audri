@@ -5,6 +5,7 @@ import {
   type FunctionCall,
   type FunctionResponse,
   GoogleGenAI,
+  type GroundingMetadata,
   type LiveServerMessage,
   type Session,
 } from '@google/genai';
@@ -31,6 +32,10 @@ export interface SessionCallbacks {
   // SessionHandle. Tool calls arrive as batches; respond with one
   // FunctionResponse per FunctionCall received (matching `id`).
   onToolCall?: (calls: FunctionCall[]) => void;
+  // Grounding metadata for the current model turn — fires whenever the
+  // googleSearch grounding tool produces sources. Caller records these to
+  // attribute the URLs the agent referenced.
+  onGroundingMetadata?: (metadata: GroundingMetadata) => void;
 }
 
 export interface SessionHandle {
@@ -73,6 +78,8 @@ export async function openSession(
         if (msg.serverContent?.turnComplete) callbacks.onTurnComplete?.();
         const toolCalls = msg.toolCall?.functionCalls;
         if (toolCalls && toolCalls.length > 0) callbacks.onToolCall?.(toolCalls);
+        const grounding = msg.serverContent?.groundingMetadata;
+        if (grounding) callbacks.onGroundingMetadata?.(grounding);
       },
       onerror: (e: ErrorEvent) => callbacks.onError?.(new Error(e.message)),
       onclose: (e: CloseEvent) => {

@@ -23,6 +23,7 @@ import {
   wikiPages,
   wikiSectionHistory,
   wikiSectionTranscripts,
+  wikiSectionUrls,
   wikiSections,
 } from '@audri/shared/db';
 import { logger } from '../logger.js';
@@ -39,6 +40,12 @@ export interface CommitInput {
   agentId: string;
   fanOut: ProFanOutResult;
   candidatePages: CandidatePage[];
+  // External URLs Audri cited via googleSearch grounding during the call.
+  // Used to validate `cited_urls` on section writes — Pro's prompt rule
+  // requires verbatim URIs from this list, but we re-check here so a
+  // hallucinated URL never becomes a wiki_section_urls row. Sourced from
+  // call_transcripts.tool_calls; passed in by tasks/ingestion.ts.
+  groundingSources?: Array<{ uri: string; title?: string; domain?: string }>;
 }
 
 function truncateForTitle(s: string, max = 60): string {
@@ -60,6 +67,15 @@ export interface CommitResult {
 
 export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
   const { userId, transcriptId, agentId, fanOut, candidatePages } = input;
+
+  // Index grounding sources by URI for fast validation + snippet lookup
+  // when writing wiki_section_urls rows. Pro is instructed to cite only
+  // URIs that appear in the input list verbatim; the defensive check
+  // here filters anything that slipped past the prompt rule.
+  const groundingByUri = new Map<string, { title?: string; domain?: string }>();
+  for (const g of input.groundingSources ?? []) {
+    if (g.uri) groundingByUri.set(g.uri, { title: g.title, domain: g.domain });
+  }
   const candidateBySlug = new Map(candidatePages.map((p) => [p.slug, p]));
 
   const result: CommitResult = {
@@ -245,6 +261,23 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
             snippet: snip.text,
           });
         }
+
+        // External URL citations from googleSearch grounding.
+        for (const url of section.cited_urls ?? []) {
+          const meta = groundingByUri.get(url);
+          if (!meta) {
+            logger.warn(
+              { url, sectionId: sectionRow.id },
+              'commit: cited_url not in grounding sources — skipping',
+            );
+            continue;
+          }
+          await tx.insert(wikiSectionUrls).values({
+            sectionId: sectionRow.id,
+            url,
+            snippet: meta.title ?? meta.domain ?? '',
+          });
+        }
       }
     }
 
@@ -367,6 +400,21 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
               snippet: snip.text,
             });
           }
+          for (const url of ref.cited_urls ?? []) {
+            const meta = groundingByUri.get(url);
+            if (!meta) {
+              logger.warn(
+                { url, sectionId: ref.id },
+                'commit: cited_url not in grounding sources — skipping',
+              );
+              continue;
+            }
+            await tx.insert(wikiSectionUrls).values({
+              sectionId: ref.id,
+              url,
+              snippet: meta.title ?? meta.domain ?? '',
+            });
+          }
           result.sectionsUpdated++;
           continue;
         }
@@ -396,6 +444,21 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
               transcriptId,
               turnId: snip.turn_id,
               snippet: snip.text,
+            });
+          }
+          for (const url of ref.cited_urls ?? []) {
+            const meta = groundingByUri.get(url);
+            if (!meta) {
+              logger.warn(
+                { url, sectionId: sectionRow.id },
+                'commit: cited_url not in grounding sources — skipping',
+              );
+              continue;
+            }
+            await tx.insert(wikiSectionUrls).values({
+              sectionId: sectionRow.id,
+              url,
+              snippet: meta.title ?? meta.domain ?? '',
             });
           }
           result.sectionsCreated++;

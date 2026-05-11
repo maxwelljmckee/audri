@@ -13,7 +13,7 @@
 // Wiki layer: type='todo' wiki rows still exist as ingestion + agent-task
 // triggering shells (hidden from Notes UI). The sidecar drives the UX.
 
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   type NativeStackScreenProps,
   createNativeStackNavigator,
@@ -191,9 +191,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<TodosStackParamList, 
               style={[styles.tab, isActive && styles.tabActive]}
               onPress={() => setActiveStatus(tab.slug)}
             >
-              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
-                {tab.label}
-              </Text>
+              <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>{tab.label}</Text>
               {count > 0 ? (
                 <Text style={[styles.tabCount, isActive && styles.tabCountActive]}>{count}</Text>
               ) : null}
@@ -301,7 +299,27 @@ function TodoRow({
           <Text style={styles.rowStatus}>In progress</Text>
         ) : null}
       </Pressable>
+      <AssigneeAvatar agentId={todo.assignee_agent_id} />
       <Ionicons name="chevron-forward" size={18} color="#3f5a83" />
+    </View>
+  );
+}
+
+// Right-aligned avatar indicating who owns the todo. The data-model default
+// is user-ownership — `assignee_agent_id` is NULL unless ingestion or a
+// manual flow explicitly set it. We render the user icon for both `null`
+// AND `undefined` (the field is undefined on rows that pre-date migration
+// 0021); the robot icon ONLY shows when the column carries a real agent
+// uuid. Visual-only — clicking the row still opens the detail view.
+function AssigneeAvatar({ agentId }: { agentId: string | null | undefined }) {
+  const isAgent = typeof agentId === 'string' && agentId.length > 0;
+  return (
+    <View style={styles.assigneeAvatar}>
+      {isAgent ? (
+        <MaterialCommunityIcons name="robot" size={16} color="#7aa3d4" />
+      ) : (
+        <Ionicons name="person" size={14} color="#7aa3d4" />
+      )}
     </View>
   );
 }
@@ -514,6 +532,17 @@ const styles = StyleSheet.create({
   rowTitleDone: { color: '#7aa3d4', textDecorationLine: 'line-through' },
   rowAbstract: { color: '#7aa3d4', fontSize: 12 },
   rowStatus: { color: '#4d8fdb', fontSize: 11, fontWeight: '600' },
+  // Subtle owner indicator. Bg is a muted tint of the accent so the avatar
+  // reads as low-priority context, not a primary action.
+  assigneeAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#11203a',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
+  },
 
   createBody: { padding: 16, gap: 12, flex: 1 },
   createTitle: { color: '#e8f1ff', fontSize: 18, fontWeight: '600' },
