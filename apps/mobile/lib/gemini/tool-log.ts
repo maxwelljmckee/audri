@@ -16,7 +16,12 @@
 // later opt in to read these and write `wiki_section_urls` rows when
 // agent-grounded statements get promoted to claims.
 
-import type { FunctionCall, FunctionResponse, GroundingMetadata } from '@google/genai';
+import type {
+  FunctionCall,
+  FunctionResponse,
+  GroundingMetadata,
+  UsageMetadata,
+} from '@google/genai';
 
 export interface GroundingHit {
   ts: string;
@@ -38,12 +43,18 @@ export interface CustomToolCallRecord {
 export interface ToolCallLogPayload {
   groundingHits: GroundingHit[];
   customToolCalls: CustomToolCallRecord[];
+  // Latest UsageMetadata seen during the session. Gemini Live appears to
+  // emit cumulative-since-session-start values, so last-wins overwrite is
+  // correct. Server uses this to write a `call_live` usage_events row on
+  // /end. Undefined if no UsageMetadata arrived (rare but possible).
+  sessionUsage?: UsageMetadata;
 }
 
 export interface ToolCallLogHandle {
   recordGrounding: (metadata: GroundingMetadata) => void;
   recordCustomCalls: (calls: FunctionCall[]) => void;
   recordCustomResponses: (responses: FunctionResponse[]) => void;
+  recordSessionUsage: (usage: UsageMetadata) => void;
   snapshot: () => ToolCallLogPayload;
   reset: () => void;
 }
@@ -51,6 +62,14 @@ export interface ToolCallLogHandle {
 export function createToolCallLog(): ToolCallLogHandle {
   let groundingHits: GroundingHit[] = [];
   let customToolCalls: CustomToolCallRecord[] = [];
+  let sessionUsage: UsageMetadata | undefined;
+  // Earlier-message sanity. Last-wins is correct IFF Live emits cumulative
+  // values; if a later message's totals are LOWER than what we already
+  // saw, that's suspicious — could be incremental-per-message after all,
+  // or a session-reset edge case. We log it to console.warn so we'd spot
+  // it in field test. Server-side Sentry capture would be redundant
+  // (mobile already surfaces this) and we'd need a separate roundtrip.
+  let priorTotal = 0;
   // pendingByName lets us match responses back to their issuing call. We key
   // by id when available (id is the official correlator), falling back to
   // name + first-pending for the rare case the SDK omits id.
@@ -94,13 +113,30 @@ export function createToolCallLog(): ToolCallLogHandle {
         }
       }
     },
+    recordSessionUsage: (usage) => {
+      const total = usage.totalTokenCount ?? 0;
+      // Suspicious-decrease check (see priorTotal comment above). If
+      // values shrink between messages, our last-wins assumption may be
+      // wrong — flag in console so we'd notice in field test.
+      if (total > 0 && total < priorTotal) {
+        console.warn(
+          '[tool-log] session usage decreased between messages — last-wins assumption may be wrong',
+          { priorTotal, currentTotal: total },
+        );
+      }
+      if (total > 0) priorTotal = total;
+      sessionUsage = usage;
+    },
     snapshot: () => ({
       groundingHits,
       customToolCalls,
+      sessionUsage,
     }),
     reset: () => {
       groundingHits = [];
       customToolCalls = [];
+      sessionUsage = undefined;
+      priorTotal = 0;
       pendingById.clear();
     },
   };

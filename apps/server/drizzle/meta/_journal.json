@@ -162,6 +162,13 @@
       "when": 1778522824161,
       "tag": "0022_unknown_lionheart",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778537953119,
+      "tag": "0023_clever_terrax",
+      "breakpoints": true
     }
   ]
 }

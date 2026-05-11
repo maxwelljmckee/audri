@@ -13,3 +13,11 @@ export {
   tokenTotalsFromUsage,
   WEB_SEARCH_USD_PER_REQUEST,
 } from './pricing.js';
+export {
+  type RecordInferenceOpts,
+  type RecordInferenceResult,
+  type RecordWebSearchOpts,
+  recordInferenceUsage,
+  recordWebSearchUsage,
+  type UsageEventKind,
+} from './record-inference.js';

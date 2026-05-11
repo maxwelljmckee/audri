@@ -1,4 +1,6 @@
 import { callTranscripts, db, eq, sql, userSettings } from '@audri/shared/db';
+import { LIVE_MODEL } from '@audri/shared/gemini';
+import { recordInferenceUsage } from '@audri/shared/usage';
 import {
   BadRequestException,
   Body,
@@ -11,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { UsageMetadata } from '@google/genai';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
@@ -120,6 +123,33 @@ export class CallsController {
       }
     });
 
+    // ── Live-session usage event ───────────────────────────────────────
+    // The mobile client accumulates LiveServerMessage.usageMetadata
+    // through the call (last-wins, since the SDK appears to emit
+    // cumulative-since-session-start) and ships the latest snapshot in
+    // body.tool_calls.sessionUsage. Write a `call_live` usage_events row
+    // here so the Usage dashboard's "Live Agent" bucket includes the
+    // session inference cost alongside post-call ingestion. Best-effort:
+    // a failure to record usage MUST NOT fail /end (the call already
+    // happened, ingestion's already enqueued).
+    const sessionUsage = extractSessionUsage(body.tool_calls);
+    if (sessionUsage) {
+      try {
+        await recordInferenceUsage({
+          userId: user.id,
+          agentId: existing.agentId,
+          callTranscriptId: existing.id,
+          eventKind: 'call_live',
+          model: LIVE_MODEL,
+          usage: sessionUsage,
+        });
+      } catch (err) {
+        // Shared helper already swallows + logs; this catch is defense
+        // in depth so a regression in the helper can't poison /end.
+        this.logger.error({ err, sessionId }, 'call_live usage write threw (continuing)');
+      }
+    }
+
     this.logger.log({ sessionId, userId: user.id, cancelled }, 'call ended');
     return { status: 'ended', sessionId };
   }
@@ -182,6 +212,19 @@ export class CallsController {
     const query = (body.query ?? '').trim();
     if (!query) return { results: [] };
     const results = await searchWiki(user.id, query);
+    // Best-effort usage breadcrumb. Tool hits Postgres only — zero
+    // inference cost — but we record an event so per-call analytics can
+    // surface tool-use frequency. Pass an empty UsageMetadata so the
+    // helper inserts a row with cost_cents='0'.
+    void recordInferenceUsage({
+      userId: user.id,
+      callTranscriptId: null,
+      eventKind: 'tool_search_wiki',
+      model: 'tool',
+      usage: { totalTokenCount: 0 },
+    }).catch(() => {
+      // Swallow — observability write shouldn't fail the tool response.
+    });
     return { results };
   }
 
@@ -191,7 +234,32 @@ export class CallsController {
     const slug = (body.slug ?? '').trim();
     if (!slug) throw new BadRequestException('slug required');
     const page = await fetchPage(user.id, slug);
+    void recordInferenceUsage({
+      userId: user.id,
+      callTranscriptId: null,
+      eventKind: 'tool_fetch_page',
+      model: 'tool',
+      usage: { totalTokenCount: 0 },
+    }).catch(() => {
+      // Swallow — observability write shouldn't fail the tool response.
+    });
     if (!page) return { page: null, error: 'page not found' };
     return { page };
   }
+}
+
+// Pull the latest UsageMetadata snapshot out of the mobile client's
+// tool_calls log. Mobile's `createToolCallLog` writes the field as
+// `sessionUsage` (snake-cased through JSON), and the structure mirrors
+// @google/genai's UsageMetadata type. Defensive against shape drift:
+// returns undefined on any failure to parse so /end never fails on a
+// malformed observability blob.
+function extractSessionUsage(raw: unknown): UsageMetadata | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const log = raw as { sessionUsage?: unknown };
+  if (!log.sessionUsage || typeof log.sessionUsage !== 'object') return undefined;
+  // We don't fully validate every UsageMetadata field — the consumer
+  // (`recordInferenceUsage` → `computeCostCents`) uses optional reads
+  // with defaults, so a partial object still computes a sensible cost.
+  return log.sessionUsage as UsageMetadata;
 }

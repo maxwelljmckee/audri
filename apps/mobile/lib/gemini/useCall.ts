@@ -236,6 +236,9 @@ export function useCall(): UseCallResult {
             onGroundingMetadata: (metadata) => {
               toolLogRef.current.recordGrounding(metadata);
             },
+            onUsageMetadata: (usage) => {
+              toolLogRef.current.recordSessionUsage(usage);
+            },
           },
         );
         sessionRef.current = session;

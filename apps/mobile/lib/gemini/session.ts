@@ -8,6 +8,7 @@ import {
   type GroundingMetadata,
   type LiveServerMessage,
   type Session,
+  type UsageMetadata,
 } from '@google/genai';
 
 export interface SessionConfig {
@@ -36,6 +37,12 @@ export interface SessionCallbacks {
   // googleSearch grounding tool produces sources. Caller records these to
   // attribute the URLs the agent referenced.
   onGroundingMetadata?: (metadata: GroundingMetadata) => void;
+  // Session usage metadata. Gemini Live emits this per-message; the value
+  // appears to be cumulative since session start (per the SDK doc string
+  // "Usage metadata about model response(s)") — so the caller should
+  // last-wins-overwrite rather than sum. Captured at session-end to write
+  // a single `call_live` usage_events row.
+  onUsageMetadata?: (usage: UsageMetadata) => void;
 }
 
 export interface SessionHandle {
@@ -80,6 +87,7 @@ export async function openSession(
         if (toolCalls && toolCalls.length > 0) callbacks.onToolCall?.(toolCalls);
         const grounding = msg.serverContent?.groundingMetadata;
         if (grounding) callbacks.onGroundingMetadata?.(grounding);
+        if (msg.usageMetadata) callbacks.onUsageMetadata?.(msg.usageMetadata);
       },
       onerror: (e: ErrorEvent) => callbacks.onError?.(new Error(e.message)),
       onclose: (e: CloseEvent) => {
