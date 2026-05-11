@@ -17,6 +17,47 @@ import { getDatabase } from './database';
 
 const REPLICATION_VERSION = 'v1';
 
+// Builds a push.updateHandler that mirrors rxdb-supabase's default behavior
+// but excludes the generated `_deleted` column from the UPDATE SET clause.
+// Postgres rejects writes to generated columns (428C9: "column can only be
+// updated to DEFAULT"), and rxdb-supabase's default handler includes every
+// column on the row in the SET clause — so any client-side UPDATE on a
+// push-enabled table with a `_deleted` GENERATED ALWAYS column fails.
+//
+// `_deleted` stays in the WHERE predicate (via `.is(...)`) so the optimistic-
+// concurrency check is unchanged: the UPDATE still only applies if every
+// expected field still matches in the database.
+//
+// Note: this does not address the INSERT path. rxdb-supabase's `handleInsertion`
+// is not user-customizable (`push.handler` is omitted from the options type),
+// so any client-originated INSERT on a generated-column table would still
+// fail. None of our push-enabled tables currently take client INSERTs at MVP
+// (server endpoints + ingestion own creation), so leave the INSERT side alone
+// until that flow lands.
+// biome-ignore lint/suspicious/noExplicitAny: rxdb-supabase row type is heavily generic; replicating it here is noise
+function makeUpdateHandlerStrippingDeleted(table: string) {
+  return async (row: { newDocumentState: any; assumedMasterState?: any }) => {
+    const payload: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(row.newDocumentState)) {
+      if (field !== '_deleted') payload[field] = value;
+    }
+    let query = supabase.from(table).update(payload, { count: 'exact' });
+    for (const [field, value] of Object.entries(row.assumedMasterState ?? {})) {
+      const type = typeof value;
+      if (type === 'string' || type === 'number') {
+        query = query.eq(field, value);
+      } else if (type === 'boolean' || value === null) {
+        query = query.is(field, value);
+      } else {
+        throw new Error(`updateHandler[${table}]: unsupported field of type ${type}`);
+      }
+    }
+    const { error, count } = await query;
+    if (error) throw error;
+    return count === 1;
+  };
+}
+
 export interface ReplicationHandle {
   // biome-ignore lint/suspicious/noExplicitAny: SupabaseReplication is a generic-heavy type from rxdb-supabase
   replications: any[];
@@ -49,7 +90,7 @@ export function startReplication(): Promise<ReplicationHandle> {
       replicationIdentifier: `audri:wiki_pages:${REPLICATION_VERSION}`,
       deletedField: '_deleted',
       pull: { batchSize: 50, lastModifiedField: 'updated_at' },
-      push: {},
+      push: { updateHandler: makeUpdateHandlerStrippingDeleted('wiki_pages') },
     });
 
     const wikiSectionsRepl = new SupabaseReplication({
@@ -58,7 +99,7 @@ export function startReplication(): Promise<ReplicationHandle> {
       replicationIdentifier: `audri:wiki_sections:${REPLICATION_VERSION}`,
       deletedField: '_deleted',
       pull: { batchSize: 100, lastModifiedField: 'updated_at' },
-      push: {},
+      push: { updateHandler: makeUpdateHandlerStrippingDeleted('wiki_sections') },
     });
 
     // research_outputs is read-only client-side (immutable artifact). No push.
@@ -92,7 +133,7 @@ export function startReplication(): Promise<ReplicationHandle> {
       replicationIdentifier: `audri:agent_open_items:${REPLICATION_VERSION}`,
       deletedField: '_deleted',
       pull: { batchSize: 50, lastModifiedField: 'updated_at' },
-      push: {},
+      push: { updateHandler: makeUpdateHandlerStrippingDeleted('agent_open_items') },
     });
 
     // call_transcripts — Chat History data source + ingestion-status driver
@@ -128,7 +169,7 @@ export function startReplication(): Promise<ReplicationHandle> {
       replicationIdentifier: `audri:todos:${REPLICATION_VERSION}`,
       deletedField: '_deleted',
       pull: { batchSize: 200, lastModifiedField: 'updated_at' },
-      push: {},
+      push: { updateHandler: makeUpdateHandlerStrippingDeleted('todos') },
     });
 
     // Surface errors from each replication's error stream — without this,

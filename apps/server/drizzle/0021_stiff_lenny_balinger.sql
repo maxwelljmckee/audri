@@ -1,0 +1,2 @@
+ALTER TABLE "todos" ADD COLUMN "assignee_agent_id" uuid;--> statement-breakpoint
+ALTER TABLE "todos" ADD CONSTRAINT "todos_assignee_agent_id_agents_id_fk" FOREIGN KEY ("assignee_agent_id") REFERENCES "public"."agents"("id") ON DELETE set null ON UPDATE no action;

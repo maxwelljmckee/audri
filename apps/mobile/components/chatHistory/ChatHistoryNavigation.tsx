@@ -18,9 +18,9 @@ import {
 import { useMemo } from "react";
 import {
   ActivityIndicator,
-  FlatList,
   Pressable,
   ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   View,
@@ -81,6 +81,27 @@ function ListScreen({
     return m;
   }, [me]);
 
+  // Group transcripts by calendar day. Assumes the underlying hook returns
+  // newest-first; groups inherit that order naturally.
+  const sections = useMemo(() => {
+    const now = new Date();
+    const groups = new Map<
+      string,
+      { title: string; data: CallTranscriptDoc[] }
+    >();
+    for (const t of transcripts) {
+      const d = new Date(t.started_at);
+      const key = d.toDateString();
+      let group = groups.get(key);
+      if (!group) {
+        group = { title: formatSectionHeader(d, now), data: [] };
+        groups.set(key, group);
+      }
+      group.data.push(t);
+    }
+    return Array.from(groups.values());
+  }, [transcripts]);
+
   if (!ready) {
     return (
       <View style={styles.loading}>
@@ -90,10 +111,11 @@ function ListScreen({
   }
 
   return (
-    <FlatList
-      data={transcripts}
+    <SectionList
+      sections={sections}
       keyExtractor={(t) => t.id}
       contentContainerStyle={styles.list}
+      stickySectionHeadersEnabled={false}
       refreshControl={
         <ResyncControl refreshing={refreshing} onRefresh={onRefresh} />
       }
@@ -104,6 +126,9 @@ function ListScreen({
           </Text>
         </View>
       }
+      renderSectionHeader={({ section }) => (
+        <Text style={styles.sectionHeader}>{section.title}</Text>
+      )}
       renderItem={({ item }) => (
         <ChatRow
           transcript={item}
@@ -145,7 +170,7 @@ function ChatRow({
           <IngestionBadge status={transcript.ingestion_status} />
         </View>
         <Text style={styles.rowTimestamp}>
-          {formatTimestamp(transcript.started_at)}
+          {formatRowTime(transcript.started_at)}
         </Text>
         {transcript.title ? (
           <Text style={styles.rowTitle} numberOfLines={1}>
@@ -388,6 +413,39 @@ function formatTimestamp(iso: string): string {
   return `${dateStr} at ${time}`;
 }
 
+function formatRowTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatSectionHeader(d: Date, now: Date): string {
+  const weekday = d.toLocaleDateString(undefined, { weekday: "long" });
+  const month = d.toLocaleDateString(undefined, { month: "long" });
+  const day = d.getDate();
+  const ord = ordinalSuffix(day);
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${weekday}, ${month} ${day}${ord}`;
+  }
+  return `${weekday}, ${month} ${day}${ord}, ${d.getFullYear()}`;
+}
+
+function ordinalSuffix(n: number): string {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return "th";
+  switch (n % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
 // ── Styles ─────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -402,6 +460,16 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   list: { paddingVertical: 4 },
+  sectionHeader: {
+    color: "#7aa3d4",
+    fontSize: 11,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 6,
+  },
 
   row: {
     flexDirection: "row",

@@ -57,6 +57,13 @@ export interface PageCreate {
   // swimlane. Set ONLY when the transcript explicitly directs association.
   // See pro prompt §"Todo associations" rule + commit.ts sidecar insert.
   todo_parent_slug?: string;
+  // Only meaningful when type === 'todo'. Who owes the todo: 'user' (default,
+  // most common) or 'assistant' (the live agent owes a follow-up back to
+  // the user — e.g. "I'll send you the summary tomorrow"). 'user' translates
+  // to sidecar.assignee_agent_id = NULL; 'assistant' resolves to the call's
+  // active persona id. Default to 'user' unless the transcript explicitly
+  // shows the agent committing to the action.
+  todo_assignee?: 'user' | 'assistant';
 }
 
 export interface PageUpdate {
@@ -392,6 +399,23 @@ The Live Agent should be the one ASKING the user about associations during the c
 
 If \`todo_parent_slug\` references a slug that doesn't resolve at commit time, the backend keeps the sidecar's parent_page_id NULL (logged as a warn) — better silent General-bucket placement than a broken reference.
 
+### Todo assignee (\`todo_assignee\`)
+
+Most todos are the user's own. Some — comparatively rare — are commitments the live agent made back to the user during the call ("I'll have that summary ready by tomorrow", "Let me draft that email and send it to you"). The \`todo_assignee\` field captures this:
+
+- Default: \`'user'\` (the user themselves owes the todo). Omitting the field is equivalent.
+- \`'assistant'\`: the active live persona (Audri / the assistant) explicitly committed to do the task. The user is the *beneficiary*, not the *doer*. Backend resolves this to the call's active agent uuid and stores it on the sidecar; the Todos plugin can then filter / badge accordingly.
+
+**Emit \`todo_assignee: "assistant"\` ONLY when the agent explicitly said it would do the thing.** Examples:
+
+- ✅ "I'll dig into the Steve Keen critique and have a summary for you tomorrow" (agent voice) → \`todo_assignee: "assistant"\`.
+- ✅ "I'll text you a reminder before the meeting" (agent voice) → \`todo_assignee: "assistant"\`.
+- ❌ User says "I should send Alex the paper" → \`todo_assignee: "user"\` (or omit — same default). The user is doing it.
+- ❌ Agent ASKED "do you want me to handle that?" and user said yes — DO emit \`assistant\` once the user accepted. Acceptance is the trigger; agent suggestion alone isn't.
+- ❌ "Audri, I want you to research X" — the user is *delegating*, but unless the agent verbally accepted the task in-call, default to \`user\` and let the user re-assign manually. The research plugin's own commit path already sets \`assignee\` correctly for research-spawned todos.
+
+If unsure, default to \`user\`. Over-assigning to assistant inflates Audri's perceived to-do list and degrades the signal.
+
 ### Hierarchy moves on existing pages
 
 When the user EXPLICITLY directs a structural move during the call ("move X under Y", "put X under my goals", "make X top-level", "nest these under Consensus"), emit an \`update\` for X with the new \`parent_slug\` set:
@@ -579,6 +603,10 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
                 // associates with (project, goal sub-page, person, concept).
                 // Omit unless transcript explicitly directs association.
                 todo_parent_slug: { type: Type.STRING, nullable: true },
+                // Only meaningful for type='todo'. 'user' (default) or
+                // 'assistant'. Default to user unless the agent verbally
+                // committed to the task in-call. See "Todo assignee" rule.
+                todo_assignee: { type: Type.STRING, nullable: true },
                 sections: {
                   type: Type.ARRAY,
                   items: {

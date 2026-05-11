@@ -33,6 +33,10 @@ import { redactJsonPii } from './redact.js';
 export interface CommitInput {
   userId: string;
   transcriptId: string;
+  // The active call's agent (persona). Used to resolve `todo_assignee:
+  // 'assistant'` → sidecar.assignee_agent_id. Threaded through from
+  // tasks/ingestion.ts's job payload.
+  agentId: string;
   fanOut: ProFanOutResult;
   candidatePages: CandidatePage[];
 }
@@ -55,7 +59,7 @@ export interface CommitResult {
 }
 
 export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
-  const { userId, transcriptId, fanOut, candidatePages } = input;
+  const { userId, transcriptId, agentId, fanOut, candidatePages } = input;
   const candidateBySlug = new Map(candidatePages.map((p) => [p.slug, p]));
 
   const result: CommitResult = {
@@ -187,10 +191,23 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
             );
           }
         }
+        // Resolve todo_assignee. 'user' (or omitted) → NULL. 'assistant'
+        // → the active persona's agent_id. Any other value falls back to
+        // NULL with a warn — better defensive default than a broken FK.
+        let assigneeAgentId: string | null = null;
+        if (create.todo_assignee === 'assistant') {
+          assigneeAgentId = agentId;
+        } else if (create.todo_assignee && create.todo_assignee !== 'user') {
+          logger.warn(
+            { slug: create.slug, todoAssignee: create.todo_assignee },
+            'commit: unknown todo_assignee value — defaulting to user (NULL)',
+          );
+        }
         await tx.insert(todos).values({
           userId,
           pageId: pageRow.id,
           parentPageId: todoParentPageId,
+          assigneeAgentId,
           status: 'todo',
         });
       }
@@ -479,10 +496,14 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
           // Sidecar for the spawned research-tracking todo. Starts as 'todo';
           // research handler's commit flips to 'done' when the task completes
           // (in research/commit.ts, alongside the agent_tasks status update).
+          // Assigned to the active persona — Audri is the one who'll deliver
+          // the research output back to the user. assignee_agent_id makes
+          // that explicit on the Todos surface.
           await tx.insert(todos).values({
             userId,
             pageId: todoRow.id,
             parentPageId: null,
+            assigneeAgentId: agentId,
             status: 'todo',
           });
 

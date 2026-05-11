@@ -42,14 +42,23 @@ export function WikiPendingBanner() {
               const { data: sessionData } = await supabase.auth.getSession();
               const accessToken = sessionData.session?.access_token;
               if (!accessToken) return;
-              await Promise.all(
+              const responses = await Promise.all(
                 failed.map((t) =>
-                  fetch(`${API_URL}/calls/${t.id}/retry-ingest`, {
+                  fetch(`${API_URL}/calls/${t.session_id}/retry-ingest`, {
                     method: 'POST',
                     headers: { Authorization: `Bearer ${accessToken}` },
                   }),
                 ),
               );
+              const failures = responses.filter((r) => !r.ok);
+              if (failures.length > 0) {
+                captureClientError(
+                  'retry-ingest',
+                  new Error(
+                    `retry-ingest returned non-OK for ${failures.length}/${responses.length}: ${failures[0]?.status}`,
+                  ),
+                );
+              }
             } catch (err) {
               captureClientError('retry-ingest', err);
             } finally {

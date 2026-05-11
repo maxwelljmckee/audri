@@ -216,6 +216,9 @@ export interface TodoDoc {
   user_id: string;
   page_id: string;
   parent_page_id: string | null;
+  // NULL = user owns the todo (default). Non-null FK to agents.id = the
+  // named persona owes it back to the user. v0.2 addition 2026-05-11.
+  assignee_agent_id: string | null;
   status: 'todo' | 'in-progress' | 'done' | 'archived';
   due_date: string | null;
   completed_at: string | null;
@@ -232,6 +235,7 @@ export const todoSchema: RxJsonSchema<TodoDoc> = {
     user_id: { type: 'string', maxLength: 36 },
     page_id: { type: 'string', maxLength: 36 },
     parent_page_id: { type: ['string', 'null'] },
+    assignee_agent_id: { type: ['string', 'null'] },
     status: {
       type: 'string',
       enum: ['todo', 'in-progress', 'done', 'archived'],

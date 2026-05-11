@@ -194,6 +194,7 @@ async function runUserScopePipeline(
   const commitResult = await commitFanOut({
     userId: p.userId,
     transcriptId: p.transcriptId,
+    agentId: p.agentId,
     fanOut,
     candidatePages,
   });

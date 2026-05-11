@@ -121,34 +121,34 @@ export default function HomeScreen() {
           <PluginTile
             label="Agents"
             icon={
-              <MaterialCommunityIcons name="robot" size={36} color="#7aa3d4" />
+              <MaterialCommunityIcons name="robot" size={36} color="#e8f1ff" />
             }
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay("agents", origin)}
           />
           <PluginTile
             label="Notes"
-            icon={<NotebookTabs size={36} color="#7aa3d4" strokeWidth={1.5} />}
+            icon={<NotebookTabs size={36} color="#e8f1ff" strokeWidth={1.5} />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay("wiki", origin)}
           />
           <PluginTile
             label="Chat History"
-            icon={<MessageCircle size={36} color="#7aa3d4" strokeWidth={1.5} />}
+            icon={<MessageCircle size={36} color="#e8f1ff" strokeWidth={1.5} />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay("chatHistory", origin)}
           />
           <PluginTile
             label="Todos"
             icon={
-              <Ionicons name="checkbox-outline" size={36} color="#7aa3d4" />
+              <Ionicons name="checkbox-outline" size={36} color="#e8f1ff" />
             }
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay("todos", origin)}
           />
           <PluginTile
             label="Research"
-            icon={<Ionicons name="search-outline" size={36} color="#7aa3d4" />}
+            icon={<Ionicons name="search-outline" size={36} color="#e8f1ff" />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay("research", origin)}
           />
@@ -158,7 +158,7 @@ export default function HomeScreen() {
               <Ionicons
                 name="person-circle-outline"
                 size={36}
-                color="#7aa3d4"
+                color="#e8f1ff"
               />
             }
             widthPx={tileWidth}

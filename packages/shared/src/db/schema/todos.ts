@@ -28,6 +28,7 @@ import { sql } from 'drizzle-orm';
 import { index, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
 import { todoStatusEnum } from './enums.js';
+import { agents } from './identity.js';
 import { wikiPages } from './wiki.js';
 
 export const todos = pgTable(
@@ -47,6 +48,18 @@ export const todos = pgTable(
     // swimlane. Default ALWAYS null unless transcript explicitly directs an
     // association — see fan-out-prompt.md routing rules.
     parentPageId: uuid('parent_page_id').references(() => wikiPages.id, {
+      onDelete: 'set null',
+    }),
+    // Who is on the hook. NULL = the user themselves owns the todo (default,
+    // most common). Non-null FK to `agents` = a specific persona (Audri /
+    // assistant today; V1+ Health Coach, Finance Coach, etc.) owes this back
+    // to the user. Used by:
+    //   - call-side preload composer to render "Open todos" grouped by owner
+    //   - fan-out prompt to disambiguate "I'll send you X" (assistant) vs
+    //     "I should send Alex X" (user)
+    //   - Todos plugin UX (V1+: filter / badge by assignee)
+    // ON DELETE SET NULL — if an agent gets deleted, todos fall back to user.
+    assigneeAgentId: uuid('assignee_agent_id').references(() => agents.id, {
       onDelete: 'set null',
     }),
     status: todoStatusEnum('status').notNull().default('todo'),

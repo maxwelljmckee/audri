@@ -10,8 +10,26 @@
 // recently-updated wiki pages — those are richer than call summaries since
 // they reflect what was actually extracted and considered worth remembering.
 
-import { and, db, desc, eq, inArray, isNotNull, isNull, sql } from '@audri/shared/db';
-import { agentOpenItems, callTranscripts, wikiPages, wikiSections } from '@audri/shared/db';
+import {
+  aliasedTable,
+  and,
+  db,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from '@audri/shared/db';
+import {
+  agentOpenItems,
+  agents,
+  callTranscripts,
+  todos,
+  wikiPages,
+  wikiSections,
+} from '@audri/shared/db';
 
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
@@ -63,6 +81,20 @@ interface OpenItem {
   createdAt: Date;
 }
 
+// One in-flight todo (status='todo' or 'in-progress'), joined with its
+// wiki page for the title + with its parent_page_id resolved to a slug/title
+// for the grouping. Assignee resolves to the agent slug if non-NULL, else
+// implicitly 'user'. Rendered in the preload as `## Open todos`.
+interface InflightTodo {
+  pageId: string;
+  title: string;
+  status: 'todo' | 'in-progress';
+  parentTitle: string | null;
+  // Resolved persona slug; NULL means user-assigned (the default).
+  assigneeAgentSlug: string | null;
+  dueDate: Date | null;
+}
+
 // Structural snapshot of the wiki — top-level pages + their immediate children
 // (depth 2). Powers the Live Agent's ability to reason about "where does this
 // new thing fit" — see specs/conversational-routing.md (Autonomy principle
@@ -85,23 +117,40 @@ interface PreloadData {
   wikiStructure: WikiStructureNode[];
   incompleteCall: IncompleteCall | null;
   openItems: OpenItem[];
+  inflightTodos: InflightTodo[];
 }
 
 export async function loadGenericCallContext(
   userId: string,
   agentId: string,
 ): Promise<PreloadData> {
-  const [profile, agentNotes, recentPages, wikiStructure, incompleteCall, openItems] =
-    await Promise.all([
-      fetchPagesByPrefix(userId, 'user', 'profile'),
-      fetchPagesByPrefix(userId, 'agent', 'assistant'),
-      fetchRecentPages(userId),
-      fetchWikiStructure(userId),
-      fetchMostRecentIncompleteCall(userId),
-      fetchPendingOpenItems(userId, agentId),
-    ]);
+  const [
+    profile,
+    agentNotes,
+    recentPages,
+    wikiStructure,
+    incompleteCall,
+    openItems,
+    inflightTodos,
+  ] = await Promise.all([
+    fetchPagesByPrefix(userId, 'user', 'profile'),
+    fetchPagesByPrefix(userId, 'agent', 'assistant'),
+    fetchRecentPages(userId),
+    fetchWikiStructure(userId),
+    fetchMostRecentIncompleteCall(userId),
+    fetchPendingOpenItems(userId, agentId),
+    fetchInflightTodos(userId),
+  ]);
 
-  return { profile, agentNotes, recentPages, wikiStructure, incompleteCall, openItems };
+  return {
+    profile,
+    agentNotes,
+    recentPages,
+    wikiStructure,
+    incompleteCall,
+    openItems,
+    inflightTodos,
+  };
 }
 
 async function fetchPagesByPrefix(
@@ -321,6 +370,52 @@ async function fetchMostRecentIncompleteCall(userId: string): Promise<Incomplete
   };
 }
 
+// Pull all in-flight todos for this user (status IN ('todo', 'in-progress')).
+// Audri walks in knowing the user's actual open list. Each row carries title
+// + status + assignee (resolved to agent slug) + due date. The parent_page_id
+// is resolved to the parent's title so the rendered list can group by
+// "associated wiki page" the same way the Todos plugin UX does. Aliased
+// self-join on wiki_pages: one alias = the todo's own page (for title), the
+// other = the parent.
+//
+// No hard cap on count here — the renderer truncates if the user has a huge
+// list. Most users carry tens of in-flight todos at most; cheaper to fetch
+// all than to make the model wonder what's hidden.
+async function fetchInflightTodos(userId: string): Promise<InflightTodo[]> {
+  const todoPage = wikiPages;
+  const parentPage = aliasedTable(wikiPages, 'parent_page');
+  const rows = await db
+    .select({
+      pageId: todos.pageId,
+      title: todoPage.title,
+      status: todos.status,
+      parentTitle: parentPage.title,
+      assigneeAgentSlug: agents.slug,
+      dueDate: todos.dueDate,
+    })
+    .from(todos)
+    .innerJoin(todoPage, eq(todoPage.id, todos.pageId))
+    .leftJoin(parentPage, eq(parentPage.id, todos.parentPageId))
+    .leftJoin(agents, eq(agents.id, todos.assigneeAgentId))
+    .where(
+      and(
+        eq(todos.userId, userId),
+        or(eq(todos.status, 'todo'), eq(todos.status, 'in-progress')),
+        isNull(todoPage.tombstonedAt),
+      ),
+    )
+    .orderBy(desc(todos.updatedAt));
+
+  return rows.map((r) => ({
+    pageId: r.pageId,
+    title: r.title,
+    status: r.status as 'todo' | 'in-progress',
+    parentTitle: r.parentTitle,
+    assigneeAgentSlug: r.assigneeAgentSlug,
+    dueDate: r.dueDate,
+  }));
+}
+
 // Pull pending agent_open_items for this (user, agent) pair, ranked by
 // priority desc, createdAt desc. Composer-only read — does NOT bump
 // `surfaced_at`; that's the post-call resolution pass's job (v0.2 item #6).
@@ -366,6 +461,7 @@ export function renderPreloadBlock(data: PreloadData): string {
     data.recentPages.length === 0 &&
     data.wikiStructure.length === 0 &&
     data.openItems.length === 0 &&
+    data.inflightTodos.length === 0 &&
     !data.incompleteCall
   ) {
     return '';
@@ -401,6 +497,10 @@ export function renderPreloadBlock(data: PreloadData): string {
 
   if (data.recentPages.length > 0) {
     parts.push('', '## Recently active notes', renderRecentPages(data.recentPages));
+  }
+
+  if (data.inflightTodos.length > 0) {
+    parts.push('', '## Open todos', renderInflightTodos(data.inflightTodos));
   }
 
   if (data.openItems.length > 0) {
@@ -464,6 +564,60 @@ function renderRecentPages(pages: RecentPage[]): string {
   return pages
     .map((p) => `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`)
     .join('\n');
+}
+
+// Render the in-flight todos, grouped by parent_page_id title the same way
+// the Todos plugin's swimlanes group them. Audri's job here is to KNOW the
+// list — not recite it. The header guidance tells the agent how to use it
+// (don't dump, reference when contextually relevant). Per-row format keeps
+// status + assignee + due-date inline; "general" (no parent) sorts first.
+function renderInflightTodos(items: InflightTodo[]): string {
+  // Group by parent title.
+  const byParent = new Map<string, InflightTodo[]>();
+  for (const item of items) {
+    const key = item.parentTitle ?? 'General';
+    const list = byParent.get(key) ?? [];
+    list.push(item);
+    byParent.set(key, list);
+  }
+
+  // Format one todo row. Status badge only if 'in-progress' (most are 'todo');
+  // assignee badge only if non-user (most are user-owned). Due date inline
+  // when present. Keep terse — voice context.
+  const formatRow = (t: InflightTodo): string => {
+    const badges: string[] = [];
+    if (t.status === 'in-progress') badges.push('in-progress');
+    if (t.assigneeAgentSlug) badges.push(`assigned to YOU (${t.assigneeAgentSlug})`);
+    if (t.dueDate) badges.push(`due ${t.dueDate.toISOString().slice(0, 10)}`);
+    const badgeText = badges.length > 0 ? ` _(${badges.join(', ')})_` : '';
+    return `- ${t.title}${badgeText}`;
+  };
+
+  const parts: string[] = [
+    "What the user has on their plate right now. Status is 'todo' or 'in-progress' only — completed and archived are hidden. Items grouped by their associated wiki page; 'General' = no specific association.",
+    '',
+    '**Delivery posture:**',
+    "- Don't recite or list these unprompted. Use them like background context — the same way you'd know what someone's working on without needing to bring it up every minute.",
+    '- When the user mentions a topic, you can naturally surface a related todo: "you had a todo to follow up with Alex on that — want me to track when you do?"',
+    '- **Todos assigned to YOU** are commitments you\'ve made back to the user ("I\'ll send you a summary", "I\'ll text you a reminder"). Be aware of them — the user can hold you accountable. If the user mentions one, deliver if you can, or own that you haven\'t yet.',
+    "- If something seems stale or worth dropping, you can gently ask the user whether to archive it. Don't do this often — the user manages their own list.",
+  ];
+
+  // General first, then alphabetical.
+  const generalList = byParent.get('General');
+  if (generalList && generalList.length > 0) {
+    parts.push('', '### General');
+    for (const t of generalList) parts.push(formatRow(t));
+  }
+  const sortedGroups = [...byParent.entries()]
+    .filter(([k]) => k !== 'General')
+    .sort(([a], [b]) => a.localeCompare(b));
+  for (const [parent, list] of sortedGroups) {
+    parts.push('', `### Under \`${parent}\``);
+    for (const t of list) parts.push(formatRow(t));
+  }
+
+  return parts.join('\n');
 }
 
 // Render the open-items queue with delivery guidance. Two kinds need very
