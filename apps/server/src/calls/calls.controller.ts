@@ -14,6 +14,7 @@ import { Throttle } from '@nestjs/throttler';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
+import { fetchPage, searchWiki } from './tools.js';
 import type { TranscriptTurn } from './transcript.types.js';
 
 interface StartCallBody {
@@ -163,5 +164,34 @@ export class CallsController {
 
     this.logger.log({ sessionId, userId: user.id }, 'ingestion retry enqueued');
     return { status: 'retry-enqueued', sessionId };
+  }
+
+  // ── Live-agent tool endpoints ──────────────────────────────────────────
+  // Audri emits function calls during a live call; mobile client receives
+  // them over the Gemini WebSocket, hits these endpoints to fulfill, and
+  // forwards the response back to Gemini via sendToolResponse. All run
+  // under the user's JWT so RLS scopes results correctly.
+  //
+  // Throttled per-user to keep runaway tool-call loops from chewing through
+  // request budget. 60 calls/min is generous — a real call rarely exceeds
+  // 1–2 tool calls per minute.
+
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
+  @Post('tools/search_wiki')
+  async toolSearchWiki(@CurrentUser() user: { id: string }, @Body() body: { query?: string }) {
+    const query = (body.query ?? '').trim();
+    if (!query) return { results: [] };
+    const results = await searchWiki(user.id, query);
+    return { results };
+  }
+
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
+  @Post('tools/fetch_page')
+  async toolFetchPage(@CurrentUser() user: { id: string }, @Body() body: { slug?: string }) {
+    const slug = (body.slug ?? '').trim();
+    if (!slug) throw new BadRequestException('slug required');
+    const page = await fetchPage(user.id, slug);
+    if (!page) return { page: null, error: 'page not found' };
+    return { page };
   }
 }

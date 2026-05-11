@@ -1,6 +1,6 @@
 # SPEC — Onboarding interview + wiki seeding protocol
 
-Status: **draft** — design rules locked across all chunks. Prompt-text drafting + worked examples + evals remain.
+Status: **draft** — design rules locked across all chunks. Prompt-text drafting + worked examples + evals remain. **v0.2 rework landed 2026-05-11:** opener inverted to current-life-first, self-intro reframed as "second brain," capability advert lists the four MVP promises (capture / research / briefs / connectors; dreaming line stays cut per DP-2). See "v0.2 changes" below.
 
 The onboarding interview is the user's first interaction with Audri. It's a Gemini Live call (`call_type='onboarding'`) with a specialized scaffolding that guides Audri through a structured-but-conversational flow to fill out the user's profile pages. The flow runs after a server-side seed transaction populates baseline wiki structure.
 
@@ -137,19 +137,26 @@ Onboarding scaffolding instructs Audri to:
 - Move on when answers are substantive enough OR when the user seems done with that topic
 - Avoid making the user feel interrogated — pace lightly, comment on what they share, sometimes share Audri's own perspective if appropriate
 
-### Opening sequence
+### Opening sequence (v0.2)
 
 Every onboarding call begins with the same shape:
 
-**Self-introduction** (2–4 sentences):
-> *"Hi! I'm Audri. The way this works is — we have voice or text conversations, and I keep track of what matters to you in a kind of personal knowledge base. You can also ask me to do things on your behalf — research a topic, draft an email, that kind of thing. You can rename me and change my voice later in settings. Right now though, I'd love to get to know you a bit."*
+**Self-introduction** (2–4 sentences, "second brain" framing):
+> *"Hi, I'm Audri — think of me like your second brain. You tell me stuff and I remember it for you, and when we hang up I'll record everything we talked about in your personal notes. I can do other things too — research topics for you, put together daily briefs or weekly recaps. Down the road you'll be able to plug me into your email, schedule, and meeting apps to help with work too."*
 
 (Exact wording lives in the onboarding scaffolding prompt; this is the template.)
 
-**Opener question:**
-> *"What brings you to Audri?"* OR *"What were you hoping I could help you with?"*
+**Opener — current-life entry point:**
+> *"The best way to start is just to start. Tell me about what's going on in your life right now. Could be your relationships, a project you're working on, a topic you want to learn more about, anything really. I'll try and find ways of helping out where I can."*
 
-The opener is intentionally broad — it naturally surfaces goals, work, interests, and current concerns simultaneously, and gives Audri organic openings for capability advertisement (see below).
+**Why current-life-first.** Earlier drafts opened with life-history ("walk me through the rough shape of your life"). Field-test feedback (Max, 2026-05-09): asking for narrative work upfront with no payoff in sight is the wrong opener. Inverting to current-life-first gives Audri live material to immediately demonstrate value against (capture a thought, queue a research task, surface a relevant connection) — the system's usefulness lands in the first call, not in some imagined future one. Life-history depth accumulates organically over future calls.
+
+Acceptable variations Audri can riff on:
+- "Tell me about what's going on in your life right now."
+- "What's on your mind these days?"
+- "What are you in the middle of? Could be a project, something you're learning, something going on with people in your life — anywhere."
+
+If the user gives a one-line answer or seems tentative, Audri offers a shorter, more concrete prompt rather than retreating to broad framings: "What were you doing this morning? What's been taking up your headspace?"
 
 ### Capability advertisement during onboarding
 
@@ -163,18 +170,20 @@ Discipline:
 
 Goal: by call end, the user has heard 2–4 capability mentions naturally interspersed with the conversation, and has accepted at least one (or politely declined) — enough to build a rough mental model of what Audri can do. Without a single moment that felt like a tour.
 
-### Topic coverage — askable vs. emergent
+### Topic coverage — askable vs. emergent (v0.2 priority order)
 
-The 9 profile areas split into two groups for onboarding purposes:
+The 9 profile areas split into two groups for onboarding purposes. Within the askable set, v0.2 reorders priority to put current-life-first (paired with the opener change above):
 
-**Askable (7 areas)** — Audri may direct conversation toward these:
-- **Goals**: at least one short-term + one long-term goal, ideally with the *why*
-- **Life-History**: chapter-level narrative — where the user grew up, education, broad strokes of career, key turning points or formative experiences. **Intentionally light at onboarding** ("walk me through the rough shape — we can dig in over time"); depth accumulates organically as biographical references come up in future calls.
-- **Health**: current state, anything actively managed (sleep, fitness, nutrition, conditions), how the user thinks about health
-- **Work**: current role + organization, what kind of work they do, what's interesting/hard/aspirational about it
-- **Interests**: 3–5 things the user is genuinely curious about or enjoys
-- **Relationships**: who's important — family, partner, close friends, key colleagues. Names + brief context. (Don't pry into emotionally-loaded territory; just orient.)
-- **Preferences**: communication style, how they like to be spoken to, formality, directness, humor
+**Current-life askable (lead with these — primary first-call material):**
+- **Work**: current role + organization, what kind of work, what's interesting / hard / aspirational right now
+- **Projects + interests**: what they're actively working on, learning, building, exploring. Both serious and casual. 3–5 things.
+- **Relationships**: who's important right now — family, partner, close friends, key colleagues. Names + brief context. Don't pry; just orient.
+- **Goals**: short-term + long-term, ideally with the *why*. Often emerges naturally from work + projects conversation.
+
+**Background askable (cover when natural opening appears; skip without anxiety):**
+- **Life-History**: chapter-level — where they grew up, broad strokes of career, key turning points. **Don't push on the first call**; if it comes up organically, great; if not, future calls fill it in. Lighter at onboarding than the prior spec implied.
+- **Health**: current state, anything actively managed (sleep, fitness, nutrition, conditions). Can feel intrusive if asked unprompted — let it surface from goals or work-stress mentions.
+- **Preferences**: communication style, formality, directness, humor. Mostly emergent — Audri observes how the user talks and adapts, rather than directly asking.
 
 **Emergent-only (2 areas)** — Audri never directs conversation toward these. Their pages get populated from claims that surface naturally during conversation about the askable areas:
 - **Values**: captured when the user volunteers them ("I really care about doing meaningful work") OR inferred from how they talk about goals / work / life-history. Asking "what are your values?" feels stilted and produces shallow answers; far better to let them emerge.
@@ -204,7 +213,7 @@ For mid-call progress: Audri maintains a working sense of "covered areas" and re
 Target call length: ~10 minutes average. Some users naturally take less; some go longer. The wrap heuristic shouldn't push toward longer calls.
 
 Audri wraps onboarding when at least ONE of:
-- **4+ of 7 askable profile areas covered substantively** (enough material for fan-out to produce 2+ claims each). Values + Psychology don't count toward this threshold — they're emergent.
+- **3+ of the current-life-first askable areas covered substantively** (Work / Projects+Interests / Relationships / Goals). Background areas (Life-History / Health / Preferences) don't count toward this threshold — they accumulate organically over future calls. Values + Psychology don't count either — they're emergent.
 - **User explicitly signals done** ("I think that's enough for now," "let's stop here," "I'd rather just start using it")
 - **User has been on the call for 15+ minutes** (soft cap — Audri offers to wrap; user can extend if mid-thought)
 
@@ -248,6 +257,19 @@ Agent-scope ingestion also runs (per `specs/agent-scope-ingestion.md`) — Assis
 - **Persona customization in onboarding**: same — not at MVP. User can edit the Assistant's `user_prompt_notes` in V1+.
 - **Onboarding analytics**: V1+ — track completion rate, drop-off points, time-to-good-enough.
 - **Multilingual onboarding**: V1+ — MVP is English-only.
+
+---
+
+## v0.2 changes (2026-05-11)
+
+Three coordinated revisions to the prior onboarding design:
+
+1. **Opener inverted to current-life-first.** Old: "where are you from, what's your story so far" (life-history-first). New: "tell me about what's going on in your life right now." Rationale: asks the user to do narrative work upfront with no payoff in sight is the wrong opener; current-life gives Audri immediate material to demonstrate value against.
+2. **Self-intro reframed as "second brain."** Old: "voice-first AI assistant... voice or text conversations." New: "think of me like your second brain. You tell me stuff and I remember it for you, and when we hang up I'll record everything in your personal notes." Captures what Audri does in one line and explicitly names the after-call recording so the user trusts the conversation isn't ephemeral.
+3. **Capability advert lists four MVP promises explicitly.** Capture (always-on), Research (shipped), Briefs/recaps (forward-looking, v0.3+), Connectors (forward-looking, v0.3+). Dreaming line stays cut per DP-2 (returns when v0.3 ships dreaming).
+4. **Topic priority reordered.** Within the askable set, current-life areas (Work / Projects+Interests / Relationships / Goals) lead; background areas (Life-History / Health / Preferences) cover only when natural openings appear. Wrap threshold dropped from "4 of 7 askable" to "3 of 4 current-life askable" — background no longer gates wrap.
+
+These changes track promises Audri seeds in the onboarding script — see `build-phases/v0.2.0.md` "Promises seeded by onboarding (tracking)" for the cross-phase delivery commitments those four capabilities create.
 
 ---
 

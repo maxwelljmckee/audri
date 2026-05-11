@@ -1,10 +1,66 @@
 import { randomUUID } from 'node:crypto';
 import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
 import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
-import { EndSensitivity, Modality, StartSensitivity } from '@google/genai';
+import {
+  EndSensitivity,
+  type FunctionDeclaration,
+  Modality,
+  StartSensitivity,
+  type Tool,
+  Type,
+} from '@google/genai';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { loadGenericCallContext, renderPreloadBlock } from './preload.js';
 import { composeSystemPrompt } from './system-prompt.js';
+
+// Function declarations for live-agent tool calls. Backed by endpoints in
+// calls.controller.ts (tools/search_wiki, tools/fetch_page). googleSearch
+// grounding is a built-in Gemini tool — model handles it internally, no
+// client fulfillment needed. Wiki tools cost roughly nothing on each call;
+// googleSearch grounding bills per request, so the prompt steers the model
+// toward wiki-first / web-conservative.
+const SEARCH_WIKI_DECL: FunctionDeclaration = {
+  name: 'search_wiki',
+  description:
+    "Search the user's personal notes (wiki) for content related to a topic. Cheap; use freely whenever you suspect the user has notes on something. Returns up to 5 best-matching pages with a short snippet from each.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description:
+          "Free-form natural-language search query — the topic or entity you're looking up. Example: 'consensus social technology' or 'Sarah relationship'.",
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const FETCH_PAGE_DECL: FunctionDeclaration = {
+  name: 'fetch_page',
+  description:
+    "Fetch the full content of a single wiki page by its slug. Use after a search_wiki result if you need the page's full content, or to read a page the user references by name. Returns title + abstract + all sections.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      slug: {
+        type: Type.STRING,
+        description:
+          "The wiki page slug (e.g. 'projects/consensus', 'profile/goals', 'people/sarah'). Slugs come from search_wiki results or the preload's Notes-structure section.",
+      },
+    },
+    required: ['slug'],
+  },
+};
+
+const LIVE_TOOLS: Tool[] = [
+  {
+    functionDeclarations: [SEARCH_WIKI_DECL, FETCH_PAGE_DECL],
+  },
+  // Gemini-native grounded web search. Model handles internally; no client
+  // fulfillment. Billed per request — use conservatively (steered by prompt).
+  { googleSearch: {} },
+];
 
 export interface StartCallArgs {
   userId: string;
@@ -80,6 +136,7 @@ export class CallsService {
               },
             },
             systemInstruction: { parts: [{ text: systemInstruction }] },
+            tools: LIVE_TOOLS,
           },
         },
         httpOptions: { apiVersion: 'v1alpha' },

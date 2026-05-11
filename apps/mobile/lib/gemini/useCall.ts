@@ -14,6 +14,7 @@ import { useCallStore } from '../useCallStore';
 import { type AudioInputHandle, createAudioInput } from './audio-input';
 import { type AudioOutputHandle, createAudioOutput } from './audio-output';
 import { type SessionHandle, openSession } from './session';
+import { handleToolCalls } from './tool-runtime';
 import { type TranscriptTurn, createTranscript } from './transcript';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
@@ -215,6 +216,17 @@ export function useCall(): UseCallResult {
                 useCallStore.getState().markDropped();
                 setError(`connection closed: ${reason}`);
               }
+            },
+            onToolCall: (calls) => {
+              // Don't block the message handler — fulfill async and reply
+              // when ready. handleToolCalls catches its own errors and
+              // ensures every call gets a response (success or error
+              // payload) so Gemini Live isn't left waiting.
+              void handleToolCalls(calls, (responses) => {
+                if (sessionRef.current?.isOpen()) {
+                  sessionRef.current.sendToolResponse(responses);
+                }
+              });
             },
           },
         );

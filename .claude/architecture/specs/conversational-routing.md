@@ -1,6 +1,6 @@
 # SPEC — Conversational Routing
 
-Status: **structural decisions locked 2026-05-05** — taxonomy + architecture resolved; persona prose + telemetry tag format pending implementation pass.
+Status: **structural decisions locked 2026-05-05** — taxonomy + architecture resolved; persona prose + telemetry tag format pending implementation pass. **v0.2 reframe landed 2026-05-11:** implementation switched from numbered-taxonomy prescriptive prose to multi-shot examples in descriptive register. See "v0.2 reframe" below; structural decisions below remain in force.
 
 Per-turn modulation of the Live agent's conversational style based on user intent. Each user turn is classified (implicitly, by the model itself) into one of a finite set of intents, which maps to a persona that determines the agent's response posture. The framework is gated to **user-led call types only** (currently `generic`); agent-led call types (e.g. `onboarding`) keep their existing scripted flow without the routing layer.
 
@@ -140,6 +140,31 @@ Once real generic-call transcripts accumulate, iterate on the prose where misrou
 - **Write-tool action axis.** Deferred until `create_todo` / `create_note` and similar live tools land. At that point this spec should be revisited (decision 1 caveat).
 - **Per-call type persona menu constraint beyond the user-led / agent-led split.** Today: full set available in user-led, none in agent-led. We don't preemptively gate specific personas inside user-led call types.
 - **Persona naming for V1+ (custom agents).** This spec is about *intra-agent* style modulation. The separate "agent persona" concept (different agents with different voices and system prompts — see `agents-and-scope.md`) is orthogonal and unaffected.
+
+---
+
+## v0.2 reframe (2026-05-11)
+
+Phase 1 shipped a section called "Conversational posture" with four numbered postures (Self-exploration / Information-seeking / Brainstorming / Capture), each described as `**N. Name.** Posture: <do X>`. The spec itself describes provenance as a *lens* and personas as *style signatures*, but the prompt drifted toward prescriptive: enumerate, then instruct. Field-test (Max, 2026-05-09) was unsatisfying — the dynamics felt forced, consistent with the known LLM failure mode of snap-to-grid classification ("I sense this is self-exploration mode" → perform self-exploration regardless of nuance).
+
+v0.2 reframes the section without revisiting the structural decisions above:
+
+- **Renamed `# Conversational posture` → `# Reading the moment`.** Frames the section as observational, not classificatory.
+- **Dropped the numbered taxonomy from the prompt surface.** The four personas / postures don't appear as labels in the prompt anymore. The model gets the texture of varied engagement from examples; it doesn't try to identify which posture a turn belongs to.
+- **Replaced rule-style prose with multi-shot dialogue examples.** Eight example moments paired with short descriptive texture rather than "Posture: do X" instructions. The moments span:
+  - someone working something out (was: Self-exploration)
+  - someone after knowledge (was: Information-seeking)
+  - someone building with you (was: Brainstorming)
+  - someone dropping a thought (was: Capture)
+  - **NEW** someone updating something you already knew (recognition / reaffirmation)
+  - **NEW** someone contradicting something you carry (recognition / contradiction — earns its keep against the bi-temporal claims model)
+  - **NEW** someone reaching for something (temporal awareness / aspirational)
+  - **NEW** someone giving you background (temporal awareness / historical)
+- **Absorbed the prior `# Continuity across turns` and `# Ambiguity` sections** into trailing prose under the same section. Same content, integrated rather than separated.
+
+Internal architectural decisions (1–4 above) remain in force: single intent axis, three provenance classes underlying the shapes, static prompt with model self-routing, gated to user-led call types only. The four-posture *concept* still organizes the spec's mental model; the *prompt surface* just doesn't expose the labels.
+
+**What's effectively new vs. Phase 1.** The recognition + temporal layers added in v0.2 leverage the v0.2 substrate (`extracted_claims` bi-temporal model + the wiki preload). They give the prompt content-aware moves on top of intent-aware moves — handling "you already know this" vs. "this is new" vs. "this contradicts what you have" as distinct shapes the agent meets differently. Decision 1's "single axis" caveat about write tools still applies; recognition is still a read-side move (acknowledge what you remember, surface contradictions for confirmation) — not a write-side one.
 
 ---
 

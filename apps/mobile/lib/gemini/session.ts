@@ -1,7 +1,13 @@
 // Thin typed wrapper around @google/genai's ai.live.connect.
 // Knows nothing about audio buffers, transcripts, or the call store.
 
-import { GoogleGenAI, type LiveServerMessage, type Session } from '@google/genai';
+import {
+  type FunctionCall,
+  type FunctionResponse,
+  GoogleGenAI,
+  type LiveServerMessage,
+  type Session,
+} from '@google/genai';
 
 export interface SessionConfig {
   ephemeralToken: string;
@@ -20,11 +26,17 @@ export interface SessionCallbacks {
   onInterrupted?: () => void;
   onError?: (err: Error) => void;
   onClose?: (reason: string) => void;
+  // Model called a function tool. Caller is responsible for fulfilling
+  // (typically by hitting the API) and replying via sendToolResponse on the
+  // SessionHandle. Tool calls arrive as batches; respond with one
+  // FunctionResponse per FunctionCall received (matching `id`).
+  onToolCall?: (calls: FunctionCall[]) => void;
 }
 
 export interface SessionHandle {
   sendAudio: (base64Pcm: string) => void;
   sendText: (text: string) => void;
+  sendToolResponse: (responses: FunctionResponse[]) => void;
   close: () => void;
   isOpen: () => boolean;
 }
@@ -59,6 +71,8 @@ export async function openSession(
         if (inn?.text) callbacks.onUserText?.(inn.text);
         if (msg.serverContent?.interrupted) callbacks.onInterrupted?.();
         if (msg.serverContent?.turnComplete) callbacks.onTurnComplete?.();
+        const toolCalls = msg.toolCall?.functionCalls;
+        if (toolCalls && toolCalls.length > 0) callbacks.onToolCall?.(toolCalls);
       },
       onerror: (e: ErrorEvent) => callbacks.onError?.(new Error(e.message)),
       onclose: (e: CloseEvent) => {
@@ -78,6 +92,10 @@ export async function openSession(
     sendText: (text) => {
       if (closed) return;
       session.sendRealtimeInput({ text });
+    },
+    sendToolResponse: (responses) => {
+      if (closed) return;
+      session.sendToolResponse({ functionResponses: responses });
     },
     close: () => {
       if (closed) return;
