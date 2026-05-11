@@ -33,7 +33,8 @@ import {
   wikiSections,
 } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
-import { Type } from '@google/genai';
+import { Type, type UsageMetadata } from '@google/genai';
+import { recordInferenceUsage } from '../usage/record-inference.js';
 import { logger } from '../logger.js';
 import type { IngestionTranscriptTurn } from './flash-candidate-retrieval.js';
 import { parseGeminiJson } from './parse-gemini-json.js';
@@ -265,7 +266,12 @@ interface AgentScopeInput {
   pendingItems: PendingItemInput[];
 }
 
-async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeResult> {
+interface RunAgentScopeFlashReturn {
+  result: AgentScopeResult;
+  usage: UsageMetadata | undefined;
+}
+
+async function runAgentScopeFlash(input: AgentScopeInput): Promise<RunAgentScopeFlashReturn> {
   const transcriptWithIds = input.transcript.map((t, i) => ({
     id: `turn-${i}`,
     role: t.role,
@@ -404,13 +410,22 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<AgentScopeRes
   });
 
   const parsed = parseGeminiJson<Partial<AgentScopeResult>>(resp, 'agent-scope-flash');
-  if (!parsed) return { creates: [], updates: [], skipped: [], resolutions: [], new_items: [] };
+  const usage = resp.usageMetadata;
+  if (!parsed) {
+    return {
+      result: { creates: [], updates: [], skipped: [], resolutions: [], new_items: [] },
+      usage,
+    };
+  }
   return {
-    creates: Array.isArray(parsed.creates) ? parsed.creates : [],
-    updates: Array.isArray(parsed.updates) ? parsed.updates : [],
-    skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
-    resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions : [],
-    new_items: Array.isArray(parsed.new_items) ? parsed.new_items : [],
+    result: {
+      creates: Array.isArray(parsed.creates) ? parsed.creates : [],
+      updates: Array.isArray(parsed.updates) ? parsed.updates : [],
+      skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
+      resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions : [],
+      new_items: Array.isArray(parsed.new_items) ? parsed.new_items : [],
+    },
+    usage,
   };
 }
 
@@ -845,12 +860,24 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
     };
   }
 
-  const result = await runAgentScopeFlash({
+  const flashReturn = await runAgentScopeFlash({
     transcript: opts.transcript,
     agentWiki,
     userProfileBrief: opts.userFirstName ? { name: opts.userFirstName } : {},
     callMetadata: opts.callMetadata,
     pendingItems,
+  });
+  const result = flashReturn.result;
+
+  // Best-effort usage row. Fired regardless of commit success — the Flash
+  // call cost is incurred at the API boundary, not at commit time.
+  await recordInferenceUsage({
+    userId: opts.userId,
+    agentId: opts.agentId,
+    callTranscriptId: opts.transcriptId,
+    eventKind: 'agent_scope_ingestion',
+    model: FLASH_MODEL,
+    usage: flashReturn.usage,
   });
 
   const counts = await commitAgentScope({

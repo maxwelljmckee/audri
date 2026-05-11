@@ -10,11 +10,15 @@
 // it CANNOT recover anything Flash misses.
 
 import { getGeminiClient } from '@audri/shared/gemini';
-import { Type } from '@google/genai';
+import { Type, type UsageMetadata } from '@google/genai';
 import { parseGeminiJson } from './parse-gemini-json.js';
 import type { WikiIndexEntry } from './wiki-index.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';
+
+// Re-exported so callers can attribute usage_events writes to the same
+// model string the request actually used.
+export const FLASH_CANDIDATE_RETRIEVAL_MODEL = FLASH_MODEL;
 
 export interface TouchedPage {
   slug: string;
@@ -259,10 +263,15 @@ Transcript:
 Output:
 {"touched_pages": [], "new_pages": []}`;
 
+export interface RetrieveCandidatesReturn {
+  candidates: FlashCandidateResult;
+  usage: UsageMetadata | undefined;
+}
+
 export async function retrieveCandidates(
   transcript: IngestionTranscriptTurn[],
   wikiIndex: WikiIndexEntry[],
-): Promise<FlashCandidateResult> {
+): Promise<RetrieveCandidatesReturn> {
   const flat = transcript.map((t) => `[${t.role}] ${t.text}`).join('\n');
   const indexJson = JSON.stringify(wikiIndex, null, 2);
 
@@ -306,9 +315,13 @@ export async function retrieveCandidates(
   });
 
   const parsed = parseGeminiJson<Partial<FlashCandidateResult>>(resp, 'flash-candidate-retrieval');
-  if (!parsed) return { touched_pages: [], new_pages: [] };
+  const usage = resp.usageMetadata;
+  if (!parsed) return { candidates: { touched_pages: [], new_pages: [] }, usage };
   return {
-    touched_pages: Array.isArray(parsed.touched_pages) ? parsed.touched_pages : [],
-    new_pages: Array.isArray(parsed.new_pages) ? parsed.new_pages : [],
+    candidates: {
+      touched_pages: Array.isArray(parsed.touched_pages) ? parsed.touched_pages : [],
+      new_pages: Array.isArray(parsed.new_pages) ? parsed.new_pages : [],
+    },
+    usage,
   };
 }

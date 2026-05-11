@@ -155,6 +155,13 @@
       "when": 1778505291728,
       "tag": "0021_stiff_lenny_balinger",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1778522824161,
+      "tag": "0022_unknown_lionheart",
+      "breakpoints": true
     }
   ]
 }

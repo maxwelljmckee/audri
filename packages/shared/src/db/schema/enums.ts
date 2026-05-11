@@ -51,6 +51,7 @@ export const usageEventKindEnum = pgEnum('usage_event_kind', [
   'plugin_research',
   'tool_search_wiki',
   'tool_fetch_page',
+  'web_search',
 ]);
 
 export const artifactKindEnum = pgEnum('artifact_kind', ['research']);

@@ -35,6 +35,11 @@
       "types": "./dist/posthog.d.ts",
       "import": "./dist/posthog.js",
       "default": "./dist/posthog.js"
+    },
+    "./usage": {
+      "types": "./dist/usage/index.d.ts",
+      "import": "./dist/usage/index.js",
+      "default": "./dist/usage/index.js"
     }
   },
   "files": ["dist"],

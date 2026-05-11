@@ -1,0 +1,16 @@
+-- v0.2.1 — add 'web_search' to usage_event_kind enum.
+-- Used by the grounding-cost writer in apps/worker/src/tasks/ingestion.ts
+-- to record one usage_events row per call with N googleSearch credits.
+--
+-- Per the v0.2.0 enum-add lesson (build-phases/v0.2.0.md → Migration
+-- handling lessons): `ALTER TYPE ADD VALUE` cannot share a transaction
+-- with `'value'::usage_event_kind` casts. Drizzle's postgres-js migrator
+-- wraps all pending migrations in one transaction, so if any subsequent
+-- migration in the same `db:migrate` run uses the new value, the run
+-- fails. **No subsequent migration in this PR uses the value as a cast**,
+-- so the shared-transaction failure doesn't apply here. If a future
+-- migration adds a CHECK constraint or DEFAULT referencing 'web_search',
+-- run THIS file manually via Supabase SQL editor first, then `db:migrate`.
+--
+-- IF NOT EXISTS makes the migration a safe no-op on retry.
+ALTER TYPE "public"."usage_event_kind" ADD VALUE IF NOT EXISTS 'web_search';

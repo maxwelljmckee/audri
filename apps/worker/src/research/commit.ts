@@ -29,6 +29,7 @@ import {
   wikiPages,
   wikiSections,
 } from '@audri/shared/db';
+import { computeCostCents, tokenTotalsFromUsage } from '@audri/shared/usage';
 import { logger } from '../logger.js';
 import type { ResearchDelta, ResearchHandlerResult } from './handler.js';
 
@@ -47,7 +48,16 @@ export interface CommitResult {
 
 export async function commitResearchOutput(args: CommitArgs): Promise<CommitResult> {
   const { userId, agentTaskId, todoPageId, result } = args;
-  const { output, modelUsed, tokensIn, tokensOut } = result;
+  const { output, modelUsed, usage } = result;
+
+  // Tokens for the research_outputs.tokensIn/Out legacy columns + the
+  // usage_events row. tokenTotalsFromUsage returns {input,output,cached}.
+  // When usage is undefined (rare), tokens default to 0 — the row is
+  // still useful as an audit breadcrumb even without billable counts.
+  const tokens = usage ? tokenTotalsFromUsage(usage) : { input: 0, output: 0, cached: 0 };
+  const tokensIn = tokens.input;
+  const tokensOut = tokens.output;
+  const costCents = usage ? computeCostCents(modelUsed, usage) : '0';
 
   return db.transaction(async (tx) => {
     // 1. Insert research_outputs row.
@@ -132,14 +142,16 @@ export async function commitResearchOutput(args: CommitArgs): Promise<CommitResu
       })
       .where(eq(todos.pageId, todoPageId));
 
-    // 5. Usage event.
+    // 5. Usage event — cost computed via shared pricing module.
     await tx.insert(usageEvents).values({
       userId,
       agentTasksId: agentTaskId,
       eventKind: 'plugin_research',
       inputTokens: tokensIn,
       outputTokens: tokensOut,
+      cachedTokens: tokens.cached,
       model: modelUsed,
+      costCents,
       artifactKind: 'research',
       artifactId: researchOutputId,
     });

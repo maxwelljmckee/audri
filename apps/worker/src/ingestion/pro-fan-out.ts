@@ -8,7 +8,7 @@
 // Pro does NOT do candidate retrieval (Flash) or DB commit (backend).
 
 import { getGeminiClient } from '@audri/shared/gemini';
-import { Type } from '@google/genai';
+import { Type, type UsageMetadata } from '@google/genai';
 import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { IngestionTranscriptTurn, NewPage } from './flash-candidate-retrieval.js';
@@ -17,6 +17,10 @@ import { parseGeminiJson } from './parse-gemini-json.js';
 // Pro fan-out runs on gemini-3.1-pro-preview. Requires paid-tier GCP billing.
 // Override via env for development on Flash if billing's off.
 const PRO_MODEL = process.env.INGESTION_MODEL ?? 'gemini-3.1-pro-preview';
+
+// Re-exported so the caller (tasks/ingestion.ts) can attribute usage_events
+// to the same model string the request actually used.
+export const PRO_FAN_OUT_MODEL = PRO_MODEL;
 
 export interface SnippetWrite {
   turn_id: string;
@@ -607,7 +611,12 @@ export interface ProFanOutInput {
   groundingSources?: GroundingSource[];
 }
 
-export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult> {
+export interface RunFanOutReturn {
+  result: ProFanOutResult;
+  usage: UsageMetadata | undefined;
+}
+
+export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn> {
   // Use turn ids in the prompt so Pro can cite them in snippets.
   const transcriptWithIds = (
     input.transcript as Array<{ id?: string; role: string; text: string }>
@@ -757,7 +766,13 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
   });
 
   const parsed = parseGeminiJson<Partial<ProFanOutResult>>(resp, 'pro-fan-out');
-  if (!parsed) return { creates: [], updates: [], skipped: [], tasks: [] };
+  const usage = resp.usageMetadata;
+  if (!parsed) {
+    return {
+      result: { creates: [], updates: [], skipped: [], tasks: [] },
+      usage,
+    };
+  }
   // Filter tasks defensively — drop unknown kinds; current MVP plugin set is
   // research-only, so anything else is hallucinated.
   const rawTasks = Array.isArray(parsed.tasks) ? (parsed.tasks as ExtractedTask[]) : [];
@@ -766,10 +781,13 @@ export async function runFanOut(input: ProFanOutInput): Promise<ProFanOutResult>
   );
 
   return {
-    creates: Array.isArray(parsed.creates) ? (parsed.creates as PageCreate[]) : [],
-    updates: Array.isArray(parsed.updates) ? (parsed.updates as PageUpdate[]) : [],
-    skipped: Array.isArray(parsed.skipped) ? (parsed.skipped as SkippedClaim[]) : [],
-    tasks,
+    result: {
+      creates: Array.isArray(parsed.creates) ? (parsed.creates as PageCreate[]) : [],
+      updates: Array.isArray(parsed.updates) ? (parsed.updates as PageUpdate[]) : [],
+      skipped: Array.isArray(parsed.skipped) ? (parsed.skipped as SkippedClaim[]) : [],
+      tasks,
+    },
+    usage,
   };
 }
 

@@ -72,11 +72,13 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
       const validatedPayload = ResearchPayloadZ.parse(task.payload);
       log('research handler starting', { query: validatedPayload.query });
       const result = await runResearch(task.userId, validatedPayload);
+      const promptTokens = result.usage?.promptTokenCount ?? 0;
+      const responseTokens = result.usage?.responseTokenCount ?? 0;
       log('research handler complete', {
         findings: result.output.findings.length,
         citations: result.output.citations.length,
-        tokensIn: result.tokensIn,
-        tokensOut: result.tokensOut,
+        tokensIn: promptTokens,
+        tokensOut: responseTokens,
       });
       await commitResearchOutput({
         userId: task.userId,
@@ -88,8 +90,8 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
       capture(task.userId, 'agent_task.succeeded', {
         kind: task.kind,
         agentTaskId: task.id,
-        tokensIn: result.tokensIn,
-        tokensOut: result.tokensOut,
+        tokensIn: promptTokens,
+        tokensOut: responseTokens,
       });
     } else {
       throw new Error(`unknown agent_task kind: ${task.kind}`);

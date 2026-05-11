@@ -15,7 +15,7 @@
 // validate post-hoc with zod.
 
 import { getGeminiClient } from '@audri/shared/gemini';
-import type { Tool } from '@google/genai';
+import type { Tool, UsageMetadata } from '@google/genai';
 import { z } from 'zod';
 import { logger } from '../logger.js';
 import { type VaultScanResult, renderVaultScan, vaultScan } from './vault-scan.js';
@@ -59,16 +59,7 @@ const FindingZ = z.object({
 // research_outputs row as its provenance once committed.
 const DeltaCreatePageZ = z.object({
   slug: z.string().min(1),
-  type: z.enum([
-    'person',
-    'concept',
-    'project',
-    'place',
-    'org',
-    'source',
-    'event',
-    'note',
-  ]),
+  type: z.enum(['person', 'concept', 'project', 'place', 'org', 'source', 'event', 'note']),
   parent_slug: z.string().min(1),
   title: z.string().min(1),
   agent_abstract: z.string().min(1),
@@ -130,8 +121,10 @@ export interface ResearchHandlerResult {
   output: ResearchOutput;
   scan: VaultScanResult;
   modelUsed: string;
-  tokensIn: number;
-  tokensOut: number;
+  // Full Gemini usage metadata — consumed by research/commit.ts to write
+  // a `usage_events` row with cost computed via the shared pricing module.
+  // Undefined when the model omitted the field (rare but possible).
+  usage: UsageMetadata | undefined;
 }
 
 const SYSTEM_PROMPT = `You are Audri's research handler. You are NOT in conversation with the user — you produce a written research report AND a structured delta that updates the user's personal notes.
@@ -340,19 +333,11 @@ export async function runResearch(
 
   const validated = ResearchOutputZ.parse(parsed);
 
-  // Token usage — best-effort extraction. Defaults to 0 if absent.
-  const meta = (
-    resp as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }
-  ).usageMetadata;
-  const tokensIn = meta?.promptTokenCount ?? 0;
-  const tokensOut = meta?.candidatesTokenCount ?? 0;
-
   return {
     output: validated,
     scan,
     modelUsed: RESEARCH_MODEL,
-    tokensIn,
-    tokensOut,
+    usage: resp.usageMetadata,
   };
 }
 

@@ -25,11 +25,13 @@ import { runAgentScopeIngestion } from '../ingestion/agent-scope.js';
 import { fetchCandidatePages } from '../ingestion/candidate-pages.js';
 import { commitFanOut } from '../ingestion/commit.js';
 import {
+  FLASH_CANDIDATE_RETRIEVAL_MODEL,
   type IngestionTranscriptTurn,
   retrieveCandidates,
 } from '../ingestion/flash-candidate-retrieval.js';
-import { runFanOut } from '../ingestion/pro-fan-out.js';
+import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
+import { recordInferenceUsage, recordWebSearchUsage } from '../usage/record-inference.js';
 import { logger } from '../logger.js';
 
 export interface IngestionPayload {
@@ -109,6 +111,22 @@ export const ingestion: Task = async (payload, helpers) => {
     log('grounding sources from live call', { count: groundingSources.length });
   }
 
+  // Web-search billing — separate from URL citation. Each entry in any
+  // grounding hit's `webSearchQueries[]` is one billable credit. Recorded
+  // once per call as a single `web_search` usage_events row; cost computed
+  // via WEB_SEARCH_USD_PER_REQUEST. Best-effort; failure logged but does
+  // not block ingestion.
+  const webSearchCredits = countWebSearchCredits(transcriptRow.toolCalls);
+  if (webSearchCredits > 0) {
+    log('web search credits from live call', { credits: webSearchCredits });
+    await recordWebSearchUsage({
+      userId: p.userId,
+      agentId: p.agentId,
+      callTranscriptId: p.transcriptId,
+      credits: webSearchCredits,
+    });
+  }
+
   // ── User-scope and agent-scope passes run in parallel. Independent
   //    lifecycles per specs/agent-scope-ingestion.md — one failing doesn't
   //    block the other.
@@ -177,7 +195,19 @@ async function runUserScopePipeline(
   const wikiIndex = await fetchUserWikiIndex(p.userId);
   log(`wiki index size = ${wikiIndex.length}`);
 
-  const candidates = await retrieveCandidates(transcript, wikiIndex);
+  const flashRetrievalResult = await retrieveCandidates(transcript, wikiIndex);
+  const candidates = flashRetrievalResult.candidates;
+  // Best-effort usage row for Flash candidate retrieval. Fires whether or
+  // not the noteworthiness gate passes — Flash always ran, so Flash always
+  // cost.
+  await recordInferenceUsage({
+    userId: p.userId,
+    agentId: p.agentId,
+    callTranscriptId: p.transcriptId,
+    eventKind: 'ingestion_prefilter',
+    model: FLASH_CANDIDATE_RETRIEVAL_MODEL,
+    usage: flashRetrievalResult.usage,
+  });
   log(
     `flash candidates: touched=${candidates.touched_pages.length}, new=${candidates.new_pages.length}`,
   );
@@ -191,12 +221,21 @@ async function runUserScopePipeline(
   const candidatePages = await fetchCandidatePages(p.userId, touchedSlugs);
   log(`fetched ${candidatePages.length}/${touchedSlugs.length} candidate pages`);
 
-  const fanOut = await runFanOut({
+  const fanOutReturn = await runFanOut({
     transcript,
     newPages: candidates.new_pages,
     touchedPages: candidatePages,
     callTimestamp,
     groundingSources,
+  });
+  const fanOut = fanOutReturn.result;
+  await recordInferenceUsage({
+    userId: p.userId,
+    agentId: p.agentId,
+    callTranscriptId: p.transcriptId,
+    eventKind: 'ingestion',
+    model: PRO_FAN_OUT_MODEL,
+    usage: fanOutReturn.usage,
   });
   log(
     `pro fan-out: creates=${fanOut.creates.length}, updates=${fanOut.updates.length}, skipped=${fanOut.skipped.length}, tasks=${fanOut.tasks.length}`,
@@ -211,6 +250,24 @@ async function runUserScopePipeline(
     groundingSources,
   });
   log('user-scope commit complete', { ...commitResult });
+}
+
+// Count total `webSearchQueries` across all grounding hits in the tool
+// log — that's the number of billable googleSearch credits the call
+// consumed. Each query is 1 credit at $0.014 per credit (per pricing.ts).
+// Defensive against missing/malformed shapes — returns 0 in any failure
+// case so the absence of billing data never blocks ingestion.
+function countWebSearchCredits(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const log = raw as { groundingHits?: unknown };
+  if (!Array.isArray(log.groundingHits)) return 0;
+  let total = 0;
+  for (const hit of log.groundingHits) {
+    if (!hit || typeof hit !== 'object') continue;
+    const queries = (hit as { webSearchQueries?: unknown }).webSearchQueries;
+    if (Array.isArray(queries)) total += queries.length;
+  }
+  return total;
 }
 
 // Flatten + dedup the mobile client's tool-call log into a list of unique
