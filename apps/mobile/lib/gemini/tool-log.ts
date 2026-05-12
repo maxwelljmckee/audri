@@ -16,6 +16,7 @@
 // later opt in to read these and write `wiki_section_urls` rows when
 // agent-grounded statements get promoted to claims.
 
+import { MediaModality } from '@google/genai';
 import type {
   FunctionCall,
   FunctionResponse,
@@ -43,10 +44,14 @@ export interface CustomToolCallRecord {
 export interface ToolCallLogPayload {
   groundingHits: GroundingHit[];
   customToolCalls: CustomToolCallRecord[];
-  // Latest UsageMetadata seen during the session. Gemini Live appears to
-  // emit cumulative-since-session-start values, so last-wins overwrite is
-  // correct. Server uses this to write a `call_live` usage_events row on
-  // /end. Undefined if no UsageMetadata arrived (rare but possible).
+  // Cumulative session usage, rebuilt as a synthetic UsageMetadata from
+  // per-message increments. Field test 2026-05-12 disproved the earlier
+  // assumption that Live emits cumulative values — each message carries
+  // its OWN contribution (a single audio frame's response tokens, or a
+  // turn's prompt cost at turn boundaries), so the correct aggregation
+  // is a running sum across the session. Server uses this to write a
+  // `call_live` usage_events row on /end. Undefined if no non-empty
+  // UsageMetadata arrived (e.g. session ended before first turn).
   sessionUsage?: UsageMetadata;
 }
 
@@ -62,18 +67,88 @@ export interface ToolCallLogHandle {
 export function createToolCallLog(): ToolCallLogHandle {
   let groundingHits: GroundingHit[] = [];
   let customToolCalls: CustomToolCallRecord[] = [];
-  let sessionUsage: UsageMetadata | undefined;
-  // Earlier-message sanity. Last-wins is correct IFF Live emits cumulative
-  // values; if a later message's totals are LOWER than what we already
-  // saw, that's suspicious — could be incremental-per-message after all,
-  // or a session-reset edge case. We log it to console.warn so we'd spot
-  // it in field test. Server-side Sentry capture would be redundant
-  // (mobile already surfaces this) and we'd need a separate roundtrip.
-  let priorTotal = 0;
+  // Per-modality running totals across all UsageMetadata events. Each
+  // message contributes its own deltas; we accumulate. Thinking tokens
+  // fold into responseText since Gemini bills thinking at the output-text
+  // rate. Cached tokens accumulate separately so the cached-input
+  // discount in computeCostCents still applies.
+  const accum = {
+    promptText: 0,
+    promptAudio: 0,
+    responseText: 0,
+    responseAudio: 0,
+    toolUsePromptText: 0,
+    toolUsePromptAudio: 0,
+    cached: 0,
+  };
+  let anyUsageSeen = false;
   // pendingByName lets us match responses back to their issuing call. We key
   // by id when available (id is the official correlator), falling back to
   // name + first-pending for the rare case the SDK omits id.
   const pendingById = new Map<string, CustomToolCallRecord>();
+
+  // Walk a *TokensDetails array, summing into the per-modality slots.
+  // Falls back to the flat field when details are absent.
+  function addModality(
+    details: { modality?: string; tokenCount?: number }[] | undefined,
+    flatCount: number,
+    audioSlot: 'promptAudio' | 'responseAudio' | 'toolUsePromptAudio',
+    textSlot: 'promptText' | 'responseText' | 'toolUsePromptText',
+  ): void {
+    if (details && details.length > 0) {
+      for (const d of details) {
+        const n = d.tokenCount ?? 0;
+        if (d.modality === 'AUDIO') accum[audioSlot] += n;
+        else accum[textSlot] += n;
+      }
+      return;
+    }
+    if (flatCount > 0) accum[textSlot] += flatCount;
+  }
+
+  // Rebuild a UsageMetadata-shaped blob from the accumulator so the
+  // server's existing tokenTotalsFromUsage / computeCostCents path can
+  // process it unchanged.
+  function buildCumulativeUsage(): UsageMetadata | undefined {
+    if (!anyUsageSeen) return undefined;
+    const totalPrompt = accum.promptText + accum.promptAudio;
+    const totalToolUsePrompt = accum.toolUsePromptText + accum.toolUsePromptAudio;
+    const totalResponse = accum.responseText + accum.responseAudio;
+    const promptDetails = [
+      ...(accum.promptText > 0
+        ? [{ modality: MediaModality.TEXT, tokenCount: accum.promptText }]
+        : []),
+      ...(accum.promptAudio > 0
+        ? [{ modality: MediaModality.AUDIO, tokenCount: accum.promptAudio }]
+        : []),
+    ];
+    const responseDetails = [
+      ...(accum.responseText > 0
+        ? [{ modality: MediaModality.TEXT, tokenCount: accum.responseText }]
+        : []),
+      ...(accum.responseAudio > 0
+        ? [{ modality: MediaModality.AUDIO, tokenCount: accum.responseAudio }]
+        : []),
+    ];
+    const toolUseDetails = [
+      ...(accum.toolUsePromptText > 0
+        ? [{ modality: MediaModality.TEXT, tokenCount: accum.toolUsePromptText }]
+        : []),
+      ...(accum.toolUsePromptAudio > 0
+        ? [{ modality: MediaModality.AUDIO, tokenCount: accum.toolUsePromptAudio }]
+        : []),
+    ];
+    return {
+      promptTokenCount: totalPrompt,
+      responseTokenCount: totalResponse,
+      toolUsePromptTokenCount: totalToolUsePrompt || undefined,
+      cachedContentTokenCount: accum.cached || undefined,
+      totalTokenCount: totalPrompt + totalToolUsePrompt + totalResponse,
+      promptTokensDetails: promptDetails.length > 0 ? promptDetails : undefined,
+      responseTokensDetails: responseDetails.length > 0 ? responseDetails : undefined,
+      toolUsePromptTokensDetails: toolUseDetails.length > 0 ? toolUseDetails : undefined,
+    };
+  }
 
   return {
     recordGrounding: (metadata) => {
@@ -114,38 +189,57 @@ export function createToolCallLog(): ToolCallLogHandle {
       }
     },
     recordSessionUsage: (usage) => {
+      // Live emits per-message-incremental usage. Each prompt-bearing
+      // message reports a turn's full prompt cost; each response-bearing
+      // message reports one audio frame's output (1–10 tokens). Empty
+      // `{}` messages fire at turn boundaries — skip those outright.
+      // See field test 2026-05-12 logs for the discovery.
       const total = usage.totalTokenCount ?? 0;
-      // Field test 2026-05-12: Live emits multiple `usageMetadata`
-      // events per session, including some with all-zero payloads
-      // (likely setup-complete + end-of-session housekeeping). Naive
-      // last-wins overwrote populated values with empty ones, producing
-      // `call_live` rows with 0/0 in usage_events. Fix: don't overwrite
-      // a non-empty sessionUsage with an empty payload. If everything
-      // we see is empty (rare), sessionUsage stays undefined and the
-      // server skips the row.
-      if (total === 0 && sessionUsage !== undefined) return;
-      // Suspicious-decrease check. If values shrink between non-empty
-      // messages, our last-wins (cumulative) assumption may be wrong —
-      // flag in console so we'd notice in field test.
-      if (total > 0 && total < priorTotal) {
-        console.warn(
-          '[tool-log] session usage decreased between messages — last-wins assumption may be wrong',
-          { priorTotal, currentTotal: total },
-        );
-      }
-      if (total > 0) priorTotal = total;
-      sessionUsage = usage;
+      const thoughts = usage.thoughtsTokenCount ?? 0;
+      if (total === 0 && thoughts === 0) return;
+      anyUsageSeen = true;
+
+      addModality(
+        usage.promptTokensDetails,
+        usage.promptTokenCount ?? 0,
+        'promptAudio',
+        'promptText',
+      );
+      addModality(
+        usage.responseTokensDetails,
+        usage.responseTokenCount ?? 0,
+        'responseAudio',
+        'responseText',
+      );
+      addModality(
+        usage.toolUsePromptTokensDetails,
+        usage.toolUsePromptTokenCount ?? 0,
+        'toolUsePromptAudio',
+        'toolUsePromptText',
+      );
+      // Thinking tokens are billed at the output-text rate on Live Flash;
+      // fold into responseText so computeCostCents prices them correctly
+      // without needing a dedicated field. Loss: thinking isn't visible
+      // as a distinct line in usage_events — acceptable for v0.2.1.
+      accum.responseText += thoughts;
+      accum.cached += usage.cachedContentTokenCount ?? 0;
     },
     snapshot: () => ({
       groundingHits,
       customToolCalls,
-      sessionUsage,
+      sessionUsage: buildCumulativeUsage(),
     }),
     reset: () => {
       groundingHits = [];
       customToolCalls = [];
-      sessionUsage = undefined;
-      priorTotal = 0;
+      accum.promptText = 0;
+      accum.promptAudio = 0;
+      accum.responseText = 0;
+      accum.responseAudio = 0;
+      accum.toolUsePromptText = 0;
+      accum.toolUsePromptAudio = 0;
+      accum.cached = 0;
+      anyUsageSeen = false;
       pendingById.clear();
     },
   };

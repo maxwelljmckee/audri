@@ -169,6 +169,13 @@
       "when": 1778537953119,
       "tag": "0023_clever_terrax",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778619187337,
+      "tag": "0024_abnormal_mister_sinister",
+      "breakpoints": true
     }
   ]
 }

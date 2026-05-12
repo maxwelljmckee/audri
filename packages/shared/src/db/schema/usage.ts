@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -32,6 +33,19 @@ export const usageEvents = pgTable(
     cachedTokens: integer('cached_tokens').notNull().default(0),
     model: text('model').notNull(),
     costCents: numeric('cost_cents', { precision: 12, scale: 4 }).notNull().default('0'),
+    // Raw Gemini UsageMetadata as emitted by the SDK (or a synthesized
+    // equivalent from mobile's per-modality accumulator for Live calls).
+    // Lossless: keeps per-modality + per-category breakdowns the typed
+    // rollup columns flatten away. Future re-pricing + cost auditing
+    // reads from here. Nullable for legacy rows + non-inference events
+    // (e.g. tool-only writes).
+    tokenBreakdown: jsonb('token_breakdown'),
+    // Non-token billing inputs that don't fit `UsageMetadata` — e.g.
+    // googleSearch grounding credits, future MAPS-grounding credits.
+    // Shape: { webSearchCredits?: number; mapsSearchCredits?: number; ... }.
+    // Nullable; populated only when the row's billing has a non-token
+    // dimension.
+    usageExtras: jsonb('usage_extras'),
     artifactKind: artifactKindEnum('artifact_kind'),
     artifactId: uuid('artifact_id'),
     callTranscriptId: uuid('call_transcript_id').references(() => callTranscripts.id, {

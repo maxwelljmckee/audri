@@ -79,6 +79,11 @@ export async function recordInferenceUsage(
       cachedTokens: tokens.cached,
       model: opts.model,
       costCents,
+      // Lossless per-modality + per-category breakdown. Typed rollups
+      // above flatten audio/text/thinking into a single output column;
+      // this preserves the original truth so we can re-price historical
+      // rows or audit modality mix later. See migration 0024.
+      tokenBreakdown: opts.usage as Record<string, unknown>,
       callTranscriptId: opts.callTranscriptId ?? null,
     });
     return { inserted: true, tierCrossover, costCents };
@@ -123,6 +128,9 @@ export async function recordWebSearchUsage(opts: RecordWebSearchOpts): Promise<b
       cachedTokens: 0,
       model: 'gemini-grounding',
       costCents,
+      // Authoritative billing dimension for grounding rows. Future
+      // MAPS-grounding lands here with `mapsSearchCredits`.
+      usageExtras: { webSearchCredits: opts.credits },
       callTranscriptId: opts.callTranscriptId ?? null,
     });
     return true;
