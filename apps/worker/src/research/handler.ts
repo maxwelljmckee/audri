@@ -166,6 +166,14 @@ If the payload's preferred_depth is 'detailed':
 - Domain diversity preferred where possible
 - **Each citation's \`url\` MUST be the full article URL from grounded search results** (e.g. \`https://nytimes.com/2026/04/28/dining/italian-restaurants-manhattan.html\`), NOT the publisher's homepage (e.g. \`https://nytimes.com\`). The user clicks these links to read the actual cited source — bare domain roots are useless. If a particular finding came from a publisher's homepage with no specific article URL, omit that citation entirely rather than emit a useless root link.
 
+# A note on information richness — 5 Ws as a lean
+
+When a finding makes a substantive claim, lean toward giving it some surrounding context — not just the bare fact, but the why-it-matters or the broader picture. A useful shape to keep in mind: the 5 Ws (what, why, when, where, who, sometimes how). Not a checklist to satisfy on every claim; a check against the failure mode where a finding states a status without giving the reader anything to grab onto.
+
+For example, "the ceasefire is tenuous" — true, but leaves the reader without footing. "The ceasefire is tenuous — both sides agreed last week under US pressure, but strikes resumed within 48 hours over disputed compliance on weapons withdrawal" — same length budget, much more useful.
+
+This is a lean, not a requirement. The point is to notice when you'd otherwise deliver pure status with no shape around it. Most load-bearing for current-events queries where the surface fact ages faster than the why-now framing.
+
 # Refusal / out-of-scope
 - If the query isn't actually researchable (e.g. "research my own goals"), produce zero findings and a notes_for_user explaining why
 - If the query is harmful, refuse via notes_for_user

@@ -103,6 +103,11 @@ interface AgentScopeResult {
   skipped: AgentScopeSkipped[];
   resolutions: OpenItemResolution[];
   new_items: OpenItemCandidate[];
+  // Explicit early-return signal. When present, the caller skips the
+  // commit transaction entirely — no observation writes, no new open
+  // items, no resolutions applied, no wiki_log row. Mirrors the
+  // user-scope Flash's `dump` field; same bar (see prompt).
+  dump?: { reason: string };
 }
 
 // Pending agent_open_items at call-start. Passed into Flash so the persona
@@ -252,7 +257,27 @@ Return ONLY a single JSON object:
 Most calls produce **0-2 observation writes**. A long content-rich call may produce **3-5**. More than 5 is suspicious — you may be over-recording. New items follow the same shape — 0-2 typical, 3-4 for rich calls, more than 5 suspicious.
 
 Empty output is valid. If a call was short, low-substance, or purely action-oriented, return:
-{"creates": [], "updates": [], "skipped": [{"reason": "no substantive observations from this call"}], "resolutions": [], "new_items": []}`;
+{"creates": [], "updates": [], "skipped": [{"reason": "no substantive observations from this call"}], "resolutions": [], "new_items": []}
+
+# Dumping a call
+
+You have one OPTIONAL escape hatch: \`dump: { reason: string }\`. When you emit it, the entire commit transaction skips — no observation writes, no new open items, no resolutions applied, no wiki_log row. The Flash inference still ran (its cost is recorded), but nothing accretes onto your private wiki from this call.
+
+**The bar is HIGH.** Default is to process — even sparse observations have value (your wiki is your only cross-call memory). The dump is the narrow exception for calls that are pure noise.
+
+**DUMP when:**
+- The call is mic-test / cancellation noise — "hello hello" and hang-up, two filler turns with no content.
+- The transcript is so short and content-free there's nothing to observe behavior FROM. A 5-second "test test bye" reveals no patterns worth recording.
+- Total substantive content is zero — even one informative turn is enough to skip the dump.
+
+**DO NOT DUMP when:**
+- The user shared anything about themselves, even briefly — emotional state, a preference, a passing mention of someone.
+- You'd otherwise emit at least one observation write OR one resolution OR one new item — those signals indicate the call had substance.
+- You're uncertain. Ambiguity defaults to processing.
+
+When you DO dump, return: \`{"creates": [], "updates": [], "skipped": [], "resolutions": [], "new_items": [], "dump": {"reason": "..."}}\`. All five regular arrays empty AND \`dump\` present.
+
+When you do NOT dump (the default), omit the \`dump\` key entirely.`;
 
 interface AgentScopeInput {
   transcript: IngestionTranscriptTurn[];
@@ -402,6 +427,12 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<RunAgentScope
               required: ['kind', 'topic', 'body_text'],
             },
           },
+          dump: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: { reason: { type: Type.STRING } },
+            required: ['reason'],
+          },
         },
         required: ['creates', 'updates', 'skipped', 'resolutions', 'new_items'],
       },
@@ -417,6 +448,10 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<RunAgentScope
       usage,
     };
   }
+  const dump =
+    parsed.dump && typeof parsed.dump === 'object' && typeof parsed.dump.reason === 'string'
+      ? { reason: parsed.dump.reason }
+      : undefined;
   return {
     result: {
       creates: Array.isArray(parsed.creates) ? parsed.creates : [],
@@ -424,6 +459,7 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<RunAgentScope
       skipped: Array.isArray(parsed.skipped) ? parsed.skipped : [],
       resolutions: Array.isArray(parsed.resolutions) ? parsed.resolutions : [],
       new_items: Array.isArray(parsed.new_items) ? parsed.new_items : [],
+      dump,
     },
     usage,
   };
@@ -879,6 +915,28 @@ export async function runAgentScopeIngestion(opts: RunAgentScopeOpts): Promise<{
     model: FLASH_MODEL,
     usage: flashReturn.usage,
   });
+
+  // Explicit dump from Flash — skip the commit transaction entirely.
+  // No observation writes, no new open items, no resolutions applied.
+  // Returns with `ran: false` so the caller's logging reflects that the
+  // pipeline early-exited; Flash usage is already recorded above.
+  if (result.dump) {
+    logger.info(
+      { reason: result.dump.reason, userId: opts.userId, agentId: opts.agentId },
+      'agent-scope: flash dumped call — skipping commit',
+    );
+    return {
+      ran: false,
+      pagesCreated: 0,
+      pagesUpdated: 0,
+      sectionsCreated: 0,
+      sectionsUpdated: 0,
+      sectionsTombstoned: 0,
+      skippedCount: 0,
+      itemsResolved: 0,
+      itemsCreated: 0,
+    };
+  }
 
   const counts = await commitAgentScope({
     userId: opts.userId,

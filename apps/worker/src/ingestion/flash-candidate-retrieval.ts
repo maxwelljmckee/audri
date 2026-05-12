@@ -38,6 +38,13 @@ export interface NewPage {
 export interface FlashCandidateResult {
   touched_pages: TouchedPage[];
   new_pages: NewPage[];
+  // Explicit early-return signal. When present, the caller skips Pro
+  // fan-out + commit entirely; the call's transcript is preserved but
+  // no wiki writes happen. Distinct from `touched_pages.length === 0 &&
+  // new_pages.length === 0`: that's "Flash found no candidates," whereas
+  // `dump` is "Flash actively decided this call is unsubstantive." See
+  // the prompt's "Dumping a call" section for the bar.
+  dump?: { reason: string };
 }
 
 export interface IngestionTranscriptTurn {
@@ -70,11 +77,12 @@ Return ONLY a single JSON object — no preamble, no explanation, no markdown fe
   "new_pages": [
     {"proposed_slug": "...", "proposed_title": "...", "type": "...", "proposed_parent_slug": "..." | null},
     ...
-  ]
+  ],
+  "dump": {"reason": "..."}    // optional — see "Dumping a call" below
 }
 
 Hard rules:
-- Both keys ALWAYS present. Empty arrays are valid.
+- touched_pages and new_pages keys ALWAYS present. Empty arrays are valid.
 - touched_pages[].slug MUST appear verbatim in the input index. Never invent slugs.
 - new_pages[].type MUST be one of: person, concept, project, place, org, source, event, note, profile, todo.
 - new_pages[].proposed_slug is kebab-case of the proposed title; do NOT try to disambiguate against the index — backend handles uniqueness.
@@ -82,6 +90,28 @@ Hard rules:
 - No duplicates within an array.
 - A slug appearing in touched_pages must NOT also appear as a proposed_slug in new_pages.
 - Empty arrays = nothing noteworthy = pipeline short-circuits.
+
+# Dumping a call
+
+You have one OPTIONAL escape hatch: \`dump: { reason: string }\`. When you emit it, the entire ingestion pipeline short-circuits — no Pro fan-out runs, no wiki writes happen, no claims get extracted. The transcript is still preserved (the user can replay it from Chat History), but nothing accretes onto their notes from this call.
+
+**The bar is HIGH.** Default is to process — even a marginal claim is worth Pro's attention because Pro can cheaply skip what doesn't merit a write, but it cannot recover what you discard. Recall over precision is the operating bias for the rest of this prompt; the dump is the narrow exception.
+
+**DUMP when:**
+- The call is mic-test / cancellation noise — user said "hello hello" and hung up, or the transcript is two filler turns with no content.
+- The call is an aborted thought — user started a sentence, lost the thread, ended the call before saying anything substantive.
+- The transcript contains only conversational filler with zero new information about the user, their life, their projects, or their interests. ("hey audri" / "yeah" / "ok bye")
+- Total substantive content is approximately zero — even one informative sentence makes the call worth processing.
+
+**DO NOT DUMP when:**
+- The user mentioned ANY new fact, person, place, project, todo, goal, preference, opinion, or feeling — even briefly. One sentence of substance is enough to process.
+- The user repeated something already in the wiki (Pro can cheaply skip restated claims; that's not your decision).
+- The user was venting or in self-exploration mode without naming specifics — emotional state IS substantive content; agent-scope ingestion will record patterns from it.
+- You're uncertain. Ambiguity defaults to processing.
+
+When you DO dump, set both \`touched_pages\` and \`new_pages\` to empty arrays AND include the \`dump\` object with a one-phrase reason. Example: \`{"touched_pages": [], "new_pages": [], "dump": {"reason": "mic-test only, no content"}}\`.
+
+When you do NOT dump (the default), omit the \`dump\` key entirely.
 
 # Decision rules
 
@@ -307,6 +337,14 @@ export async function retrieveCandidates(
               required: ['proposed_slug', 'proposed_title', 'type', 'proposed_parent_slug'],
             },
           },
+          dump: {
+            type: Type.OBJECT,
+            nullable: true,
+            properties: {
+              reason: { type: Type.STRING },
+            },
+            required: ['reason'],
+          },
         },
         required: ['touched_pages', 'new_pages'],
       },
@@ -317,10 +355,18 @@ export async function retrieveCandidates(
   const parsed = parseGeminiJson<Partial<FlashCandidateResult>>(resp, 'flash-candidate-retrieval');
   const usage = resp.usageMetadata;
   if (!parsed) return { candidates: { touched_pages: [], new_pages: [] }, usage };
+  // Defensive: `dump` is valid only when it's an object with a string
+  // `reason`. Anything else (null, empty object, missing reason) is
+  // treated as absent — the pipeline proceeds normally.
+  const dump =
+    parsed.dump && typeof parsed.dump === 'object' && typeof parsed.dump.reason === 'string'
+      ? { reason: parsed.dump.reason }
+      : undefined;
   return {
     candidates: {
       touched_pages: Array.isArray(parsed.touched_pages) ? parsed.touched_pages : [],
       new_pages: Array.isArray(parsed.new_pages) ? parsed.new_pages : [],
+      dump,
     },
     usage,
   };

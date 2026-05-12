@@ -3,10 +3,18 @@
 //   2. Spend-limit progress bar + soft-warning banner (when limit is set)
 //   3. Daily bar chart for the current month
 //   4. Category pie chart (Live Agent / Web Search / Research / Other)
-//   5. Small print: how categories map to underlying inference paths
 //
 // Hard enforcement of spend caps is deferred to v0.2.2 — this screen is
 // purely informational + soft-warning.
+//
+// Deliberate omission: NO inline explanation of how categories map to
+// underlying inference paths. From the user's POV the call is one
+// experience — surfacing "post-call ingestion" or "in-call wiki tools"
+// as separate concepts undermines the "ingestion is invisible to the
+// user" principle. The aggregation collapse happens server-side and the
+// category labels are what users see. If a user genuinely wants to
+// understand "why is Live Agent so expensive," that's a support/FAQ
+// conversation, not a footer.
 
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -208,12 +216,6 @@ function UsageBody({ data, onEditLimit }: { data: UsageData; onEditLimit: () => 
           <Text style={styles.emptyText}>No spend yet this month.</Text>
         </Section>
       )}
-
-      <Text style={styles.smallPrint}>
-        Live Agent includes the call itself, post-call ingestion, and the in-call wiki tools.
-        Research is billed separately when Audri runs a research task. Web Search covers web
-        grounding calls. Pricing is computed from token counts at standard Gemini rates.
-      </Text>
     </View>
   );
 }
@@ -349,12 +351,4 @@ const styles = StyleSheet.create({
   legendValue: { color: '#7aa3d4', fontSize: 13 },
 
   emptyText: { color: '#7aa3d4', fontSize: 12, textAlign: 'center', paddingVertical: 12 },
-
-  smallPrint: {
-    color: '#5f7e9f',
-    fontSize: 11,
-    lineHeight: 16,
-    paddingHorizontal: 4,
-    marginTop: 4,
-  },
 });

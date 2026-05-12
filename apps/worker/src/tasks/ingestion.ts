@@ -212,6 +212,15 @@ async function runUserScopePipeline(
     `flash candidates: touched=${candidates.touched_pages.length}, new=${candidates.new_pages.length}`,
   );
 
+  // Explicit dump from Flash — Flash decided the call is unsubstantive.
+  // Skip Pro fan-out + commit. Transcript stays on call_transcripts;
+  // nothing accretes onto the wiki. See the "Dumping a call" section of
+  // flash-candidate-retrieval.ts's prompt for the bar.
+  if (candidates.dump) {
+    log('flash dumped call — no fan-out', { reason: candidates.dump.reason });
+    return;
+  }
+
   if (candidates.touched_pages.length === 0 && candidates.new_pages.length === 0) {
     log('noteworthiness gate failed — no fan-out');
     return;

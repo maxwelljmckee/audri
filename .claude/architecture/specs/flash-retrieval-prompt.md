@@ -148,8 +148,8 @@ But Flash's candidate emissions should be driven by the *user's* speech. If only
 
 ## Output contract — hard rules
 
-- Output is a single JSON object with exactly two keys: `touched_pages` and `new_pages`. No additional keys. No trailing commentary.
-- Both keys are always present. Empty arrays are valid; missing keys are not.
+- Output is a single JSON object with the required keys `touched_pages` and `new_pages`, plus an OPTIONAL `dump` field (see "Early-return / dump" below). No additional keys. No trailing commentary.
+- `touched_pages` and `new_pages` are always present. Empty arrays are valid; missing keys are not.
 - Each `touched_pages` entry has exactly one field: `slug`. The slug must match an entry in the input index verbatim.
 - Each `new_pages` entry has exactly four fields: `proposed_slug`, `proposed_title`, `type`, `proposed_parent_slug`. No additional fields (no `agent_abstract`, no `reason`). The `proposed_parent_slug` is REQUIRED on every entry — set it to a semantic parent (an existing slug from the wiki index, OR another `new_pages.proposed_slug` from the same response). Use `null` ONLY when the transcript explicitly directs top-level treatment ("make this its own top-level bucket"). The bar for `null` is HIGH — the user's wiki is organized around dimensions of their life, and almost every new entity has a natural home. See `specs/fan-out-prompt.md` §4.3 for the full priority order shared between Flash and Pro; Pro receives Flash's `proposed_parent_slug` as a hint and may silently override when transcript content justifies a different choice.
 
@@ -160,6 +160,16 @@ When the transcript contains an explicit hierarchy-move directive ("move X under
 - Never invent slugs in `touched_pages` — every slug must appear in the input index. If the transcript discusses what looks like an existing page but the slug isn't in the index, treat it as a new-page candidate instead.
 - Never duplicate entries within an array.
 - A slug appearing in `touched_pages` must not also appear (via `proposed_slug`) in `new_pages`.
+
+### Early-return / dump (added 2026-05-11)
+
+Optional escape hatch: `dump: { reason: string }`. When emitted, the ingestion pipeline short-circuits — Pro fan-out skips, commit skips, the transcript is preserved but nothing accretes onto the wiki. Distinct from `touched_pages.length === 0 && new_pages.length === 0` which is "Flash genuinely found nothing"; `dump` is "Flash actively decided this call is unsubstantive."
+
+**Bar is HIGH.** Default is to process. Even a marginal claim is worth Pro's attention because Pro can cheaply skip what doesn't merit a write, but cannot recover what Flash discards. Recall over precision is the standing bias; `dump` is the narrow exception.
+
+DUMP for: mic-test noise, aborted-thought hang-ups, pure filler with zero new information. DO NOT DUMP for: any new fact / person / project / todo / preference / opinion / feeling, restated claims (Pro decides), self-exploration without specifics (agent-scope handles that), or any case of uncertainty.
+
+When dumping, also emit empty `touched_pages` and `new_pages`. When not dumping (the default), omit `dump` entirely.
 
 ---
 

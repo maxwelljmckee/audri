@@ -265,6 +265,16 @@ Empty output is valid (short or pure-action calls). Server commits no rows; logs
 
 ---
 
+## Early-return / dump (added 2026-05-11)
+
+Optional escape hatch on the Flash output: `dump: { reason: string }`. When present, the entire commit transaction skips — no observation writes, no new open items, no resolutions applied, no `wiki_log` row. The Flash inference still ran (its `usage_events` row records), but nothing accretes onto the persona's private wiki from this call.
+
+Mirrors the user-scope Flash's `dump` field; same bar. Default is to process — even sparse observations have value because the agent-scope wiki is the persona's only cross-call memory. DUMP only for clear noise (mic-test, "test test bye", aborted thoughts); otherwise process, even if the output is a single skipped-reason note.
+
+When dumping, also emit empty `creates`, `updates`, `skipped`, `resolutions`, `new_items` arrays. When not dumping (the default), omit `dump` entirely.
+
+---
+
 ## Open-items queue maintenance (v0.2, added 2026-05-11)
 
 The same Flash pass also drives the `agent_open_items` queue — both producing new candidates and resolving items the persona had at call-start. Folded into this pass rather than user-scope fan-out for three reasons: (a) the queue is agent-scope state (per-persona, partitioned by `agent_id`); (b) Flash is cheap and well-suited to the resolver's matching task; (c) keeps all queue-related state — observation writes, new items, resolutions — in one transaction with the agent-scope wiki writes.
