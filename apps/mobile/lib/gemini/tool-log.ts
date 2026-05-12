@@ -115,9 +115,18 @@ export function createToolCallLog(): ToolCallLogHandle {
     },
     recordSessionUsage: (usage) => {
       const total = usage.totalTokenCount ?? 0;
-      // Suspicious-decrease check (see priorTotal comment above). If
-      // values shrink between messages, our last-wins assumption may be
-      // wrong — flag in console so we'd notice in field test.
+      // Field test 2026-05-12: Live emits multiple `usageMetadata`
+      // events per session, including some with all-zero payloads
+      // (likely setup-complete + end-of-session housekeeping). Naive
+      // last-wins overwrote populated values with empty ones, producing
+      // `call_live` rows with 0/0 in usage_events. Fix: don't overwrite
+      // a non-empty sessionUsage with an empty payload. If everything
+      // we see is empty (rare), sessionUsage stays undefined and the
+      // server skips the row.
+      if (total === 0 && sessionUsage !== undefined) return;
+      // Suspicious-decrease check. If values shrink between non-empty
+      // messages, our last-wins (cumulative) assumption may be wrong —
+      // flag in console so we'd notice in field test.
       if (total > 0 && total < priorTotal) {
         console.warn(
           '[tool-log] session usage decreased between messages — last-wins assumption may be wrong',

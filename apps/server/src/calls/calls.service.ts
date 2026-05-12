@@ -6,6 +6,7 @@ import {
   type FunctionDeclaration,
   Modality,
   StartSensitivity,
+  ThinkingLevel,
   type Tool,
   Type,
 } from '@google/genai';
@@ -135,6 +136,10 @@ export class CallsService {
                 silenceDurationMs: 1500,
               },
             },
+            // Bumped above the model's MINIMAL default so the agent gets a
+            // small reasoning budget for tool-use decisions + multi-step
+            // intent without paying for full reasoning latency on every turn.
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction: { parts: [{ text: systemInstruction }] },
             tools: LIVE_TOOLS,
           },

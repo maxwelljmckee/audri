@@ -4,6 +4,7 @@
 
 import * as Sentry from '@sentry/node';
 import type { Task } from 'graphile-worker';
+import { logger } from '../logger.js';
 
 export function withSentry(name: string, task: Task): Task {
   return async (payload, helpers) => {
@@ -17,6 +18,20 @@ export function withSentry(name: string, task: Task): Task {
         scope.setExtra('max_attempts', helpers.job.max_attempts);
         Sentry.captureException(err);
       });
+      // Force the event out before the throw cascades. Graphile retries
+      // can produce bursts where a transient flush gets missed otherwise.
+      // 2s budget — generous; flush returns whether the queue drained.
+      try {
+        const flushed = await Sentry.flush(2000);
+        if (!flushed) {
+          logger.warn(
+            { graphile_task: name, jobId: helpers.job.id },
+            '[sentry] flush timed out — event may not have been transmitted',
+          );
+        }
+      } catch (flushErr) {
+        logger.warn({ err: flushErr }, '[sentry] flush threw');
+      }
       throw err;
     }
   };

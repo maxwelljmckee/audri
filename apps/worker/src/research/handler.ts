@@ -306,7 +306,41 @@ export async function runResearch(
   });
 
   const text = resp.text;
-  if (!text) throw new Error('research handler: empty response');
+  if (!text) {
+    // Surface diagnostic context — empty `resp.text` can mean safety
+    // block, MAX_TOKENS hit, grounded search returned nothing, or a
+    // transient API hiccup. The error message + Sentry extras need to
+    // tell future-Max which it was. Field test 2026-05-12 caught a
+    // run of empty-response failures on agent_task 783e... with zero
+    // diagnostic info attached.
+    const firstCandidate = resp.candidates?.[0];
+    const finishReason = firstCandidate?.finishReason;
+    const safetyRatings = firstCandidate?.safetyRatings;
+    const promptFeedback = resp.promptFeedback;
+    const usageMetadata = resp.usageMetadata;
+    logger.error(
+      {
+        finishReason,
+        safetyRatings,
+        promptFeedback,
+        usageMetadata,
+        candidatesLength: resp.candidates?.length ?? 0,
+      },
+      'research handler: empty response — diagnostic detail',
+    );
+    const err = new Error(
+      `research handler: empty response (finishReason=${finishReason ?? 'unknown'})`,
+    );
+    // Attach diagnostic on the error so Sentry's "extras" carry it
+    // without depending on a separate log line.
+    (err as Error & { diagnostic?: unknown }).diagnostic = {
+      finishReason,
+      safetyRatings,
+      promptFeedback,
+      candidatesLength: resp.candidates?.length ?? 0,
+    };
+    throw err;
+  }
 
   // Tolerate stray prose around the JSON object.
   const start = text.indexOf('{');

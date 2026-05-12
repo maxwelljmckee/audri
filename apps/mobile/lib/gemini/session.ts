@@ -63,6 +63,15 @@ export async function openSession(
   });
 
   let closed = false;
+  // Diagnostic: log the first usageMetadata payload we see in this
+  // session so we can verify the SDK's field shape against our
+  // tokenTotalsFromUsage / computeCostCents reads. Field test
+  // 2026-05-12 caught a mismatch where responseTokenCount was missing
+  // and candidatesTokenCount carried the value. This log lets us spot
+  // similar drift in future SDK versions without inspecting field-by-
+  // field on the server side. TODO remove once usage_events rows are
+  // confirmed correct across model + version variants.
+  let usageLogged = false;
 
   const session: Session = await ai.live.connect({
     model: config.model,
@@ -87,7 +96,13 @@ export async function openSession(
         if (toolCalls && toolCalls.length > 0) callbacks.onToolCall?.(toolCalls);
         const grounding = msg.serverContent?.groundingMetadata;
         if (grounding) callbacks.onGroundingMetadata?.(grounding);
-        if (msg.usageMetadata) callbacks.onUsageMetadata?.(msg.usageMetadata);
+        if (msg.usageMetadata) {
+          if (!usageLogged) {
+            usageLogged = true;
+            console.log('[session] first usageMetadata payload:', JSON.stringify(msg.usageMetadata));
+          }
+          callbacks.onUsageMetadata?.(msg.usageMetadata);
+        }
       },
       onerror: (e: ErrorEvent) => callbacks.onError?.(new Error(e.message)),
       onclose: (e: CloseEvent) => {

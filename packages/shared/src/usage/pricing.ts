@@ -209,7 +209,17 @@ export function computeCostCents(model: string, usage: UsageMetadata): CostCents
   }
 
   const prompt = aggregateModality(usage.promptTokensDetails, usage.promptTokenCount ?? 0);
-  const response = aggregateModality(usage.responseTokensDetails, usage.responseTokenCount ?? 0);
+  // Field-name fallback: `responseTokenCount` is the newer name (per the
+  // SDK type def) but production responses still arrive with the older
+  // `candidatesTokenCount` field on at least some API versions. Read both
+  // — whichever is populated wins. Confirmed in field test 2026-05-12
+  // where stored usage_events rows showed input tokens captured + output
+  // always at 0; once the fallback was added, real output counts came in.
+  const responseTokens =
+    usage.responseTokenCount ??
+    (usage as { candidatesTokenCount?: number }).candidatesTokenCount ??
+    0;
+  const response = aggregateModality(usage.responseTokensDetails, responseTokens);
   const toolUsePrompt = aggregateModality(
     usage.toolUsePromptTokensDetails,
     usage.toolUsePromptTokenCount ?? 0,
@@ -294,9 +304,16 @@ export function tokenTotalsFromUsage(usage: UsageMetadata): {
   output: number;
   cached: number;
 } {
+  // See `computeCostCents` for the responseTokenCount / candidatesTokenCount
+  // fallback rationale. Same field-name drift between SDK type def and
+  // runtime payloads.
+  const responseTokens =
+    usage.responseTokenCount ??
+    (usage as { candidatesTokenCount?: number }).candidatesTokenCount ??
+    0;
   return {
     input: (usage.promptTokenCount ?? 0) + (usage.toolUsePromptTokenCount ?? 0),
-    output: usage.responseTokenCount ?? 0,
+    output: responseTokens,
     cached: usage.cachedContentTokenCount ?? 0,
   };
 }
