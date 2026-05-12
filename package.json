@@ -1,6 +1,6 @@
 {
   "name": "audri",
-  "version": "0.0.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Audri — voice-first personal knowledge OS",
   "engines": {
@@ -23,14 +23,19 @@
     "testflight": "pnpm --filter @audri/mobile testflight",
     "build:ios:preview": "pnpm --filter @audri/mobile build:ios:preview",
     "build:ios:production": "pnpm --filter @audri/mobile build:ios:production",
-    "submit:ios": "pnpm --filter @audri/mobile submit:ios"
+    "submit:ios": "pnpm --filter @audri/mobile submit:ios",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "typescript": "^5.6.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["@biomejs/biome", "@nestjs/core", "esbuild"],
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "@nestjs/core",
+      "esbuild"
+    ],
     "overrides": {
       "lightningcss": "1.30.1"
     }

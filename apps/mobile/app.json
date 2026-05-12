@@ -2,7 +2,7 @@
   "expo": {
     "name": "Audri",
     "slug": "audri",
-    "version": "0.1.1",
+    "version": "0.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "audri",
@@ -16,7 +16,9 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Audri uses the microphone to listen during voice conversations.",
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {

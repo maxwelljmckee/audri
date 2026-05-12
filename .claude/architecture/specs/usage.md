@@ -2,7 +2,7 @@
 
 Status: **draft** — v0.2.1 shipped (2026-05-11). Reflects landed behavior; values that need future iteration are flagged inline.
 
-The Usage screen surfaces a user's per-calendar-month inference spend on Audri. Reads `usage_events`, buckets by user-local day + by user-facing category, exposes a soft monthly spending limit, and primes the substrate for hard enforcement in v0.2.2+.
+The Usage screen surfaces a user's per-calendar-month inference spend on Audri. Reads `usage_events`, buckets by user-local day + by user-facing category, exposes a soft monthly spending limit, and primes the substrate for hard enforcement in v0.4.0+.
 
 ---
 
@@ -84,7 +84,7 @@ The aggregation query computes month bounds via Postgres `AT TIME ZONE`: `('YYYY
 | `monthly_spend_limit_cents` | NUMERIC(12, 2), NULL | NULL | Monthly cap in cents. NULL = no cap. |
 | `monthly_spend_warning_threshold` | REAL, NOT NULL | 0.8 | Fraction of limit at which the banner fires. (0, 1]. |
 
-**v0.2.1 ships read + soft-warning only.** No inference gating. Hard enforcement (server blocks inference when current spend ≥ limit) is deferred to v0.2.2 or its own slice because:
+**v0.2.1 ships read + soft-warning only.** No inference gating. Hard enforcement (server blocks inference when current spend ≥ limit) is deferred to v0.4.0 or its own slice because:
 - The failure modes are user-visible (blocked mid-session, paused calls) and need field-tested usage data to tune correctly.
 - Per-category caps (e.g. "$5/mo on web search specifically") might be the better shape for hard enforcement — undecided.
 - The substrate (limit columns + read path) lands at v0.2.1, so gate-at-inference-start is a future code change against existing data.
@@ -128,7 +128,7 @@ All writers are best-effort: failures log + swallow, never break the surrounding
 
 ## Out of scope / V1+
 
-- **Hard server-side enforcement** of spend caps (v0.2.2 or own slice)
+- **Hard server-side enforcement** of spend caps (v0.4.0 or own slice)
 - **Per-category limits** (just monthly total today)
 - **Push notifications** when approaching/exceeding limit
 - **Per-agent breakdown UI** (substrate ships — `agentId` populated on all writers — UI lands when multi-agent specialists exist)
