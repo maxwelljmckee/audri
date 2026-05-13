@@ -58,6 +58,17 @@ export const recurringAgentTasks = pgTable(
     // create two rows. NULL on future custom (NL-to-script) automations.
     suggestedId: text('suggested_id'),
 
+    // Trigger mode discriminator. v0.3.0 supports two:
+    //   - 'cron' (default): dispatcher sweeps for due rows; days_of_week
+    //     + times define when the automation fires.
+    //   - 'on_call_end': fired by a custom hook in /calls/:id/end when
+    //     the call's agent matches this row's agent_id. Reserved for
+    //     Dreaming's "every call" trigger today; future event-driven
+    //     kinds migrate to a generic 'event' mode once the substrate
+    //     lands (see backlog). The cron dispatcher SKIPS rows with
+    //     trigger_mode != 'cron'.
+    triggerMode: text('trigger_mode').notNull().default('cron'),
+
     // ── Schedule ─────────────────────────────────────────────────────
     // Days of week as integers 0-6, postgres extract(dow) convention
     // (0=Sunday). Empty array = every day. Single-day-of-week schedules

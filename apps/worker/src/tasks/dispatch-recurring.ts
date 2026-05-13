@@ -49,10 +49,11 @@ export const dispatchRecurring: Task = async (_payload, helpers) => {
   const now = new Date();
 
   // Find due rows. Lean on the partial index on next_run_at — only
-  // returns rows that are active, not paused, and overdue. Limit 100
-  // per sweep to bound per-tick work even at much-higher scale; if
-  // we're consistently hitting the limit we'd bump it (or shorten
-  // the sweep interval).
+  // returns rows that are active, not paused, and overdue. Filter to
+  // trigger_mode='cron' (event-mode rows are fired by their respective
+  // event hooks elsewhere, NOT by this sweeper). Limit 100 per sweep
+  // to bound per-tick work; if we're consistently hitting the limit
+  // we'd bump it (or shorten the sweep interval).
   const result = await db.execute(sql`
     SELECT
       id,
@@ -70,6 +71,7 @@ export const dispatchRecurring: Task = async (_payload, helpers) => {
     WHERE next_run_at IS NOT NULL
       AND paused = false
       AND tombstoned_at IS NULL
+      AND trigger_mode = 'cron'
       AND next_run_at <= ${now}
     ORDER BY next_run_at ASC
     LIMIT 100

@@ -202,8 +202,95 @@ export class CallsController {
       }
     }
 
+    // ── Dreaming "on call end" trigger ─────────────────────────────────
+    // v0.3.0 B1 narrow custom hook: if the user has any active
+    // dreaming automation with trigger_mode='on_call_end' for the
+    // call's agent, spawn an agent_task now. Custom hook (not generic
+    // event-trigger substrate); migrates to event-trigger once the
+    // backlog entry lands. Skipped on cancelled / empty calls — no
+    // call activity = nothing to dream about. Spawn is best-effort:
+    // failure to enqueue logs but does NOT fail /end.
+    if (!cancelled && transcript.length > 0 && !skipIngestForCap) {
+      try {
+        await this.maybeSpawnEveryCallDreaming({
+          userId: user.id,
+          agentId: existing.agentId,
+          sessionId,
+        });
+      } catch (err) {
+        this.logger.error({ err, sessionId }, 'dreaming on-call-end spawn threw (continuing)');
+      }
+    }
+
     this.logger.log({ sessionId, userId: user.id, cancelled }, 'call ended');
     return { status: 'ended', sessionId };
+  }
+
+  // Spawn a dream agent_task if the active agent has an "on_call_end"
+  // dreaming automation enabled. Single small query + a conditional
+  // insert; bounded per-call cost regardless of whether the hook fires.
+  private async maybeSpawnEveryCallDreaming(opts: {
+    userId: string;
+    agentId: string;
+    sessionId: string;
+  }): Promise<void> {
+    const matched = await db.execute(sql`
+      SELECT id, payload
+      FROM recurring_agent_tasks
+      WHERE user_id = ${opts.userId}
+        AND agent_id = ${opts.agentId}
+        AND kind = 'dreaming'
+        AND trigger_mode = 'on_call_end'
+        AND paused = false
+        AND tombstoned_at IS NULL
+      LIMIT 1
+    `);
+    const rows = (matched as unknown as { rows?: Array<{ id: string; payload: unknown }> })
+      .rows ?? [];
+    const reminder = rows[0];
+    if (!reminder) return;
+
+    await db.transaction(async (tx) => {
+      const inserted = await tx.execute(sql`
+        INSERT INTO agent_tasks (user_id, agent_id, kind, payload, status)
+        VALUES (
+          ${opts.userId},
+          ${opts.agentId},
+          'dreaming',
+          ${JSON.stringify(reminder.payload ?? {})}::jsonb,
+          'pending'
+        )
+        RETURNING id
+      `);
+      const newTaskId = (inserted as unknown as { rows?: Array<{ id: string }> }).rows?.[0]?.id;
+      if (!newTaskId) throw new Error('on-call-end dreaming: agent_tasks insert returned no id');
+
+      // Bookkeeping: bump the recurring row's last_run_at + last_agent_task_id
+      // so the Automations UI surfaces the spawn even though it didn't fire
+      // through the cron dispatcher.
+      await tx.execute(sql`
+        UPDATE recurring_agent_tasks
+        SET last_run_at = now(),
+            last_agent_task_id = ${newTaskId},
+            updated_at = now()
+        WHERE id = ${reminder.id}
+      `);
+
+      // Enqueue the standard agent_task_dispatch graphile job.
+      const dispatchPayload = JSON.stringify({ agentTaskId: newTaskId });
+      await tx.execute(sql`
+        SELECT graphile_worker.add_job(
+          'agent_task_dispatch',
+          ${dispatchPayload}::json,
+          max_attempts => 2
+        )
+      `);
+    });
+
+    this.logger.log(
+      { sessionId: opts.sessionId, userId: opts.userId, agentId: opts.agentId },
+      'on-call-end dreaming spawned',
+    );
   }
 
   // Re-enqueue ingestion for a transcript whose previous run didn't fully

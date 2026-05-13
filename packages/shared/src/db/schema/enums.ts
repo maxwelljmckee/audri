@@ -37,7 +37,16 @@ export const agentTaskStatusEnum = pgEnum('agent_task_status', [
   'blocked_over_cap',
 ]);
 
-export const agentTaskKindEnum = pgEnum('agent_task_kind', ['research']);
+export const agentTaskKindEnum = pgEnum('agent_task_kind', [
+  'research',
+  // v0.3.0 B1 (Automations) — kinds spawned by recurring_agent_tasks
+  // dispatcher. Each has its own handler in the plugin registry.
+  'brief_me',
+  'recap',
+  'stalled_work',
+  'dreaming',
+  'todo_reminder',
+]);
 
 export const wikiLogKindEnum = pgEnum('wiki_log_kind', [
   'ingest',
