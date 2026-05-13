@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import { initSentry } from './observability/sentry.js';
 import { withSentry } from './observability/wrap-task.js';
 import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
+import { dispatchRecurring } from './tasks/dispatch-recurring.js';
 import { expireStaleIngestion } from './tasks/expire-stale-ingestion.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { hygieneSweep } from './tasks/hygiene-sweep.js';
@@ -33,6 +34,13 @@ const HYGIENE_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 // has been pending/running for >15 min. Tight cadence so user-visible
 // stuck-pending state clears quickly after the SLA fires.
 const SLA_SWEEP_INTERVAL_MS = 60_000;
+// Recurring dispatcher — every 60s. Finds due recurring_agent_tasks
+// rows, spawns one agent_tasks row each + advances next_run_at. Cheap
+// when there's nothing due. 60s cadence means the WORST-CASE delay
+// between nominal+jittered fire-time and actual enqueue is 60s — fine
+// for daily/weekly automations; if we ever want sub-minute precision
+// we'd tighten this.
+const RECURRING_DISPATCH_INTERVAL_MS = 60_000;
 
 async function main(): Promise<void> {
   initSentry();
@@ -50,6 +58,7 @@ async function main(): Promise<void> {
       agent_task_dispatch: withSentry('agent_task_dispatch', dispatchAgentTask),
       hygiene_sweep: withSentry('hygiene_sweep', hygieneSweep),
       expire_stale_ingestion: withSentry('expire_stale_ingestion', expireStaleIngestion),
+      dispatch_recurring: withSentry('dispatch_recurring', dispatchRecurring),
     },
   });
 
@@ -86,11 +95,24 @@ async function main(): Promise<void> {
   enqueueSlaSweep();
   const slaInterval = setInterval(enqueueSlaSweep, SLA_SWEEP_INTERVAL_MS);
 
+  // Recurring automation dispatcher — every 60s. Finds due
+  // recurring_agent_tasks rows, spawns one agent_task per row + advances
+  // next_run_at. Each spawned task runs through the standard
+  // agent_task_dispatch path (handler lookup, spend-cap gate, retry).
+  const enqueueRecurring = () => {
+    runner.addJob('dispatch_recurring', {}).catch((err) => {
+      logger.error({ err }, 'failed to enqueue dispatch_recurring');
+    });
+  };
+  enqueueRecurring();
+  const recurringInterval = setInterval(enqueueRecurring, RECURRING_DISPATCH_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutdown received — stopping');
     clearInterval(interval);
     clearInterval(hygieneInterval);
     clearInterval(slaInterval);
+    clearInterval(recurringInterval);
     await runner.stop();
     // Flush any buffered PostHog events before exit so we don't drop the
     // last batch on graceful restart.

@@ -12,9 +12,13 @@ export const agentTasks = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => authUsers.id, { onDelete: 'cascade' }),
-    todoPageId: uuid('todo_page_id')
-      .notNull()
-      .references(() => wikiPages.id, { onDelete: 'restrict' }),
+    // Nullable as of v0.3.0 (Automations B1): research-kind agent_tasks
+    // still always carry a tracking todo (set by the ingestion commit
+    // step), but automation-spawned kinds (daily_recap, dreaming, etc.)
+    // produce their output directly into wiki/artifact tables without
+    // a per-fire user-visible todo. Lookup of "which todo am I tied to"
+    // becomes a per-kind concern handled by the handler.
+    todoPageId: uuid('todo_page_id').references(() => wikiPages.id, { onDelete: 'restrict' }),
     agentId: uuid('agent_id').references(() => agents.id, { onDelete: 'restrict' }),
     kind: agentTaskKindEnum('kind').notNull(),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),

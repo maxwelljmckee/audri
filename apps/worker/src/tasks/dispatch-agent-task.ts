@@ -111,6 +111,16 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
         tokensIn: promptTokens,
         tokensOut: responseTokens,
       });
+      // Research-kind tasks always carry a tracking todo (set by the
+      // ingestion commit step that spawns them). The column became
+      // nullable in v0.3.0 to support automation-driven kinds like
+      // daily_recap / dreaming that don't need a per-fire todo, but for
+      // research a missing todoPageId is a bug — guard explicitly.
+      if (!task.todoPageId) {
+        throw new Error(
+          `research agent_task ${task.id} missing todoPageId — should never happen`,
+        );
+      }
       await commitResearchOutput({
         userId: task.userId,
         agentTaskId: task.id,

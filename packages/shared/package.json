@@ -40,6 +40,11 @@
       "types": "./dist/usage/index.d.ts",
       "import": "./dist/usage/index.js",
       "default": "./dist/usage/index.js"
+    },
+    "./automations": {
+      "types": "./dist/automations/index.d.ts",
+      "import": "./dist/automations/index.js",
+      "default": "./dist/automations/index.js"
     }
   },
   "files": ["dist"],

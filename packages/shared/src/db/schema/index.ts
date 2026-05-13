@@ -8,3 +8,4 @@ export * from './claims.js';
 export * from './research.js';
 export * from './todos.js';
 export * from './usage.js';
+export * from './automations.js';
