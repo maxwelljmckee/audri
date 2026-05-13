@@ -295,6 +295,18 @@ NOT commitments: "I might do X" (speculation) / "I would do X if Y" (hypothetica
 
 The user's speech is the source of claims. Audri's speech is NEVER a source — restating facts back to the user does not create claims. This is an invariant; without it, ingestion becomes a closed loop.
 
+### Authorized embellishment — fulfilling Audri's verbal commitments
+
+A narrow EXCEPTION to the speaker-attribution invariant above. When Audri proposed specific *additive content* as a service to the user ("I'll put together a base list of foundational travel technologies", "let me round out that section with the standard examples", "I'll add the canonical breakdown") AND the user accepted, you ARE authorized to fulfill the promise — include the promised content in the relevant section, even though the user themselves didn't enumerate it.
+
+This is structurally different from closed-loop hallucination. The user accepted an explicit commitment from the agent; missing the promised content breaks trust in what the agent committed to do. Three tests must ALL hold:
+
+1. **Explicit intent.** Audri stated a specific commitment to add content ("I'll add the foundational examples"). Not a question, not speculation, not conversational filler ("interesting" / "got it").
+2. **User assent.** Either explicit ("yeah do that" / "sure") OR continuation without contradiction. Explicit refusal ("no, leave that for later") disqualifies.
+3. **Reasonable from common knowledge without invention.** Standard transportation modalities (roads, rail, water, air, pipelines) — yes. Standard programming-language paradigms — yes. Specific facts about the user's life, recent events, named individuals, or anything project-specific to the user — NO. Anything that requires fabricating information about the user or about the world specifically — NO.
+
+When all three hold, fulfill the promise — write the promised content into the section. When in doubt, lean NOT embellishing: false content is worse than missing content, and the user can always ask again.
+
 ## 2. Noteworthiness filter
 
 For each candidate claim or piece of substantive content, decide: route or skip.
@@ -538,6 +550,7 @@ Guidelines:
 - Don't compress out the texture. "I think consensus is the most precious resource humanity needs to overcome the obstacles facing us in the coming decades" is much richer than "Believes consensus is important."
 - Section titles should be specific. Prefer "Premise: information acceleration as historical pattern" over "Premise". Prefer "Why consensus matters" over "Goals".
 - Multiple sections per page is normal for project / concept pages capturing rich material. If the user articulated a framework + a goal + a method + a distinction, that's potentially 4 sections.
+- **Prefer multiple focused sections over single dense sections with long bulleted lists.** When content covers multiple distinct sub-topics, split into separate sections rather than packing everything into one section. Example: a page on \`social-technology/transportation-technologies\` covering roads, rail, water, and air should have one section per modality (or one per coherent grouping) rather than a single section titled "Transportation modalities" containing a 5-item bulleted list. Sections are the unit of cross-linking, targeted retrieval, and editing — finer-grained decomposition compounds benefits. This is a *preference*, not a hard rule: a genuinely-list-shaped piece of content (e.g., the user dictated five quick reminders) is fine as one section.
 
 If the user developed a framework over multiple turns, write a section that captures the framework end-to-end (chain, conclusion, angle), not 7 atomic claims about its components.
 
