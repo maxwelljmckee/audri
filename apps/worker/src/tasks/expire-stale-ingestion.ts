@@ -39,10 +39,22 @@ const SLA_THRESHOLD = "interval '15 minutes'";
 
 export const expireStaleIngestion: Task = async (_payload, helpers) => {
   // Two-part WHERE: (a) row has been pending/running for >SLA, AND
-  // (b) no active Graphile job exists for it in graphile_worker.jobs.
-  // The NOT EXISTS subquery matches by task_identifier + payload's
-  // transcriptId; if any job (running, queued, retry-pending) is still
-  // associated with this transcript, we leave it alone.
+  // (b) no active Graphile job exists for it. The NOT EXISTS subquery
+  // matches by task_identifier + payload's transcriptId; if any job
+  // (running, queued, retry-pending) is still associated with this
+  // transcript, we leave it alone.
+  //
+  // **Schema note (2026-05-13 incident):** The public view
+  // `graphile_worker.jobs` does NOT expose `payload` — it's a join view
+  // over `_private_jobs` + `_private_tasks` + `_private_job_queues`
+  // that strips the payload column for surface ergonomics. The actual
+  // payload lives on `_private_jobs`. We query that internal table
+  // directly + join `_private_tasks` for the task_identifier filter.
+  // Stable across recent graphile-worker versions but technically
+  // implementation-detail; if graphile bumps the schema again we'll
+  // need to update this query. Earlier version of this sweep referenced
+  // `j.payload` on the view and silently failed every sweep run for
+  // hours before we caught it in Render logs.
   const rows = await db.execute(sql.raw(`
     UPDATE call_transcripts ct
     SET ingestion_status = 'failed',
@@ -51,8 +63,9 @@ export const expireStaleIngestion: Task = async (_payload, helpers) => {
       AND ct.created_at < now() - ${SLA_THRESHOLD}
       AND NOT EXISTS (
         SELECT 1
-        FROM graphile_worker.jobs j
-        WHERE j.task_identifier = 'ingestion'
+        FROM graphile_worker._private_jobs j
+        INNER JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+        WHERE t.identifier = 'ingestion'
           AND (j.payload::jsonb ->> 'transcriptId') = ct.id::text
       )
     RETURNING id, user_id, session_id, ingestion_status, created_at

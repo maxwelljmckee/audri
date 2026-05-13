@@ -850,15 +850,73 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
 // ingestion_status='failed' so the user's pending banner offers retry.
 const PRO_RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
 
+// Synthetic response shape compatible with parse-gemini-json's expected
+// input. We accumulate streamed chunks into this shape so the rest of
+// the pipeline (parser, usage capture) doesn't care that we streamed.
+interface AccumulatedProResponse {
+  text: string;
+  usageMetadata: UsageMetadata | undefined;
+  candidates: Array<{ finishReason?: string }> | undefined;
+}
+
+// Streaming swap (v0.3.0 item #67): use generateContentStream instead of
+// generateContent. Headers + first chunk arrive within seconds of the
+// model starting to generate, even on long fan-outs that take minutes to
+// complete — bypasses undici's headers timeout entirely. Caller accumulates
+// chunks into a synthetic response object so downstream parsing is
+// unchanged. structuredOutput (responseSchema) works with streaming per
+// the @google/genai SDK contract — each chunk carries an incremental
+// portion of the final JSON string, finalized on the last chunk.
 async function callProWithRetry(
   // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai params shape
   params: any,
-  // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai response shape
-): Promise<any> {
+): Promise<AccumulatedProResponse> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= PRO_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      return await getGeminiClient().models.generateContent(params);
+      const startedAt = Date.now();
+      let firstChunkAt: number | undefined;
+      const stream = await getGeminiClient().models.generateContentStream(params);
+
+      let accumulated = '';
+      let lastUsage: UsageMetadata | undefined;
+      let lastCandidates: Array<{ finishReason?: string }> | undefined;
+      let chunkCount = 0;
+
+      for await (const chunk of stream) {
+        chunkCount += 1;
+        if (firstChunkAt === undefined) firstChunkAt = Date.now();
+        const chunkText = chunk.text;
+        if (chunkText) accumulated += chunkText;
+        // usageMetadata lands on the final chunk per the SDK contract; we
+        // last-wins to capture it whenever it appears (defensive against
+        // it being on an intermediate chunk too).
+        if (chunk.usageMetadata) lastUsage = chunk.usageMetadata;
+        if (chunk.candidates) lastCandidates = chunk.candidates;
+      }
+
+      const totalMs = Date.now() - startedAt;
+      const ttfcMs = firstChunkAt !== undefined ? firstChunkAt - startedAt : null;
+      logger.info(
+        {
+          attempt: attempt + 1,
+          chunkCount,
+          totalMs,
+          // Time-to-first-chunk — sanity-checks the streaming win. Should
+          // be seconds, not minutes. If it ever creeps toward the 15-min
+          // headers-timeout ceiling we've lost the streaming benefit.
+          ttfcMs,
+          accumulatedLength: accumulated.length,
+          finishReason: lastCandidates?.[0]?.finishReason,
+        },
+        'pro fan-out: stream complete',
+      );
+
+      return {
+        text: accumulated,
+        usageMetadata: lastUsage,
+        candidates: lastCandidates,
+      };
     } catch (err) {
       lastErr = err;
       if (!isTransientFetchError(err)) throw err;

@@ -161,6 +161,7 @@ Items promoted into `build-phases/v0.3.0.md` (Track A1) on 2026-05-12: Proactive
 
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
+| **Revisit Graphile concurrency + multitenant scaling bottlenecks** | **P2** | **Varies (S–L)** | **Infra + Observability** | Track concrete bottlenecks identified in `.claude/architecture/bottlenecks.md`. Today's worker runs `concurrency: 4` in a single Render instance; per-user FIFO via `queue_name='ingestion-${user_id}'`. At private-release scale (10s of users) no action needed; entries in `bottlenecks.md` enumerate trigger conditions + remediation plans for each layer (worker concurrency, postgres pool, Gemini rate limits, section-merge tx-hold). Revisit each entry's trigger criteria when telemetry says it has fired. Source: 2026-05-13 architectural discussion. |
 | Per-user fairness on `agent_tasks` | P2 | M | Infra | If one user's queue pressure starves others, add per-user `queue_name` pattern. Source: §11. |
 | Per-kind concurrency caps | P2 | S | Infra | `queue_name='agent_tasks-${kind}'` if a specific kind needs throttling. Source: §11. |
 | Handler checkpointing for long tasks | P2 | L | Infra | If LLM retry cost on crashes becomes material, add phased progress + partial-result caching. Source: §11, tradeoffs. |
