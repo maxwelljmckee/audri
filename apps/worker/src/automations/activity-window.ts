@@ -493,39 +493,14 @@ async function fetchRemindersDueInWindow(
     .map((r) => ({ title: r.title, dueAt: r.dueAt.toISOString() }));
 }
 
-async function fetchDreams(opts: FetchActivityWindowOpts): Promise<DreamEntry[]> {
-  // Dreams are wiki_pages with kind='dream'. The handler for kind='dreaming'
-  // lands later (#25); until then this query just returns []. Keeping the
-  // shape stable so recap / brief consumers don't need to special-case.
-  const rows = await db
-    .select({
-      title: wikiPages.title,
-      createdAt: wikiPages.createdAt,
-      // agentName resolution requires a second join to agents — skipped
-      // for v0.3.0 since dreams aren't landing yet. Returns empty agent
-      // name; recap prompt handles gracefully.
-    })
-    .from(wikiPages)
-    .where(
-      and(
-        eq(wikiPages.userId, opts.userId),
-        eq(wikiPages.scope, 'agent'),
-        // biome-ignore lint/suspicious/noExplicitAny: 'dream' is the new pageTypeEnum value not yet narrowed in TS
-        eq(wikiPages.type, 'dream' as any),
-        gte(wikiPages.createdAt, opts.windowStart),
-        lte(wikiPages.createdAt, opts.windowEnd),
-        isNull(wikiPages.tombstonedAt),
-      ),
-    )
-    .orderBy(desc(wikiPages.createdAt))
-    .limit(MAX_DREAMS);
-
-  return rows.map((r) => ({
-    title: r.title,
-    agentName: '',
-    createdAt: r.createdAt.toISOString(),
-    reviewed: false,
-  }));
+async function fetchDreams(_opts: FetchActivityWindowOpts): Promise<DreamEntry[]> {
+  // Dreams are wiki_pages with type='dream'. That enum value isn't
+  // added yet — it lands with the dreaming handler (#25) alongside
+  // the migration that extends pageTypeEnum. Until then, returning
+  // [] keeps the slice present in the shape so recap / brief
+  // consumers don't have to special-case. Re-enable the query when
+  // 'dream' is added to page_type.
+  return [];
 }
 
 async function resolveParentSlugs(pageIds: string[]): Promise<Map<string, string>> {

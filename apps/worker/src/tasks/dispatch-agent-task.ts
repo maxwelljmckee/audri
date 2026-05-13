@@ -13,7 +13,9 @@ import { agentTasks, db, eq, sql } from '@audri/shared/db';
 import { capture, isFeatureEnabled } from '@audri/shared/posthog';
 import { checkSpendCap } from '@audri/shared/usage';
 import type { Task } from 'graphile-worker';
+import { briefMeHandler } from '../automations/handlers/brief_me.js';
 import { recapHandler } from '../automations/handlers/recap.js';
+import { stalledWorkHandler } from '../automations/handlers/stalled_work.js';
 import { logger } from '../logger.js';
 import { commitResearchOutput } from '../research/commit.js';
 import { ResearchPayloadZ, runResearch } from '../research/handler.js';
@@ -143,16 +145,10 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
         agentId: task.agentId,
         payload: task.payload,
       });
-      // Recap handler doesn't write status='succeeded' itself (unlike
-      // research which does it inside commitResearchOutput); mark here.
-      await db
-        .update(agentTasks)
-        .set({
-          status: 'succeeded',
-          completedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(agentTasks.id, task.id));
+      // Automation handlers don't write status='succeeded' themselves
+      // (unlike research which does it inside commitResearchOutput);
+      // mark here.
+      await markAgentTaskSucceeded(task.id);
       log('recap handler complete', {
         pageSlug: result.pageSlug,
         sectionsCreated: result.sectionsCreated,
@@ -162,6 +158,42 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
         kind: task.kind,
         agentTaskId: task.id,
         variant: result.variant,
+        sectionsCreated: result.sectionsCreated,
+      });
+    } else if (task.kind === 'brief_me') {
+      log('brief_me handler starting');
+      const result = await briefMeHandler({
+        userId: task.userId,
+        agentTaskId: task.id,
+        agentId: task.agentId,
+        payload: task.payload,
+      });
+      await markAgentTaskSucceeded(task.id);
+      log('brief_me handler complete', {
+        pageSlug: result.pageSlug,
+        sectionsCreated: result.sectionsCreated,
+      });
+      capture(task.userId, 'agent_task.succeeded', {
+        kind: task.kind,
+        agentTaskId: task.id,
+        sectionsCreated: result.sectionsCreated,
+      });
+    } else if (task.kind === 'stalled_work') {
+      log('stalled_work handler starting');
+      const result = await stalledWorkHandler({
+        userId: task.userId,
+        agentTaskId: task.id,
+        agentId: task.agentId,
+        payload: task.payload,
+      });
+      await markAgentTaskSucceeded(task.id);
+      log('stalled_work handler complete', {
+        pageSlug: result.pageSlug,
+        sectionsCreated: result.sectionsCreated,
+      });
+      capture(task.userId, 'agent_task.succeeded', {
+        kind: task.kind,
+        agentTaskId: task.id,
         sectionsCreated: result.sectionsCreated,
       });
     } else {
@@ -201,3 +233,11 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
     throw err;
   }
 };
+
+async function markAgentTaskSucceeded(agentTaskId: string): Promise<void> {
+  const now = new Date();
+  await db
+    .update(agentTasks)
+    .set({ status: 'succeeded', completedAt: now, updatedAt: now })
+    .where(eq(agentTasks.id, agentTaskId));
+}

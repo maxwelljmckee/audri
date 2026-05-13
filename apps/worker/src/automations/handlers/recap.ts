@@ -6,45 +6,32 @@
 //   2. Fetch activity-window snapshot
 //   3. Call Pro with the recap prompt
 //   4. Parse markdown output into title + sections
-//   5. Commit: lazy-create /automations/ + /automations/recaps/, then
-//      insert wiki_page + wiki_sections + history + source junctions
+//   5. Commit via shared commitAutomationPage helper
 //   6. Record usage_events
 //
 // Output lands at:
 //   slug:  automations/recaps/YYYY-MM-DD       (daily)
-//   slug:  automations/recaps/YYYY-WK-NN-daily (weekly — ISO week)
+//   slug:  automations/recaps/YYYY-WKNN        (weekly — ISO week)
 //   title: "YYYY-MM-DD — <AI-picked semantic>"
-//
-// Source attribution: each section gets wiki_section_transcripts
-// junctions for every call in the activity window. turn_id is a
-// placeholder ("recap-source") since the recap doesn't cite a specific
-// turn — it's a page-level citation that surfaces in the section UX.
-// snippet carries the call title or first user-turn excerpt.
 
 import { getGeminiClient } from '@audri/shared/gemini';
-import {
-  and,
-  callTranscripts,
-  db,
-  eq,
-  isNull,
-  sql,
-  wikiPages,
-  wikiSectionHistory,
-  wikiSectionTranscripts,
-  wikiSections,
-} from '@audri/shared/db';
 import type { UsageMetadata } from '@google/genai';
 import { logger } from '../../logger.js';
 import { recordInferenceUsage } from '../../usage/record-inference.js';
 import { type ActivityWindow, fetchActivityWindow } from '../activity-window.js';
+import {
+  commitAutomationPage,
+  fetchUserTimezone,
+  formatIsoWeek,
+  formatYmd,
+  parseAutomationMarkdown,
+} from '../commit.js';
 
 export const RECAP_MODEL = 'gemini-3.1-pro-preview';
 const RECAP_VARIANTS = ['daily', 'weekly'] as const;
 type RecapVariant = (typeof RECAP_VARIANTS)[number];
 
 export interface RecapPayload {
-  // Which variant fires. Defaults to 'daily' if payload omits it.
   variant?: RecapVariant;
 }
 
@@ -74,7 +61,6 @@ export async function recapHandler(ctx: RecapHandlerCtx): Promise<RecapHandlerRe
     'recap handler: starting',
   );
 
-  // 1. Activity snapshot. Recap consumes all slices.
   const activity = await fetchActivityWindow({
     userId: ctx.userId,
     windowStart,
@@ -82,35 +68,33 @@ export async function recapHandler(ctx: RecapHandlerCtx): Promise<RecapHandlerRe
     timezone: userTimezone,
   });
 
-  // 2. Build prompt + call Pro.
   const { systemPrompt, userMessage } = buildRecapPrompt(variant, activity);
   const { markdown, usage } = await callPro(systemPrompt, userMessage);
 
-  // 3. Record usage. Best-effort.
   void recordInferenceUsage({
     userId: ctx.userId,
     agentId: ctx.agentId ?? undefined,
     agentTaskId: ctx.agentTaskId,
-    eventKind: 'ingestion', // closest existing kind — usage_event_kind doesn't yet have 'automation'
+    eventKind: 'ingestion', // usage_event_kind doesn't yet have 'automation'
     model: RECAP_MODEL,
     usage,
   });
 
-  // 4. Parse markdown into title + sections.
-  const parsed = parseRecapMarkdown(markdown);
+  const parsed = parseAutomationMarkdown(markdown, 'Recap');
   if (parsed.sections.length === 0) {
     throw new Error('recap handler: parsed 0 sections from Pro output');
   }
 
-  // 5. Commit the page.
-  const fireStamp = formatFireStamp(now, userTimezone, variant);
-  const dateLabel = formatDateLabel(now, userTimezone, variant);
-  const pageTitle = `${dateLabel} — ${parsed.title}`;
-  const result = await commitRecapPage({
+  const fireStamp = variant === 'daily' ? formatYmd(now, userTimezone) : formatIsoWeek(now, userTimezone);
+  const result = await commitAutomationPage({
     userId: ctx.userId,
     agentTaskId: ctx.agentTaskId,
+    subFolderSlug: 'recaps',
+    subFolderTitle: 'Recaps',
+    subFolderAbstract: 'Daily and weekly recaps — reflections on what happened.',
     fireStamp,
-    pageTitle,
+    pageTitle: `${fireStamp} — ${parsed.title}`,
+    pageAbstract: `Automation-generated ${variant} recap. ${fireStamp}.`,
     sections: parsed.sections,
     sourceCalls: activity.calls,
   });
@@ -142,14 +126,6 @@ function parseVariant(payload: unknown): RecapVariant {
 function computeWindowStart(now: Date, variant: RecapVariant): Date {
   const ms = variant === 'daily' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
   return new Date(now.getTime() - ms);
-}
-
-async function fetchUserTimezone(userId: string): Promise<string> {
-  // user_settings.timezone — falls back to UTC when unset.
-  const result = (await db.execute(sql`
-    SELECT timezone FROM user_settings WHERE user_id = ${userId} LIMIT 1
-  `)) as unknown as { rows?: Array<{ timezone: string | null }> };
-  return result.rows?.[0]?.timezone ?? 'UTC';
 }
 
 // ── Prompt construction ───────────────────────────────────────────────────
@@ -258,295 +234,5 @@ async function callPro(
   return { markdown, usage: resp.usageMetadata };
 }
 
-// ── Markdown parse ───────────────────────────────────────────────────────
-
-export interface ParsedRecapSection {
-  title: string;
-  content: string;
-}
-
-export interface ParsedRecap {
-  title: string;
-  sections: ParsedRecapSection[];
-}
-
-// Parse the Pro output. Constrained format: leading H1 = title, each H2
-// starts a section. No nested heading levels expected. Simple line-walk
-// keeps the parser cheap + obvious.
-export function parseRecapMarkdown(markdown: string): ParsedRecap {
-  const lines = markdown.split('\n');
-  let title = '';
-  const sections: ParsedRecapSection[] = [];
-  let currentSection: ParsedRecapSection | null = null;
-  const flush = () => {
-    if (currentSection) {
-      currentSection.content = currentSection.content.trim();
-      if (currentSection.content.length > 0 || currentSection.title.length > 0) {
-        sections.push(currentSection);
-      }
-    }
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\r$/, '');
-    const h1 = /^#\s+(.+)$/.exec(line);
-    const h2 = /^##\s+(.+)$/.exec(line);
-    if (h1 && !title) {
-      title = h1[1]?.trim() ?? '';
-      continue;
-    }
-    if (h2) {
-      flush();
-      currentSection = { title: h2[1]?.trim() ?? '', content: '' };
-      continue;
-    }
-    if (currentSection) {
-      currentSection.content += `${line}\n`;
-    }
-  }
-  flush();
-
-  // Fallback: if Pro returned content without an H1, use the first line
-  // or a generic title. If no H2 sections, wrap the whole body into one
-  // untitled section so we still commit something.
-  if (!title) {
-    title = sections[0]?.title || 'Recap';
-  }
-  if (sections.length === 0) {
-    sections.push({ title: '', content: markdown.trim() });
-  }
-
-  return { title, sections };
-}
-
-// ── Commit ───────────────────────────────────────────────────────────────
-
-interface CommitRecapPageOpts {
-  userId: string;
-  agentTaskId: string;
-  fireStamp: string; // YYYY-MM-DD (daily) or YYYY-WK-NN (weekly)
-  pageTitle: string;
-  sections: ParsedRecapSection[];
-  sourceCalls: ActivityWindow['calls'];
-}
-
-interface CommitRecapPageResult {
-  pageId: string;
-  pageSlug: string;
-  pageTitle: string;
-  sectionsCreated: number;
-}
-
-async function commitRecapPage(opts: CommitRecapPageOpts): Promise<CommitRecapPageResult> {
-  const pageSlug = `automations/recaps/${opts.fireStamp}`;
-  return await db.transaction(async (tx) => {
-    // Ensure /automations/ root exists.
-    const automationsRoot = await ensureWikiPage(tx, {
-      userId: opts.userId,
-      slug: 'automations',
-      title: 'Automations',
-      type: 'note',
-      parentPageId: null,
-      agentAbstract: 'Outputs produced by recurring automations.',
-    });
-    // Ensure /automations/recaps/ subfolder exists.
-    const recapsRoot = await ensureWikiPage(tx, {
-      userId: opts.userId,
-      slug: 'automations/recaps',
-      title: 'Recaps',
-      type: 'note',
-      parentPageId: automationsRoot.id,
-      agentAbstract: 'Daily and weekly recaps — reflections on what happened.',
-    });
-
-    // Insert the recap page itself.
-    const [pageRow] = await tx
-      .insert(wikiPages)
-      .values({
-        userId: opts.userId,
-        scope: 'user',
-        type: 'note',
-        slug: pageSlug,
-        parentPageId: recapsRoot.id,
-        title: opts.pageTitle,
-        agentAbstract: `Automation-generated recap. ${opts.fireStamp}.`,
-      })
-      .onConflictDoNothing({ target: [wikiPages.userId, wikiPages.scope, wikiPages.slug] })
-      .returning({ id: wikiPages.id });
-    if (!pageRow) {
-      // Slug already exists — automation re-fire for the same fire-stamp.
-      // Idempotent skip — don't double-write the same recap for the
-      // same day/week.
-      logger.warn(
-        { userId: opts.userId, pageSlug },
-        'recap handler: page already exists for fire-stamp — skipping insert',
-      );
-      const [existing] = await tx
-        .select({ id: wikiPages.id })
-        .from(wikiPages)
-        .where(
-          and(
-            eq(wikiPages.userId, opts.userId),
-            eq(wikiPages.scope, 'user'),
-            eq(wikiPages.slug, pageSlug),
-          ),
-        )
-        .limit(1);
-      return {
-        pageId: existing?.id ?? '',
-        pageSlug,
-        pageTitle: opts.pageTitle,
-        sectionsCreated: 0,
-      };
-    }
-    const pageId = pageRow.id;
-
-    // Insert sections + history.
-    let sortOrder = 0;
-    for (const sec of opts.sections) {
-      const [secRow] = await tx
-        .insert(wikiSections)
-        .values({
-          pageId,
-          title: sec.title || null,
-          content: sec.content,
-          sortOrder: sortOrder++,
-        })
-        .returning({ id: wikiSections.id });
-      if (!secRow) continue;
-      await tx.insert(wikiSectionHistory).values({
-        sectionId: secRow.id,
-        content: sec.content,
-        editedBy: 'ai',
-      });
-
-      // Source attribution: junction rows for each call in the window.
-      // turn_id placeholder ("recap-source") since the recap doesn't
-      // cite a specific turn; snippet is the call title or first
-      // user-turn excerpt for legibility on the section detail panel.
-      for (const call of opts.sourceCalls) {
-        const snippet = pickCallSnippet(call);
-        if (!snippet) continue;
-        await tx.insert(wikiSectionTranscripts).values({
-          sectionId: secRow.id,
-          transcriptId: call.transcriptId,
-          turnId: 'recap-source',
-          snippet,
-        });
-      }
-    }
-
-    void callTranscripts; // silence linter; we don't directly touch the table
-
-    return {
-      pageId,
-      pageSlug,
-      pageTitle: opts.pageTitle,
-      sectionsCreated: opts.sections.length,
-    };
-  });
-}
-
-function pickCallSnippet(call: ActivityWindow['calls'][number]): string | null {
-  if (call.title && call.title.length > 0) return call.title;
-  if (call.summary && call.summary.length > 0) return call.summary.slice(0, 200);
-  if (call.userTurnExcerpts[0]) return call.userTurnExcerpts[0].slice(0, 200);
-  return null;
-}
-
-interface EnsureWikiPageOpts {
-  userId: string;
-  slug: string;
-  title: string;
-  // biome-ignore lint/suspicious/noExplicitAny: page_type pgEnum string literal
-  type: any;
-  parentPageId: string | null;
-  agentAbstract: string;
-}
-
-// biome-ignore lint/suspicious/noExplicitAny: Drizzle's tx type is complex
-async function ensureWikiPage(
-  tx: any,
-  opts: EnsureWikiPageOpts,
-): Promise<{ id: string }> {
-  const existing = await tx
-    .select({ id: wikiPages.id })
-    .from(wikiPages)
-    .where(
-      and(
-        eq(wikiPages.userId, opts.userId),
-        eq(wikiPages.scope, 'user'),
-        eq(wikiPages.slug, opts.slug),
-        isNull(wikiPages.tombstonedAt),
-      ),
-    )
-    .limit(1);
-  if (existing[0]) return { id: existing[0].id };
-  const [inserted] = await tx
-    .insert(wikiPages)
-    .values({
-      userId: opts.userId,
-      scope: 'user',
-      type: opts.type,
-      slug: opts.slug,
-      parentPageId: opts.parentPageId,
-      title: opts.title,
-      agentAbstract: opts.agentAbstract,
-    })
-    .onConflictDoNothing({ target: [wikiPages.userId, wikiPages.scope, wikiPages.slug] })
-    .returning({ id: wikiPages.id });
-  if (inserted) return { id: inserted.id };
-  // Conflict race — re-query and return.
-  const [fallback] = await tx
-    .select({ id: wikiPages.id })
-    .from(wikiPages)
-    .where(
-      and(
-        eq(wikiPages.userId, opts.userId),
-        eq(wikiPages.scope, 'user'),
-        eq(wikiPages.slug, opts.slug),
-      ),
-    )
-    .limit(1);
-  if (!fallback) throw new Error(`ensureWikiPage: failed to resolve ${opts.slug}`);
-  return { id: fallback.id };
-}
-
-// ── Date formatting ─────────────────────────────────────────────────────
-
-function formatFireStamp(now: Date, timezone: string, variant: RecapVariant): string {
-  if (variant === 'daily') return formatYmd(now, timezone);
-  // Weekly: ISO week-of-year format YYYY-WKNN.
-  return formatIsoWeek(now, timezone);
-}
-
-function formatDateLabel(now: Date, timezone: string, variant: RecapVariant): string {
-  if (variant === 'daily') return formatYmd(now, timezone);
-  return formatIsoWeek(now, timezone);
-}
-
-function formatYmd(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const y = parts.find((p) => p.type === 'year')?.value;
-  const m = parts.find((p) => p.type === 'month')?.value;
-  const d = parts.find((p) => p.type === 'day')?.value;
-  return `${y}-${m}-${d}`;
-}
-
-function formatIsoWeek(date: Date, timezone: string): string {
-  // ISO week starts on Monday. Algorithm: shift to Thursday of the
-  // target week, then floor to Jan 1 + count weeks.
-  const ymd = formatYmd(date, timezone);
-  const [y, m, d] = ymd.split('-').map(Number);
-  const local = new Date(Date.UTC(y ?? 0, (m ?? 1) - 1, d ?? 1));
-  const dayOfWeek = local.getUTCDay() || 7;
-  local.setUTCDate(local.getUTCDate() + 4 - dayOfWeek);
-  const yearStart = new Date(Date.UTC(local.getUTCFullYear(), 0, 1));
-  const weekNum = Math.ceil(((local.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${local.getUTCFullYear()}-WK${String(weekNum).padStart(2, '0')}`;
-}
+// Re-export parser for any callers that were importing the recap-specific name.
+export { parseAutomationMarkdown as parseRecapMarkdown } from '../commit.js';
