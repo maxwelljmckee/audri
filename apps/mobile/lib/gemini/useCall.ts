@@ -90,6 +90,25 @@ export function useCall(): UseCallResult {
     AudioManager.setAudioSessionActivity(false);
   }, []);
 
+  // Single drop path used by every non-user-ended exit (session onError,
+  // WebSocket onClose, mic onError, start() failure). Always tears down
+  // audio first — the iOS Dynamic Island mic indicator stays lit until
+  // the audio session is deactivated, so skipping teardown on these paths
+  // leaves the device with a "still recording" signal even though the
+  // call is over. Store transition is gated on status: 'ending' means
+  // end() is already driving the shutdown, don't clobber its state.
+  const dropCall = useCallback(
+    (errorMessage?: string) => {
+      teardown();
+      const status = useCallStore.getState().status;
+      if (status === 'connecting' || status === 'connected') {
+        useCallStore.getState().markDropped();
+      }
+      if (errorMessage) setError(errorMessage);
+    },
+    [teardown],
+  );
+
   useEffect(() => () => teardown(), [teardown]);
 
   const start = useCallback(
@@ -188,7 +207,7 @@ export function useCall(): UseCallResult {
           }
         });
 
-        input.onError((e) => setError(e.message));
+        input.onError((e) => dropCall(e.message));
 
         // 4. Open Gemini Live session
         const session = await openSession(
@@ -212,12 +231,20 @@ export function useCall(): UseCallResult {
               transcriptRef.current.finalizeAgentTurn();
               refreshTranscript();
             },
-            onError: (err) => setError(err.message),
+            onError: (err) => dropCall(err.message),
             onClose: (reason) => {
-              // Server closed unexpectedly while we were active → mark dropped.
-              if (useCallStore.getState().status === 'connected') {
-                useCallStore.getState().markDropped();
-                setError(`connection closed: ${reason}`);
+              // Server closed unexpectedly. dropCall tears down audio
+              // unconditionally; the store transition is gated on status
+              // so we don't clobber a clean 'ending' shutdown driven by
+              // end(). 'idle' / 'dropped' cases are no-ops.
+              const status = useCallStore.getState().status;
+              if (status === 'connecting' || status === 'connected') {
+                dropCall(`connection closed: ${reason}`);
+              } else {
+                // Already on a shutdown path — just make sure audio is
+                // released so the mic indicator clears even if the close
+                // raced past end()'s teardown.
+                teardown();
               }
             },
             onToolCall: (calls) => {
@@ -281,12 +308,10 @@ export function useCall(): UseCallResult {
         captureClientError('call-start-failed', e, {
           sessionId: sessionIdRef.current,
         });
-        setError(e instanceof Error ? e.message : String(e));
-        teardown();
-        useCallStore.getState().markDropped();
+        dropCall(e instanceof Error ? e.message : String(e));
       }
     },
-    [persistSnapshot, refreshTranscript, teardown],
+    [persistSnapshot, refreshTranscript, dropCall, teardown],
   );
 
   const end = useCallback(async (): Promise<boolean> => {

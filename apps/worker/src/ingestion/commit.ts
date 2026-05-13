@@ -30,6 +30,7 @@ import { logger } from '../logger.js';
 import type { CandidatePage } from './candidate-pages.js';
 import type { ProFanOutResult } from './pro-fan-out.js';
 import { redactJsonPii } from './redact.js';
+import { mergeSectionContent } from './section-merge.js';
 
 export interface CommitInput {
   userId: string;
@@ -59,8 +60,15 @@ function truncateForTitle(s: string, max = 60): string {
 export interface CommitResult {
   pagesCreated: number;
   pagesUpdated: number;
+  // Bumped when a PageCreate hit an existing slug and was routed into
+  // merge mode instead of failing. The page already existed; we wrote
+  // additional sections (or merged) onto it.
+  pagesMerged: number;
   sectionsCreated: number;
   sectionsUpdated: number;
+  // Bumped each time a merge call rewrote an existing section body
+  // because the create produced a section with a matching title.
+  sectionsMerged: number;
   sectionsTombstoned: number;
   tasksCreated: number;
 }
@@ -81,8 +89,10 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
   const result: CommitResult = {
     pagesCreated: 0,
     pagesUpdated: 0,
+    pagesMerged: 0,
     sectionsCreated: 0,
     sectionsUpdated: 0,
+    sectionsMerged: 0,
     sectionsTombstoned: 0,
     tasksCreated: 0,
   };
@@ -160,7 +170,13 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         if (parent) parentPageId = parent.id;
       }
 
-      const [pageRow] = await tx
+      // Page upsert. ON CONFLICT (user_id, scope, slug) DO NOTHING — if
+      // the slug already exists, fall through to merge mode against the
+      // existing page rather than crashing the transaction. Slug
+      // collisions happen most often on partial-retry (some pages
+      // already landed before a failure) and on cross-call ingestion of
+      // the same topic (e.g. user calls about "Social Technology" twice).
+      const inserted = await tx
         .insert(wikiPages)
         .values({
           userId,
@@ -173,10 +189,50 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
           agentAbstract: create.agent_abstract,
           abstract: create.abstract ?? null,
         })
+        .onConflictDoNothing({
+          target: [wikiPages.userId, wikiPages.scope, wikiPages.slug],
+        })
         .returning({ id: wikiPages.id });
-      if (!pageRow) continue;
 
-      result.pagesCreated++;
+      let pageId: string;
+      let isMergeMode = false;
+
+      if (inserted[0]) {
+        pageId = inserted[0].id;
+        result.pagesCreated++;
+      } else {
+        // Slug exists. Look up the existing page; preserve its metadata
+        // (title / agent_abstract / abstract / parent) — the assumption
+        // is that the existing copy already represents the user's wiki
+        // state; we're additively merging new content onto it, not
+        // overwriting what's there.
+        const [existing] = await tx
+          .select({ id: wikiPages.id })
+          .from(wikiPages)
+          .where(
+            and(
+              eq(wikiPages.userId, userId),
+              eq(wikiPages.scope, 'user'),
+              eq(wikiPages.slug, create.slug),
+              isNull(wikiPages.tombstonedAt),
+            ),
+          )
+          .limit(1);
+        if (!existing) {
+          logger.warn(
+            { slug: create.slug },
+            'commit: slug conflict but no active existing row (tombstoned?) — skipping create',
+          );
+          continue;
+        }
+        pageId = existing.id;
+        isMergeMode = true;
+        result.pagesMerged++;
+        logger.info(
+          { slug: create.slug, pageId },
+          'commit: slug exists — merge mode (existing metadata preserved)',
+        );
+      }
 
       // v0.2.1 sidecar — every type='todo' wiki create gets a sidecar row.
       // Status defaults to 'todo'; parent_page_id resolves the optional
@@ -184,7 +240,11 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
       // Default-to-NULL is load-bearing: per the prompt rules, the model
       // should ONLY emit todo_parent_slug when the transcript explicitly
       // directs association. Anything else stays unassigned ("General").
-      if (create.type === 'todo') {
+      //
+      // Skip in merge mode — if the existing todo page was already in the
+      // wiki, its sidecar row already exists; duplicating would collide
+      // on (page_id) which is the unique key on `todos`.
+      if (!isMergeMode && create.type === 'todo') {
         let todoParentPageId: string | null = null;
         if (create.todo_parent_slug) {
           const [parentForTodo] = await tx
@@ -221,38 +281,133 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         }
         await tx.insert(todos).values({
           userId,
-          pageId: pageRow.id,
+          pageId,
           parentPageId: todoParentPageId,
           assigneeAgentId,
           status: 'todo',
         });
       }
 
-      // Sections, in declared order.
+      // Section-by-section commit. In fresh-create mode, every section is
+      // a straight INSERT. In merge mode, a section whose title matches
+      // an existing non-tombstoned section on this page triggers a Flash
+      // merge call (preserves the existing content + folds the new content
+      // in coherently) rather than colliding on `wiki_sections_page_title_idx`.
+      // Null-title sections always insert (the partial unique index
+      // excludes them).
+      //
+      // sort_order for merged section inserts: append at end so we don't
+      // collide with existing rows that already used sort_orders 0..N.
+      let nextAppendSortOrder = 0;
+      if (isMergeMode) {
+        const [maxRow] = await tx
+          .select({ max: sql<number>`COALESCE(MAX(${wikiSections.sortOrder}), -1)` })
+          .from(wikiSections)
+          .where(and(eq(wikiSections.pageId, pageId), isNull(wikiSections.tombstonedAt)));
+        nextAppendSortOrder = (maxRow?.max ?? -1) + 1;
+      }
+
       for (let i = 0; i < create.sections.length; i++) {
         const section = create.sections[i];
         if (!section) continue;
+
+        // Try merge if (a) we're in merge mode, (b) the new section has a
+        // title, (c) an active section with that title exists on this page.
+        let existingSection: { id: string; content: string } | undefined;
+        if (isMergeMode && section.title) {
+          const found = await tx
+            .select({ id: wikiSections.id, content: wikiSections.content })
+            .from(wikiSections)
+            .where(
+              and(
+                eq(wikiSections.pageId, pageId),
+                eq(wikiSections.title, section.title),
+                isNull(wikiSections.tombstonedAt),
+              ),
+            )
+            .limit(1);
+          existingSection = found[0];
+        }
+
+        if (existingSection) {
+          // Merge via Flash (best-effort; falls back to dated-append on
+          // failure — see section-merge.ts). NOTE: this call happens
+          // inside the open transaction. Tx-hold time grows with the
+          // number of merges in a commit; at our scale (rare, small N)
+          // this is acceptable. Revisit if it becomes a connection-pool
+          // problem.
+          const merged = await mergeSectionContent(
+            {
+              pageTitle: create.title,
+              sectionTitle: section.title ?? null,
+              existingContent: existingSection.content,
+              incomingContent: section.content,
+            },
+            { userId, agentId, transcriptId },
+          );
+
+          await tx
+            .update(wikiSections)
+            .set({ content: merged.content })
+            .where(eq(wikiSections.id, existingSection.id));
+
+          await tx.insert(wikiSectionHistory).values({
+            sectionId: existingSection.id,
+            content: merged.content,
+            editedBy: 'ai',
+          });
+
+          for (const snip of section.snippets ?? []) {
+            await tx.insert(wikiSectionTranscripts).values({
+              sectionId: existingSection.id,
+              transcriptId,
+              turnId: snip.turn_id,
+              snippet: snip.text,
+            });
+          }
+          for (const url of section.cited_urls ?? []) {
+            const meta = groundingByUri.get(url);
+            if (!meta) {
+              logger.warn(
+                { url, sectionId: existingSection.id },
+                'commit: cited_url not in grounding sources — skipping',
+              );
+              continue;
+            }
+            await tx.insert(wikiSectionUrls).values({
+              sectionId: existingSection.id,
+              url,
+              snippet: meta.title ?? meta.domain ?? '',
+            });
+          }
+
+          result.sectionsMerged++;
+          continue;
+        }
+
+        // No collision — insert as new section. In merge mode, sort_order
+        // appends after existing sections; in fresh mode, sort_order
+        // matches the declared index (today's behavior).
+        const sortOrder = isMergeMode ? nextAppendSortOrder++ : i;
         const [sectionRow] = await tx
           .insert(wikiSections)
           .values({
-            pageId: pageRow.id,
+            pageId,
             title: section.title ?? null,
             content: section.content,
-            sortOrder: i,
+            sortOrder,
           })
           .returning({ id: wikiSections.id });
         if (!sectionRow) continue;
 
         result.sectionsCreated++;
 
-        // Initial history snapshot.
         await tx.insert(wikiSectionHistory).values({
           sectionId: sectionRow.id,
           content: section.content,
           editedBy: 'ai',
         });
 
-        // Source-attribution junctions.
         for (const snip of section.snippets ?? []) {
           await tx.insert(wikiSectionTranscripts).values({
             sectionId: sectionRow.id,
@@ -262,7 +417,6 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
           });
         }
 
-        // External URL citations from googleSearch grounding.
         for (const url of section.cited_urls ?? []) {
           const meta = groundingByUri.get(url);
           if (!meta) {
@@ -484,7 +638,8 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     ];
     const summary =
       `Ingestion: +${result.pagesCreated} pages, ~${result.pagesUpdated} pages, ` +
-      `+${result.sectionsCreated} sections, ~${result.sectionsUpdated} sections, ` +
+      `≈${result.pagesMerged} pages merged, +${result.sectionsCreated} sections, ` +
+      `~${result.sectionsUpdated} sections, ≈${result.sectionsMerged} sections merged, ` +
       `−${result.sectionsTombstoned} sections, ${fanOut.skipped.length} claims skipped`;
 
     await tx.insert(wikiLog).values({

@@ -791,33 +791,85 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
   };
 }
 
-// Pro calls can run long enough to hit undici's default 5-min headers timeout
-// or other transient network errors. Retry once on those — content errors
-// (bad JSON, empty response) bubble through without retry since they signal
-// model issues, not transport.
+// Pro calls hit transient failures from two sources:
+//   1. Transport — undici's 5-min default headers timeout, dropped
+//      connections, fetch retry storms.
+//   2. Server — Gemini overload windows (HTTP 503 / status: UNAVAILABLE),
+//      rate limits (429), brief 5xx blips.
+// Both warrant retry with backoff. Content errors (bad JSON, empty response,
+// finishReason: SAFETY) bubble through without retry — those signal model
+// issues, not transient infra.
+//
+// Backoff schedule: 2s, 5s, 15s. Total max delay before giving up is ~22s
+// for transport errors; for Gemini 503 overload we lean longer (overload
+// windows can last minutes). Caller surfaces remaining failures as
+// ingestion_status='failed' so the user's pending banner offers retry.
+const PRO_RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
+
 async function callProWithRetry(
   // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai params shape
   params: any,
   // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai response shape
 ): Promise<any> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= PRO_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await getGeminiClient().models.generateContent(params);
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientFetchError(err)) throw err;
+      if (attempt === PRO_RETRY_DELAYS_MS.length) {
+        logger.warn(
+          { err: errMessage(err), attempts: attempt + 1 },
+          'pro fan-out: transient error retries exhausted',
+        );
+        throw err;
+      }
+      const delay = PRO_RETRY_DELAYS_MS[attempt] ?? 15_000;
+      logger.warn(
+        { err: errMessage(err), nextAttempt: attempt + 2, delayMs: delay },
+        'pro fan-out: transient error, retrying',
+      );
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  // Unreachable but keeps TS happy.
+  throw lastErr;
+}
+
+function errMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
   try {
-    return await getGeminiClient().models.generateContent(params);
-  } catch (err) {
-    if (!isTransientFetchError(err)) throw err;
-    logger.warn({ err }, 'pro fan-out: transient fetch error, retrying once');
-    await new Promise((r) => setTimeout(r, 2000));
-    return getGeminiClient().models.generateContent(params);
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
   }
 }
 
 function isTransientFetchError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message ?? '';
-  if (msg.includes('fetch failed')) return true;
-  if (msg.includes('Headers Timeout')) return true;
-  if (msg.includes('UND_ERR')) return true;
-  // Walk the cause chain — undici nests its specific error types there.
-  const cause = (err as { cause?: unknown }).cause;
-  if (cause && cause !== err) return isTransientFetchError(cause);
+  if (err instanceof Error) {
+    const msg = err.message ?? '';
+    // Transport-level (undici).
+    if (msg.includes('fetch failed')) return true;
+    if (msg.includes('Headers Timeout')) return true;
+    if (msg.includes('UND_ERR')) return true;
+    // Gemini server-side transient (status string + numeric code in
+    // body; either form lands in err.message depending on SDK path).
+    if (msg.includes('UNAVAILABLE')) return true;
+    if (msg.includes('RESOURCE_EXHAUSTED')) return true; // 429-ish
+    if (msg.includes('"code":503')) return true;
+    if (msg.includes('"code":500')) return true; // brief 5xx
+    if (msg.includes('"code":429')) return true;
+    // Walk the cause chain — undici nests its specific error types there.
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause && cause !== err) return isTransientFetchError(cause);
+  }
+  // Some Gemini SDK errors come back as plain objects with .status/.code.
+  if (err && typeof err === 'object') {
+    const e = err as { status?: unknown; code?: unknown; error?: unknown };
+    if (e.status === 'UNAVAILABLE' || e.status === 'RESOURCE_EXHAUSTED') return true;
+    if (e.code === 503 || e.code === 500 || e.code === 429) return true;
+    if (e.error && typeof e.error === 'object') return isTransientFetchError(e.error);
+  }
   return false;
 }

@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import { initSentry } from './observability/sentry.js';
 import { withSentry } from './observability/wrap-task.js';
 import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
+import { expireStaleIngestion } from './tasks/expire-stale-ingestion.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { hygieneSweep } from './tasks/hygiene-sweep.js';
 import { ingestion } from './tasks/ingestion.js';
@@ -27,6 +28,11 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 // resolution would be wasteful. Run on app boot too so a worker restart
 // doesn't skip a day.
 const HYGIENE_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+// SLA sweep — every 60s. Cheap UPDATE-RETURNING query against the
+// call_transcripts.ingestion_status enum; only does anything when a row
+// has been pending/running for >15 min. Tight cadence so user-visible
+// stuck-pending state clears quickly after the SLA fires.
+const SLA_SWEEP_INTERVAL_MS = 60_000;
 
 async function main(): Promise<void> {
   initSentry();
@@ -43,6 +49,7 @@ async function main(): Promise<void> {
       ingestion: withSentry('ingestion', ingestion),
       agent_task_dispatch: withSentry('agent_task_dispatch', dispatchAgentTask),
       hygiene_sweep: withSentry('hygiene_sweep', hygieneSweep),
+      expire_stale_ingestion: withSentry('expire_stale_ingestion', expireStaleIngestion),
     },
   });
 
@@ -68,10 +75,22 @@ async function main(): Promise<void> {
   enqueueHygiene();
   const hygieneInterval = setInterval(enqueueHygiene, HYGIENE_SWEEP_INTERVAL_MS);
 
+  // SLA sweep — every 60s. Catches transcripts wedged in pending/running
+  // for >15 min and flips them to failed so the user's pending banner
+  // surfaces the retry CTA. Cheap query when there's nothing to flip.
+  const enqueueSlaSweep = () => {
+    runner.addJob('expire_stale_ingestion', {}).catch((err) => {
+      logger.error({ err }, 'failed to enqueue expire_stale_ingestion');
+    });
+  };
+  enqueueSlaSweep();
+  const slaInterval = setInterval(enqueueSlaSweep, SLA_SWEEP_INTERVAL_MS);
+
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutdown received — stopping');
     clearInterval(interval);
     clearInterval(hygieneInterval);
+    clearInterval(slaInterval);
     await runner.stop();
     // Flush any buffered PostHog events before exit so we don't drop the
     // last batch on graceful restart.
