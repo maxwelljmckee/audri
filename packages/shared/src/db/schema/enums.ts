@@ -75,6 +75,7 @@ export const ingestionStatusEnum = pgEnum('ingestion_status', [
   'pending',
   'running',
   'succeeded',
+  'partial',
   'failed',
 ]);
 

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."ingestion_status" ADD VALUE 'partial' BEFORE 'failed';

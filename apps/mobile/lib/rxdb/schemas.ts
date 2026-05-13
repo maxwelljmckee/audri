@@ -339,7 +339,7 @@ export interface CallTranscriptDoc {
   content: ChatTurn[];
   cancelled: boolean;
   end_reason: string | null;
-  ingestion_status: 'pending' | 'running' | 'succeeded' | 'failed';
+  ingestion_status: 'pending' | 'running' | 'succeeded' | 'partial' | 'failed';
   ingestion_error: string | null;
   created_at: string;
 }
@@ -365,7 +365,7 @@ export const callTranscriptSchema: RxJsonSchema<CallTranscriptDoc> = {
     end_reason: { type: ['string', 'null'] },
     ingestion_status: {
       type: 'string',
-      enum: ['pending', 'running', 'succeeded', 'failed'],
+      enum: ['pending', 'running', 'succeeded', 'partial', 'failed'],
       maxLength: 16,
     },
     ingestion_error: { type: ['string', 'null'] },

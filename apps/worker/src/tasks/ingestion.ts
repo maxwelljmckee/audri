@@ -31,13 +31,17 @@ import {
 } from '../ingestion/flash-candidate-retrieval.js';
 import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
-import { recordInferenceUsage, recordWebSearchUsage } from '../usage/record-inference.js';
 import { logger } from '../logger.js';
+import { recordInferenceUsage, recordWebSearchUsage } from '../usage/record-inference.js';
 
 export interface IngestionPayload {
   transcriptId: string;
   userId: string;
   agentId: string;
+  // Set by the retry-ingest controller when retrying a `partial` transcript:
+  // agent-scope already wrote on the previous attempt, so re-running it would
+  // duplicate. Skips the agent-scope branch and reruns user-scope only.
+  userScopeOnly?: boolean;
 }
 
 export const ingestion: Task = async (payload, helpers) => {
@@ -129,20 +133,33 @@ export const ingestion: Task = async (payload, helpers) => {
 
   // ── User-scope and agent-scope passes run in parallel. Independent
   //    lifecycles per specs/agent-scope-ingestion.md — one failing doesn't
-  //    block the other.
+  //    block the other. On retry of a `partial` transcript, the controller
+  //    sets userScopeOnly so we skip the agent-scope branch (it already
+  //    wrote on the original attempt; re-running would duplicate).
+  const userScopePromise = runUserScopePipeline(
+    p,
+    transcript,
+    transcriptRow.startedAt,
+    groundingSources,
+    log,
+  );
+  const agentScopePromise = p.userScopeOnly
+    ? Promise.resolve({ skipped: true } as const)
+    : runAgentScopeIngestion({
+        transcriptId: p.transcriptId,
+        userId: p.userId,
+        agentId: p.agentId,
+        transcript,
+        callMetadata,
+        userFirstName: null, // V1+ enrich via supabase admin lookup
+      }).then((r) => {
+        log('agent-scope complete', { ...r });
+        return r;
+      });
+
   const [userScopeResult, agentScopeResult] = await Promise.allSettled([
-    runUserScopePipeline(p, transcript, transcriptRow.startedAt, groundingSources, log),
-    runAgentScopeIngestion({
-      transcriptId: p.transcriptId,
-      userId: p.userId,
-      agentId: p.agentId,
-      transcript,
-      callMetadata,
-      userFirstName: null, // V1+ enrich via supabase admin lookup
-    }).then((r) => {
-      log('agent-scope complete', { ...r });
-      return r;
-    }),
+    userScopePromise,
+    agentScopePromise,
   ]);
 
   if (userScopeResult.status === 'rejected') {
@@ -152,11 +169,13 @@ export const ingestion: Task = async (payload, helpers) => {
     logger.error({ err: agentScopeResult.reason }, 'agent-scope pipeline failed');
   }
 
-  // If BOTH fail, mark the transcript failed + throw so graphile retries.
-  // Anything less than both-failed is treated as a successful ingest — at
-  // least one of the two scopes wrote something.
-  if (userScopeResult.status === 'rejected' && agentScopeResult.status === 'rejected') {
-    const isLastAttempt = (helpers.job.attempts ?? 1) >= (helpers.job.max_attempts ?? 1);
+  const userScopeFailed = userScopeResult.status === 'rejected';
+  const agentScopeFailed = agentScopeResult.status === 'rejected';
+  const isLastAttempt = (helpers.job.attempts ?? 1) >= (helpers.job.max_attempts ?? 1);
+
+  // Both scopes failed → throw so graphile retries; mark `failed` on last
+  // attempt so the banner's retry CTA can pick it up.
+  if (userScopeFailed && agentScopeFailed) {
     if (isLastAttempt) {
       const reason = userScopeResult.reason;
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -173,6 +192,28 @@ export const ingestion: Task = async (payload, helpers) => {
     throw userScopeResult.reason;
   }
 
+  // User-scope failed but agent-scope wrote — mark `partial`. Don't throw:
+  // re-running would duplicate agent-scope writes. The retry-ingest endpoint
+  // accepts `partial` and re-enqueues with userScopeOnly=true.
+  if (userScopeFailed && !agentScopeFailed) {
+    const reason = userScopeResult.reason;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    await db
+      .update(callTranscripts)
+      .set({ ingestionStatus: 'partial', ingestionError: message })
+      .where(eq(callTranscripts.id, p.transcriptId));
+    capture(p.userId, 'ingestion.partial', {
+      transcriptId: p.transcriptId,
+      attempts: helpers.job.attempts ?? 1,
+      error: message.slice(0, 200),
+      userScopeOnlyRetry: p.userScopeOnly === true,
+    });
+    return;
+  }
+
+  // User-scope succeeded; agent-scope may have failed silently. Wiki pages
+  // exist, so no user-actionable retry surface — log via Sentry (above) and
+  // mark `succeeded` so the banner clears.
   await db
     .update(callTranscripts)
     .set({ ingestionStatus: 'succeeded', ingestionError: null })
@@ -182,6 +223,7 @@ export const ingestion: Task = async (payload, helpers) => {
     transcriptId: p.transcriptId,
     userScope: userScopeResult.status,
     agentScope: agentScopeResult.status,
+    userScopeOnly: p.userScopeOnly === true,
   });
 };
 

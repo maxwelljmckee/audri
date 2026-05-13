@@ -97,7 +97,7 @@ export class TasksController {
         SELECT graphile_worker.add_job(
           'agent_task_dispatch',
           ${dispatchPayload}::json,
-          max_attempts => 2
+          max_attempts => 3
         )
       `);
 

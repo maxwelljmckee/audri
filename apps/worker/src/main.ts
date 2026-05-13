@@ -1,5 +1,6 @@
 import { shutdownPosthog } from '@audri/shared/posthog';
 import { run } from 'graphile-worker';
+import { Agent, setGlobalDispatcher } from 'undici';
 import { logger } from './logger.js';
 import { initSentry } from './observability/sentry.js';
 import { withSentry } from './observability/wrap-task.js';
@@ -7,6 +8,19 @@ import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { hygieneSweep } from './tasks/hygiene-sweep.js';
 import { ingestion } from './tasks/ingestion.js';
+
+// undici (Node's built-in fetch) defaults to a 5-minute headers timeout.
+// Pro fan-out calls on heavy transcripts (deep thinking budget + large
+// touched-pages payload) can legitimately exceed that, producing
+// HeadersTimeoutError flakes that look like Google API issues but are
+// actually our client-side timer. 15 minutes covers worst-observed Pro
+// runs with comfortable headroom; longer is strictly safer here because
+// the worker is otherwise idle while a generateContent call is in flight.
+// Affects every fetch in this process (Gemini SDK, Supabase admin, etc.) —
+// none of them benefit from a tighter ceiling, so a global dispatcher
+// override is the simplest reach.
+const FETCH_TIMEOUT_MS = 15 * 60 * 1000;
+setGlobalDispatcher(new Agent({ headersTimeout: FETCH_TIMEOUT_MS, bodyTimeout: FETCH_TIMEOUT_MS }));
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // Daily — the hygiene sweep is a low-frequency cleanup; minute-level cron

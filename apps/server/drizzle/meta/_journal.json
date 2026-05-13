@@ -176,6 +176,13 @@
       "when": 1778619187337,
       "tag": "0024_abnormal_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778623620657,
+      "tag": "0025_keen_bloodstorm",
+      "breakpoints": true
     }
   ]
 }

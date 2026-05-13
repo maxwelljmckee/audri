@@ -192,6 +192,9 @@ function IngestionBadge({
   if (status === "failed") {
     return <Text style={[styles.badge, styles.badgeFailed]}>failed</Text>;
   }
+  if (status === "partial") {
+    return <Text style={[styles.badge, styles.badgeFailed]}>partial</Text>;
+  }
   // pending or running — both indicate in-flight work
   return <Text style={[styles.badge, styles.badgePending]}>processing…</Text>;
 }
@@ -384,6 +387,17 @@ function IngestionStatus({
         <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
         <Text style={[styles.subtle, { color: "#f87171" }]} numberOfLines={3}>
           Ingestion failed{error ? `: ${error}` : "."}
+        </Text>
+      </View>
+    );
+  }
+  if (status === "partial") {
+    return (
+      <View style={styles.statusRow}>
+        <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
+        <Text style={[styles.subtle, { color: "#f87171" }]} numberOfLines={3}>
+          Some notes from this call didn't write
+          {error ? `: ${error}` : "."}
         </Text>
       </View>
     );

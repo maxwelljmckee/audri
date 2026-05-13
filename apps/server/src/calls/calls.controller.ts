@@ -1,6 +1,7 @@
 import { callTranscripts, db, eq, sql, userSettings } from '@audri/shared/db';
 import { LIVE_MODEL } from '@audri/shared/gemini';
 import { recordInferenceUsage } from '@audri/shared/usage';
+import type { UsageMetadata } from '@google/genai';
 import {
   BadRequestException,
   Body,
@@ -13,7 +14,6 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { UsageMetadata } from '@google/genai';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
@@ -117,7 +117,7 @@ export class CallsController {
             'ingestion',
             ${ingestionPayload}::json,
             queue_name => ${`ingestion-${user.id}`},
-            max_attempts => 2
+            max_attempts => 3
           )
         `);
       }
@@ -154,9 +154,12 @@ export class CallsController {
     return { status: 'ended', sessionId };
   }
 
-  // Re-enqueue ingestion for a transcript whose previous run failed. Idempotent
-  // by status: only re-fires when ingestion_status is currently 'failed' so a
-  // double-tap doesn't queue duplicate work.
+  // Re-enqueue ingestion for a transcript whose previous run didn't fully
+  // succeed. Idempotent by status: only re-fires when ingestion_status is
+  // `failed` (both scopes broke) or `partial` (user-scope broke, agent-scope
+  // wrote). On `partial` we set userScopeOnly=true on the payload so the
+  // worker skips re-running the agent-scope pass (which would duplicate
+  // writes).
   @Post(':sessionId/retry-ingest')
   async retryIngest(@CurrentUser() user: { id: string }, @Param('sessionId') sessionId: string) {
     const [row] = await db
@@ -167,9 +170,12 @@ export class CallsController {
     if (!row) throw new BadRequestException(`unknown session: ${sessionId}`);
     if (row.userId !== user.id) throw new ConflictException('session does not belong to user');
 
-    if (row.ingestionStatus !== 'failed') {
+    const retriable = row.ingestionStatus === 'failed' || row.ingestionStatus === 'partial';
+    if (!retriable) {
       return { status: 'noop', sessionId, ingestionStatus: row.ingestionStatus };
     }
+
+    const userScopeOnly = row.ingestionStatus === 'partial';
 
     await db.transaction(async (tx) => {
       await tx
@@ -181,19 +187,20 @@ export class CallsController {
         transcriptId: row.id,
         userId: user.id,
         agentId: row.agentId,
+        userScopeOnly,
       });
       await tx.execute(sql`
         SELECT graphile_worker.add_job(
           'ingestion',
           ${ingestionPayload}::json,
           queue_name => ${`ingestion-${user.id}`},
-          max_attempts => 2
+          max_attempts => 3
         )
       `);
     });
 
-    this.logger.log({ sessionId, userId: user.id }, 'ingestion retry enqueued');
-    return { status: 'retry-enqueued', sessionId };
+    this.logger.log({ sessionId, userId: user.id, userScopeOnly }, 'ingestion retry enqueued');
+    return { status: 'retry-enqueued', sessionId, userScopeOnly };
   }
 
   // ── Live-agent tool endpoints ──────────────────────────────────────────
