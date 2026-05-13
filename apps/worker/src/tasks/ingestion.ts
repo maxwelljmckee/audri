@@ -20,6 +20,7 @@
 
 import { callTranscripts, db, eq } from '@audri/shared/db';
 import { capture, isFeatureEnabled } from '@audri/shared/posthog';
+import { checkSpendCap } from '@audri/shared/usage';
 import type { Task } from 'graphile-worker';
 import { runAgentScopeIngestion } from '../ingestion/agent-scope.js';
 import { fetchCandidatePages } from '../ingestion/candidate-pages.js';
@@ -91,6 +92,32 @@ export const ingestion: Task = async (payload, helpers) => {
       .update(callTranscripts)
       .set({ ingestionStatus: 'succeeded', ingestionError: null })
       .where(eq(callTranscripts.id, p.transcriptId));
+    return;
+  }
+
+  // Hard spending-cap pre-flight. Belt-and-suspenders with the server's
+  // /end gate (the enqueue site) — covers the case where the user
+  // crossed the cap between /end POST and worker pickup, AND retries
+  // that re-enqueued without re-checking (older clients / direct SQL).
+  const cap = await checkSpendCap(p.userId);
+  if (cap.overCap) {
+    log('skipping ingestion — user over monthly spend cap', {
+      currentSpendCents: cap.currentSpendCents,
+      limitCents: cap.limitCents,
+    });
+    await db
+      .update(callTranscripts)
+      .set({
+        ingestionStatus: 'skipped_over_cap',
+        ingestionError:
+          'Monthly spending cap exceeded — raise the limit in Account → Usage to ingest this transcript.',
+      })
+      .where(eq(callTranscripts.id, p.transcriptId));
+    capture(p.userId, 'ingestion.skipped_over_cap', {
+      transcriptId: p.transcriptId,
+      currentSpendCents: cap.currentSpendCents,
+      limitCents: cap.limitCents,
+    });
     return;
   }
 

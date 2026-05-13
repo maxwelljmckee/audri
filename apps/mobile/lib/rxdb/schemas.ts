@@ -339,7 +339,13 @@ export interface CallTranscriptDoc {
   content: ChatTurn[];
   cancelled: boolean;
   end_reason: string | null;
-  ingestion_status: 'pending' | 'running' | 'succeeded' | 'partial' | 'failed';
+  ingestion_status:
+    | 'pending'
+    | 'running'
+    | 'succeeded'
+    | 'partial'
+    | 'failed'
+    | 'skipped_over_cap';
   ingestion_error: string | null;
   created_at: string;
 }
@@ -365,7 +371,9 @@ export const callTranscriptSchema: RxJsonSchema<CallTranscriptDoc> = {
     end_reason: { type: ['string', 'null'] },
     ingestion_status: {
       type: 'string',
-      enum: ['pending', 'running', 'succeeded', 'partial', 'failed'],
+      enum: ['pending', 'running', 'succeeded', 'partial', 'failed', 'skipped_over_cap'],
+      // 'skipped_over_cap' is 16 chars — fits the existing length cap, so
+      // no maxLength bump needed, no schema-version migration required.
       maxLength: 16,
     },
     ingestion_error: { type: ['string', 'null'] },

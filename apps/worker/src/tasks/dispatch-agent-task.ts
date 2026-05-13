@@ -11,6 +11,7 @@
 
 import { agentTasks, db, eq, sql } from '@audri/shared/db';
 import { capture, isFeatureEnabled } from '@audri/shared/posthog';
+import { checkSpendCap } from '@audri/shared/usage';
 import type { Task } from 'graphile-worker';
 import { logger } from '../logger.js';
 import { commitResearchOutput } from '../research/commit.js';
@@ -52,6 +53,36 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
     capture(task.userId, 'agent_task.skipped_by_flag', {
       kind: task.kind,
       agentTaskId: task.id,
+    });
+    return;
+  }
+
+  // Hard spending-cap pre-flight. Refuse to run the handler when the
+  // user's monthly spend is at or over their configured limit. Mark
+  // 'blocked_over_cap' instead of 'failed' so the Todos plugin can
+  // render a distinct UX (raise limit + retry) rather than the standard
+  // failure-retry path. User re-triggers after raising the cap.
+  const cap = await checkSpendCap(task.userId);
+  if (cap.overCap) {
+    log('agent_task blocked — user over monthly spend cap', {
+      kind: task.kind,
+      currentSpendCents: cap.currentSpendCents,
+      limitCents: cap.limitCents,
+    });
+    await db
+      .update(agentTasks)
+      .set({
+        status: 'blocked_over_cap',
+        lastError:
+          'Monthly spending cap exceeded — raise the limit in Account → Usage to run this task.',
+        updatedAt: new Date(),
+      })
+      .where(eq(agentTasks.id, task.id));
+    capture(task.userId, 'agent_task.blocked_over_cap', {
+      kind: task.kind,
+      agentTaskId: task.id,
+      currentSpendCents: cap.currentSpendCents,
+      limitCents: cap.limitCents,
     });
     return;
   }

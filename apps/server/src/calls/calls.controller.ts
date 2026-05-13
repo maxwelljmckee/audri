@@ -1,12 +1,14 @@
 import { callTranscripts, db, eq, sql, userSettings } from '@audri/shared/db';
 import { LIVE_MODEL } from '@audri/shared/gemini';
-import { recordInferenceUsage } from '@audri/shared/usage';
+import { checkSpendCap, recordInferenceUsage } from '@audri/shared/usage';
 import type { UsageMetadata } from '@google/genai';
 import {
   BadRequestException,
   Body,
   ConflictException,
   Controller,
+  HttpException,
+  HttpStatus,
   Inject,
   Logger,
   Param,
@@ -48,6 +50,24 @@ export class CallsController {
   @Throttle({ short: { limit: 10, ttl: 60 * 60_000 }, long: { limit: 100, ttl: 24 * 60 * 60_000 } })
   @Post('start')
   async start(@CurrentUser() user: { id: string }, @Body() body: StartCallBody) {
+    // Hard spending-cap pre-flight. Refuse to mint the ephemeral token
+    // when the user's monthly spend is at or over their configured limit.
+    // Mobile maps 402 to a "monthly limit reached" state with deep-link
+    // to the SetLimit modal so the user can raise the cap and retry.
+    const cap = await checkSpendCap(user.id);
+    if (cap.overCap) {
+      throw new HttpException(
+        {
+          error: 'monthly_spend_cap_exceeded',
+          message:
+            'You have reached your monthly spending limit. Raise the limit in Account → Usage to continue.',
+          current_spend_cents: cap.currentSpendCents,
+          limit_cents: cap.limitCents,
+          month_start: cap.monthStart,
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
     const agentSlug = body.agent_slug ?? 'assistant';
     const callType = body.call_type ?? 'generic';
     return this.calls.startCall({ userId: user.id, agentSlug, callType });
@@ -90,6 +110,15 @@ export class CallsController {
       Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
     );
 
+    // Hard spending-cap check: if the user crossed their cap mid-call,
+    // skip the ingestion enqueue and mark the transcript with the new
+    // 'skipped_over_cap' status. The call already happened (we don't
+    // refuse mid-flight), but post-call inference is gated. The Notes
+    // pending banner renders this status differently from 'failed' —
+    // user sees a "raise limit to ingest" deep-link rather than retry.
+    const cap = !cancelled && transcript.length > 0 ? await checkSpendCap(user.id) : null;
+    const skipIngestForCap = cap?.overCap === true;
+
     // Atomic transcript update + ingestion enqueue. If either fails the whole
     // /end fails — no orphan rows or jobs. Cancelled calls skip the enqueue
     // (per todos.md §3 call_transcripts.cancelled spec).
@@ -104,6 +133,13 @@ export class CallsController {
           endReason: body.end_reason ?? 'user_ended',
           cancelled,
           droppedTurnIds: body.dropped_turn_ids ?? [],
+          ...(skipIngestForCap
+            ? {
+                ingestionStatus: 'skipped_over_cap' as const,
+                ingestionError:
+                  'Monthly spending cap exceeded — raise the limit in Account → Usage to ingest this transcript.',
+              }
+            : {}),
         })
         .where(eq(callTranscripts.sessionId, sessionId));
 
@@ -116,7 +152,7 @@ export class CallsController {
           .where(eq(userSettings.userId, user.id));
       }
 
-      if (!cancelled && transcript.length > 0) {
+      if (!cancelled && transcript.length > 0 && !skipIngestForCap) {
         const ingestionPayload = JSON.stringify({
           transcriptId: existing.id,
           userId: user.id,
@@ -186,11 +222,34 @@ export class CallsController {
     if (!row) throw new BadRequestException(`unknown session: ${sessionId}`);
     if (row.userId !== user.id) throw new ConflictException('session does not belong to user');
 
-    const retriable = row.ingestionStatus === 'failed' || row.ingestionStatus === 'partial';
+    const retriable =
+      row.ingestionStatus === 'failed' ||
+      row.ingestionStatus === 'partial' ||
+      row.ingestionStatus === 'skipped_over_cap';
     if (!retriable) {
       return { status: 'noop', sessionId, ingestionStatus: row.ingestionStatus };
     }
 
+    // Same cap-check at retry: if the user is still over their monthly
+    // limit, refuse to re-enqueue. They need to raise the limit first.
+    const cap = await checkSpendCap(user.id);
+    if (cap.overCap) {
+      throw new HttpException(
+        {
+          error: 'monthly_spend_cap_exceeded',
+          message:
+            'You have reached your monthly spending limit. Raise the limit in Account → Usage to retry this ingestion.',
+          current_spend_cents: cap.currentSpendCents,
+          limit_cents: cap.limitCents,
+          month_start: cap.monthStart,
+        },
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
+    // Partial-status path uses userScopeOnly=true so we don't re-run
+    // agent-scope (which already wrote on the original attempt). For
+    // skipped_over_cap and failed, the full pipeline re-runs.
     const userScopeOnly = row.ingestionStatus === 'partial';
 
     await db.transaction(async (tx) => {

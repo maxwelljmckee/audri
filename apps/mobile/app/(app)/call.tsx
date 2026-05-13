@@ -158,7 +158,9 @@ export default function CallScreen() {
 
         {error && (
           <Text style={styles.errorText} numberOfLines={2}>
-            {error}
+            {error.startsWith('SPEND_CAP_EXCEEDED')
+              ? 'Monthly spending limit reached. Raise the limit in Account → Usage to start a new call.'
+              : error}
           </Text>
         )}
       </SafeAreaView>

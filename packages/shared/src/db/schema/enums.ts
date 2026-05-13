@@ -31,6 +31,10 @@ export const agentTaskStatusEnum = pgEnum('agent_task_status', [
   'succeeded',
   'failed',
   'cancelled',
+  // Hard spending-cap (v0.3.0): pre-flight check at dispatch / handler
+  // refused to start because the user's monthly spend exceeds their
+  // configured limit. User can retry by raising the cap.
+  'blocked_over_cap',
 ]);
 
 export const agentTaskKindEnum = pgEnum('agent_task_kind', ['research']);
@@ -77,6 +81,11 @@ export const ingestionStatusEnum = pgEnum('ingestion_status', [
   'succeeded',
   'partial',
   'failed',
+  // Hard spending-cap (v0.3.0): /end POST detected the user is over the
+  // monthly cap, so the ingestion job was NOT enqueued. Distinct from
+  // 'failed' so the Notes pending banner can render a different UX
+  // (deep-link to SetLimit rather than retry CTA).
+  'skipped_over_cap',
 ]);
 
 // Todo lifecycle status. v0.2.1 sidecar refactor — status moved off the

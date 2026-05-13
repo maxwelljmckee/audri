@@ -21,3 +21,9 @@ export {
   recordWebSearchUsage,
   type UsageEventKind,
 } from './record-inference.js';
+export {
+  checkSpendCap,
+  invalidateSpendCap,
+  isOverSpendCap,
+  type SpendCapStatus,
+} from './spend-cap.js';

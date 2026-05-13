@@ -1,4 +1,5 @@
 import { agents, db, eq, sql, userSettings } from '@audri/shared/db';
+import { invalidateSpendCap } from '@audri/shared/usage';
 import {
   BadRequestException,
   Body,
@@ -111,6 +112,11 @@ export class MeController {
     }
 
     await db.update(userSettings).set(update).where(eq(userSettings.userId, user.id));
+    // Invalidate the cached cap decision so the next inference call
+    // picks up the new limit immediately rather than waiting for the
+    // 60s TTL. Important when the user is racing back from "limit
+    // reached" UX to make a call.
+    invalidateSpendCap(user.id);
     this.logger.log({ userId: user.id, limitCents, threshold }, 'spending limit updated');
     return { status: 'updated' };
   }

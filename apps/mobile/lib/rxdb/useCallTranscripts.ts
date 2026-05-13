@@ -12,6 +12,14 @@
 //                                    scope pass (the visible wiki pages) did
 //                                    not; retry-ingest re-runs user-scope
 //                                    only.
+//   useOverCapTranscripts()         — chats with ingestion_status =
+//                                    'skipped_over_cap'. Distinct from
+//                                    failed: not a worker error, but the
+//                                    user crossed their monthly spending
+//                                    cap before /end or worker pickup.
+//                                    Drives a separate banner with a
+//                                    "raise limit" deep-link rather than
+//                                    a retry CTA.
 //   useSectionsByTranscript(id)    — wiki_section_transcripts rows for a
 //                                    given transcript. Drives the chat
 //                                    detail's cross-references panel.
@@ -120,6 +128,35 @@ export function useFailedIngestionTranscripts(): CallTranscriptDoc[] {
       sub = db.collections.call_transcripts
         .find({
           selector: { ingestion_status: { $in: [...FAILED_STATUSES] } },
+          sort: [{ started_at: 'desc' }],
+        })
+        // biome-ignore lint/suspicious/noExplicitAny: same as above
+        .$.subscribe((rows: any[]) => {
+          setDocs(rows.map((d) => d.toJSON() as CallTranscriptDoc));
+        });
+    });
+
+    return () => {
+      cancelled = true;
+      sub?.unsubscribe();
+    };
+  }, []);
+
+  return docs;
+}
+
+export function useOverCapTranscripts(): CallTranscriptDoc[] {
+  const [docs, setDocs] = useState<CallTranscriptDoc[]>([]);
+
+  useEffect(() => {
+    let sub: { unsubscribe: () => void } | undefined;
+    let cancelled = false;
+
+    void getDatabase().then((db) => {
+      if (cancelled) return;
+      sub = db.collections.call_transcripts
+        .find({
+          selector: { ingestion_status: 'skipped_over_cap' },
           sort: [{ started_at: 'desc' }],
         })
         // biome-ignore lint/suspicious/noExplicitAny: same as above

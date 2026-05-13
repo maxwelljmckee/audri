@@ -134,7 +134,17 @@ export function useCall(): UseCallResult {
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
           body: JSON.stringify({ agent_slug: 'assistant', call_type: callType }),
         });
-        if (!r.ok) throw new Error(`start failed: ${r.status} ${await r.text()}`);
+        if (!r.ok) {
+          // 402 Payment Required = hard spending-cap. Use a distinct
+          // error message the call screen can detect (substring match)
+          // and route to a "monthly limit reached" state with a
+          // deep-link to the SetLimit modal.
+          const bodyText = await r.text().catch(() => '');
+          if (r.status === 402) {
+            throw new Error(`SPEND_CAP_EXCEEDED ${bodyText}`);
+          }
+          throw new Error(`start failed: ${r.status} ${bodyText}`);
+        }
         const { sessionId, ephemeralToken, model } = (await r.json()) as StartCallResponse;
         sessionIdRef.current = sessionId;
         const startedAt = new Date();

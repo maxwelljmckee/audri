@@ -2,15 +2,16 @@
 //
 // Reads from `call_transcripts.ingestion_status` directly (per DEC-B
 // resolution 2026-05-10): the column already tracks ingestion lifecycle, so
-// no need to pollute agent_tasks with system-job rows. Two states:
+// no need to pollute agent_tasks with system-job rows. Three states:
 //
-//   pending|running → spinner + "we're working on it" message
-//   failed          → error chrome + retry CTA hitting POST /calls/:id/retry-ingest
+//   pending|running   → spinner + "we're working on it" message
+//   failed|partial    → error chrome + retry CTA hitting POST /calls/:id/retry-ingest
+//   skipped_over_cap  → cap chrome + "raise limit" deep-link to Usage screen
 //
 // Failures stack: if multiple calls failed ingestion, a single banner
-// surfaces with a "Retry all" affordance. Pending/running and failed are
-// rendered together when both exist, with failed taking priority since
-// it's actionable.
+// surfaces with a "Retry all" affordance. Rendered together when multiple
+// states are present, with the actionable ones (failed / over-cap) taking
+// priority over the passive pending banner.
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
@@ -18,6 +19,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import {
   useActiveIngestionTranscripts,
   useFailedIngestionTranscripts,
+  useOverCapTranscripts,
 } from '../../lib/rxdb/useCallTranscripts';
 import { captureClientError } from '../../lib/sentry';
 import { supabase } from '../../lib/supabase';
@@ -27,12 +29,14 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 export function WikiPendingBanner() {
   const active = useActiveIngestionTranscripts();
   const failed = useFailedIngestionTranscripts();
+  const overCap = useOverCapTranscripts();
   const [retrying, setRetrying] = useState(false);
 
-  if (active.length === 0 && failed.length === 0) return null;
+  if (active.length === 0 && failed.length === 0 && overCap.length === 0) return null;
 
   return (
     <View>
+      {overCap.length > 0 && <OverCapBanner count={overCap.length} />}
       {failed.length > 0 && (
         <FailedBanner
           count={failed.length}
@@ -69,6 +73,26 @@ export function WikiPendingBanner() {
         />
       )}
       {active.length > 0 && <PendingBanner count={active.length} />}
+    </View>
+  );
+}
+
+function OverCapBanner({ count }: { count: number }) {
+  // Cross-plugin navigation isn't trivial from the Notes overlay
+  // (Account lives in its own plugin stack), so we point the user at
+  // the path verbally rather than deep-linking for now. Direct
+  // deep-link is a v0.4 polish item — pairs with the broader settings
+  // surface work.
+  const message =
+    count === 1
+      ? "Last call's ingestion was skipped — monthly spending limit reached. Raise the limit in Account → Usage."
+      : `${count} ingestions skipped — monthly spending limit reached. Raise the limit in Account → Usage.`;
+  return (
+    <View style={[styles.banner, styles.bannerOverCap]}>
+      <Ionicons name="wallet-outline" size={16} color="#fbbf24" />
+      <Text style={[styles.text, styles.textOverCap]} numberOfLines={3}>
+        {message}
+      </Text>
     </View>
   );
 }
@@ -139,6 +163,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#2a1414',
     borderBottomColor: '#5a2828',
   },
+  bannerOverCap: {
+    backgroundColor: '#2a2114',
+    borderBottomColor: '#5a4428',
+  },
   text: {
     flex: 1,
     color: '#7aa3d4',
@@ -147,6 +175,9 @@ const styles = StyleSheet.create({
   },
   textFailed: {
     color: '#f87171',
+  },
+  textOverCap: {
+    color: '#fbbf24',
   },
   retryButton: {
     paddingHorizontal: 10,
