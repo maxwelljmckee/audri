@@ -13,6 +13,7 @@ import { agentTasks, db, eq, sql } from '@audri/shared/db';
 import { capture, isFeatureEnabled } from '@audri/shared/posthog';
 import { checkSpendCap } from '@audri/shared/usage';
 import type { Task } from 'graphile-worker';
+import { recapHandler } from '../automations/handlers/recap.js';
 import { logger } from '../logger.js';
 import { commitResearchOutput } from '../research/commit.js';
 import { ResearchPayloadZ, runResearch } from '../research/handler.js';
@@ -133,6 +134,35 @@ export const dispatchAgentTask: Task = async (payload, helpers) => {
         agentTaskId: task.id,
         tokensIn: promptTokens,
         tokensOut: responseTokens,
+      });
+    } else if (task.kind === 'recap') {
+      log('recap handler starting');
+      const result = await recapHandler({
+        userId: task.userId,
+        agentTaskId: task.id,
+        agentId: task.agentId,
+        payload: task.payload,
+      });
+      // Recap handler doesn't write status='succeeded' itself (unlike
+      // research which does it inside commitResearchOutput); mark here.
+      await db
+        .update(agentTasks)
+        .set({
+          status: 'succeeded',
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(agentTasks.id, task.id));
+      log('recap handler complete', {
+        pageSlug: result.pageSlug,
+        sectionsCreated: result.sectionsCreated,
+        variant: result.variant,
+      });
+      capture(task.userId, 'agent_task.succeeded', {
+        kind: task.kind,
+        agentTaskId: task.id,
+        variant: result.variant,
+        sectionsCreated: result.sectionsCreated,
       });
     } else {
       throw new Error(`unknown agent_task kind: ${task.kind}`);

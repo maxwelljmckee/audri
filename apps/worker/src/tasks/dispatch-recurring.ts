@@ -25,7 +25,18 @@
 // fresh shot. (Locked design point per v0.3.0 #20.)
 
 import { computeNextRunAt } from '@audri/shared/automations';
-import { agentTasks, db, eq, sql } from '@audri/shared/db';
+import {
+  agentTasks,
+  and,
+  asc,
+  db,
+  eq,
+  isNotNull,
+  isNull,
+  lte,
+  recurringAgentTasks,
+  sql,
+} from '@audri/shared/db';
 import { capture } from '@audri/shared/posthog';
 import * as Sentry from '@sentry/node';
 import type { Task } from 'graphile-worker';
@@ -33,16 +44,16 @@ import { logger } from '../logger.js';
 
 interface DueRow {
   id: string;
-  user_id: string;
-  agent_id: string | null;
+  userId: string;
+  agentId: string | null;
   kind: string;
-  suggested_id: string | null;
-  days_of_week: number[];
+  suggestedId: string | null;
+  daysOfWeek: number[];
   times: string[];
   timezone: string;
-  jitter_minutes: number;
+  jitterMinutes: number;
   payload: unknown;
-  next_run_at: string;
+  nextRunAt: Date;
 }
 
 export const dispatchRecurring: Task = async (_payload, helpers) => {
@@ -54,30 +65,37 @@ export const dispatchRecurring: Task = async (_payload, helpers) => {
   // event hooks elsewhere, NOT by this sweeper). Limit 100 per sweep
   // to bound per-tick work; if we're consistently hitting the limit
   // we'd bump it (or shorten the sweep interval).
-  const result = await db.execute(sql`
-    SELECT
-      id,
-      user_id,
-      agent_id,
-      kind::text,
-      suggested_id,
-      days_of_week,
-      times,
-      timezone,
-      jitter_minutes,
-      payload,
-      next_run_at
-    FROM recurring_agent_tasks
-    WHERE next_run_at IS NOT NULL
-      AND paused = false
-      AND tombstoned_at IS NULL
-      AND trigger_mode = 'cron'
-      AND next_run_at <= ${now}
-    ORDER BY next_run_at ASC
-    LIMIT 100
-  `);
-
-  const dueRows = (result as unknown as { rows?: DueRow[] }).rows ?? [];
+  //
+  // Use typed Drizzle query, not raw `sql`-template `db.execute`: the
+  // postgres-js driver underneath doesn't auto-serialize Date params
+  // bound through `sql`, but Drizzle's column-type mappers do. Same
+  // reason `fireOne` below uses `tx.update(...)` rather than raw SQL.
+  const dueRows: DueRow[] = await db
+    .select({
+      id: recurringAgentTasks.id,
+      userId: recurringAgentTasks.userId,
+      agentId: recurringAgentTasks.agentId,
+      kind: recurringAgentTasks.kind,
+      suggestedId: recurringAgentTasks.suggestedId,
+      daysOfWeek: recurringAgentTasks.daysOfWeek,
+      times: recurringAgentTasks.times,
+      timezone: recurringAgentTasks.timezone,
+      jitterMinutes: recurringAgentTasks.jitterMinutes,
+      payload: recurringAgentTasks.payload,
+      nextRunAt: recurringAgentTasks.nextRunAt,
+    })
+    .from(recurringAgentTasks)
+    .where(
+      and(
+        isNotNull(recurringAgentTasks.nextRunAt),
+        eq(recurringAgentTasks.paused, false),
+        isNull(recurringAgentTasks.tombstonedAt),
+        eq(recurringAgentTasks.triggerMode, 'cron'),
+        lte(recurringAgentTasks.nextRunAt, now),
+      ),
+    )
+    .orderBy(asc(recurringAgentTasks.nextRunAt))
+    .limit(100) as DueRow[];
 
   if (dueRows.length === 0) {
     logger.debug({ jobId: helpers.job.id }, 'recurring dispatcher: no due rows');
@@ -99,12 +117,12 @@ export const dispatchRecurring: Task = async (_payload, helpers) => {
       // row — bounded by graphile_worker task retries on this
       // dispatcher task.
       logger.error(
-        { err, recurringId: row.id, kind: row.kind, userId: row.user_id },
+        { err, recurringId: row.id, kind: row.kind, userId: row.userId },
         'recurring dispatcher: per-row fire failed',
       );
       Sentry.captureException(err, {
         tags: { event: 'recurring-dispatch-fire-failed' },
-        extra: { recurringId: row.id, kind: row.kind, userId: row.user_id },
+        extra: { recurringId: row.id, kind: row.kind, userId: row.userId },
       });
     }
   }
@@ -116,12 +134,12 @@ async function fireOne(row: DueRow, now: Date): Promise<void> {
   // advance past the current fire.
   const nextRunAt = computeNextRunAt(
     {
-      daysOfWeek: row.days_of_week,
+      daysOfWeek: row.daysOfWeek,
       times: row.times,
       timezone: row.timezone,
-      jitterMinutes: row.jitter_minutes,
+      jitterMinutes: row.jitterMinutes,
     },
-    { userId: row.user_id, recurringTaskId: row.id },
+    { userId: row.userId, recurringTaskId: row.id },
     now,
   );
 
@@ -132,8 +150,8 @@ async function fireOne(row: DueRow, now: Date): Promise<void> {
     const inserted = await tx
       .insert(agentTasks)
       .values({
-        userId: row.user_id,
-        agentId: row.agent_id,
+        userId: row.userId,
+        agentId: row.agentId,
         // biome-ignore lint/suspicious/noExplicitAny: kind is the agent_task_kind pgEnum, narrowed at row-read time
         kind: row.kind as any,
         payload: (row.payload as object) ?? {},
@@ -146,21 +164,23 @@ async function fireOne(row: DueRow, now: Date): Promise<void> {
       throw new Error('recurring dispatcher: agent_tasks insert returned no id');
     }
 
-    // 2. Advance the recurring row.
-    await tx.execute(sql`
-      UPDATE recurring_agent_tasks
-      SET
-        last_run_at = ${now},
-        last_agent_task_id = ${newTaskId},
-        next_run_at = ${nextRunAt},
-        updated_at = ${now}
-      WHERE id = ${row.id}
-    `);
+    // 2. Advance the recurring row via typed update so Drizzle
+    //    serializes Date columns through column-type mappers (postgres-js
+    //    rejects raw `Date` binds through `sql`-template execute()).
+    await tx
+      .update(recurringAgentTasks)
+      .set({
+        lastRunAt: now,
+        lastAgentTaskId: newTaskId,
+        nextRunAt,
+        updatedAt: now,
+      })
+      .where(eq(recurringAgentTasks.id, row.id));
 
     // 3. Enqueue the graphile job that'll actually run the handler.
     //    Same path as ingestion + research enqueue: dispatch-agent-task
     //    looks up the kind in the plugin registry and runs the matching
-    //    handler.
+    //    handler. Raw SQL here is safe — no Date params.
     const dispatchPayload = JSON.stringify({ agentTaskId: newTaskId });
     await tx.execute(sql`
       SELECT graphile_worker.add_job(
@@ -171,9 +191,9 @@ async function fireOne(row: DueRow, now: Date): Promise<void> {
     `);
   });
 
-  capture(row.user_id, 'automation.fired', {
+  capture(row.userId, 'automation.fired', {
     recurringId: row.id,
     kind: row.kind,
-    suggestedId: row.suggested_id ?? undefined,
+    suggestedId: row.suggestedId ?? undefined,
   });
 }
