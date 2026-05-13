@@ -79,6 +79,16 @@ export class CallsController {
 
     const transcript = Array.isArray(body.transcript) ? body.transcript : [];
     const cancelled = body.cancelled ?? false;
+    // Denormalize call length so the Usage dashboard + future Lite/Adaptive/
+    // Pro routing can read it without recomputing from started_at/ended_at.
+    // Floor to non-negative integer — defensive against clock skew between
+    // mobile clock and server clock, which can produce small negative deltas.
+    const endedAt = new Date(body.ended_at);
+    const startedAt = existing.startedAt;
+    const durationSeconds = Math.max(
+      0,
+      Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
+    );
 
     // Atomic transcript update + ingestion enqueue. If either fails the whole
     // /end fails — no orphan rows or jobs. Cancelled calls skip the enqueue
@@ -89,7 +99,8 @@ export class CallsController {
         .set({
           content: transcript,
           toolCalls: (body.tool_calls as object) ?? null,
-          endedAt: new Date(body.ended_at),
+          endedAt,
+          durationSeconds,
           endReason: body.end_reason ?? 'user_ended',
           cancelled,
           droppedTurnIds: body.dropped_turn_ids ?? [],
@@ -142,6 +153,11 @@ export class CallsController {
           eventKind: 'call_live',
           model: LIVE_MODEL,
           usage: sessionUsage,
+          // Stash the call's wall-clock length on the usage row so the
+          // Usage dashboard can do per-minute analytics + the future
+          // Lite/Adaptive/Pro ingestion router can read it as one of
+          // the signals for trivial-vs-complex routing.
+          extras: { callDurationSeconds: durationSeconds },
         });
       } catch (err) {
         // Shared helper already swallows + logs; this catch is defense

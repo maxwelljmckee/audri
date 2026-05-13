@@ -31,6 +31,10 @@ export async function fetchUserWikiIndex(userId: string): Promise<WikiIndexEntry
         eq(wikiPages.userId, userId),
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
+        // Archived pages are excluded from Flash's candidate index — we
+        // don't want Pro fan-out routing claims onto pages the user
+        // explicitly archived. Same rationale as live-agent search_wiki.
+        isNull(wikiPages.archivedAt),
       ),
     );
 

@@ -40,6 +40,18 @@ export interface RecordInferenceOpts {
   eventKind: UsageEventKind;
   model: string;
   usage: UsageMetadata | undefined | null;
+  // Non-token billing dims + auxiliary observability data. Lands in the
+  // `usage_extras` JSONB column. Reserve well-known keys:
+  //   - `callDurationSeconds` (number) — total call length when the row
+  //     was written for an event_kind = 'call_live' inference. Enables
+  //     per-minute analytics + future routing-input heuristics ("30-sec
+  //     calls are almost always trivial; 15-min calls are almost always
+  //     complex"). Set by the /calls/:id/end handler.
+  //   - `webSearchCredits` (number) — googleSearch grounding credits;
+  //     written by `recordWebSearchUsage` for event_kind = 'web_search'.
+  //   - additional keys reserved as new billing dims emerge (e.g.
+  //     `mapsSearchCredits` for the future maps-grounding tool).
+  extras?: Record<string, unknown>;
 }
 
 export interface RecordInferenceResult {
@@ -84,6 +96,7 @@ export async function recordInferenceUsage(
       // this preserves the original truth so we can re-price historical
       // rows or audit modality mix later. See migration 0024.
       tokenBreakdown: opts.usage as Record<string, unknown>,
+      usageExtras: opts.extras ?? null,
       callTranscriptId: opts.callTranscriptId ?? null,
     });
     return { inserted: true, tierCrossover, costCents };

@@ -37,6 +37,10 @@ export async function fetchCandidatePages(
         eq(wikiPages.scope, 'user'),
         inArray(wikiPages.slug, slugs),
         isNull(wikiPages.tombstonedAt),
+        // Archived pages don't surface to fan-out as candidates. Even if
+        // Flash's prefilter somehow proposed an archived slug as
+        // touched_pages, we don't want Pro updating it.
+        isNull(wikiPages.archivedAt),
       ),
     );
 

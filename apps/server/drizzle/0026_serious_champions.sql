@@ -1,0 +1,1 @@
+ALTER TABLE "call_transcripts" ADD COLUMN "duration_seconds" integer;

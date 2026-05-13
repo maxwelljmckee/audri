@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -33,6 +34,14 @@ export const callTranscripts = pgTable(
     summary: text('summary'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     endedAt: timestamp('ended_at', { withTimezone: true }),
+    // Denormalized call length in seconds. Computed at /end-time as
+    // (ended_at - started_at). Nullable for backfill compatibility and
+    // for rows where /end never POSTed. Used by the Usage dashboard for
+    // per-minute analytics + by the future Lite/Adaptive/Pro ingestion
+    // routing as one of the inputs to "this call is trivial vs complex"
+    // — long calls almost always have complex content; 30-second calls
+    // are almost always single-command dispatches.
+    durationSeconds: integer('duration_seconds'),
     content: jsonb('content').notNull().default(sql`'[]'::jsonb`),
     toolCalls: jsonb('tool_calls'),
     // Audit dump of Pro fan-out's structured response, persisted verbatim

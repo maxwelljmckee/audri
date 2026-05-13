@@ -258,7 +258,23 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 ## 1. What to capture (internal step)
 
-You read the transcript looking for TWO kinds of content:
+You read the transcript looking for THREE kinds of content, in priority order:
+
+### (0) Explicit user directives — the dominant pattern
+
+When the user issues an imperative directive — "make a note in X", "add Y to my Z page", "remind me to call Sarah", "track this idea", "research X for me", "put this under Consensus", "delete that note", "rename this to …" — that directive is the highest-priority signal in the transcript and produces a concrete operation (section write, todo create, research task spawn, rename, tombstone). **Treat directives as first-class, ahead of passive claim extraction.**
+
+Under the terse-command reframe, most calls are dominated by directives: "make a note about X", "remind me to Y", "research Z." Ingestion is the *only* path to fulfilling them — the live agent commits to act, ingestion is what actually acts. Missing a directive = trust break.
+
+Directive patterns:
+- **Section/note write** — "make a note about/in/that…", "write this down", "capture this in…", "add this to…", "put this under…", "log it on the X page", "track this on…"
+- **Todo create** — "remind me to…", "add a todo for…", "follow up on…", "I should do…" (as commitment, see §1c), "make sure I…"
+- **Research spawn** — "look into…", "research…", "find out about…", "do some digging on…" — produces an \`agent_tasks\` row (see §9).
+- **Hierarchy mutation** — "move this under…", "delete that note", "rename X to Y" — see §3 hierarchy + voice-mutation rules.
+
+Test before treating as a directive: is the user explicitly asking for an action, or describing a fact / sharing a thought? "I should send Alex the paper" = commitment-directive (todo). "I sent Alex the paper" = fact (claim, not a directive). "I'm thinking about whether to send Alex the paper" = neither (skip; speculation).
+
+When a directive applies, fulfill it even if the surrounding content wouldn't independently meet the noteworthiness bar. **Directives override the noteworthiness filter for the directed write.** A user saying "make a note that I prefer afternoon meetings" produces a write even though the bare claim "prefers afternoon meetings" might otherwise feel borderline.
 
 ### (a) Atomic claims — Subject + Predicate facts
 - "Sarah moved to Portland" / "Started a project called Consensus" / "I told Alex I'd send the paper"
@@ -311,6 +327,8 @@ When all three hold, fulfill the promise — write the promised content into the
 
 For each candidate claim or piece of substantive content, decide: route or skip.
 
+**This filter does NOT apply to explicit user directives.** Per §1.0, when the user directs an operation ("make a note that…", "remind me to…", "research X"), fulfill it regardless of whether the underlying content would independently clear the noteworthiness bar. The directive itself IS the noteworthiness signal.
+
 ### Worth writing
 - Facts about tracked entities — state changes, attribute updates, biographical details.
 - Stated commitments / intents (specific enough to be actionable).
@@ -336,6 +354,19 @@ For each candidate claim or piece of substantive content, decide: route or skip.
 - Vague mentions with no associated content ("Sarah said something about work").
 - Generic aspirations without specificity ("I should exercise more").
 - Speculation, hypotheticals, unclear-subject claims.
+
+### Ephemerality criterion
+
+Beyond the worth/skip lists above, evaluate each candidate claim against an **ephemerality axis**: does this claim matter in a few hours, tomorrow, next week, or longer? Claims that only matter for the next few hours are typically not worth permanent storage in the wiki.
+
+- ✅ **Durable** — "I dream of visiting Thailand someday" (years-long aspiration) → \`profile/interests\`. "I'm thinking about restructuring how I onboard new team members" (work theme that persists weeks+) → \`profile/work\` or relevant project. "Sarah just got promoted to head of engineering" (state change with lasting relevance) → \`profile/relationships/sarah-*\`.
+- ❌ **Ephemeral state** — "I'm hungry for a hamburger right now" (hours horizon) → skip with \`reason="ephemeral state"\`. "I'm tired today" (hours horizon, no durable signal) → skip. "I'm running late to lunch" (minutes horizon) → skip.
+
+**Edge case — ephemeral state anchored to a durable concern.** When the user expresses an ephemeral feeling that's tied to something durable (work, a relationship, a long-running anxiety), capture against the *durable* target, not as a standalone ephemeral claim. Examples:
+- "I'm dreading Monday's review" → ephemeral *state* (dreading), but the durable concern is the review / work situation. Capture against \`profile/work\` framed around the durable concern, not as "user is dreading something today."
+- "I'm anxious about Sarah's surgery tomorrow" → durable concern is Sarah's health situation. Capture against the relevant person page, not as "user is anxious today."
+
+**Test:** would a thoughtful reader of the wiki six months from now still find this useful? If the answer hinges only on hours-horizon state, skip. If a durable concern underlies the ephemeral expression, capture the durable concern.
 
 ### Per-type bar adjustments
 - **profile** pages: HIGHER bar. Speculative attitudes go to note or get skipped.

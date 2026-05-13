@@ -53,6 +53,10 @@ export async function searchWiki(userId: string, query: string): Promise<SearchW
         eq(wikiPages.userId, userId),
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
+        // Exclude archived pages — they remain navigable via direct slug
+        // lookup but don't surface in search. Live agent shouldn't be
+        // surfacing archived content as a current reference.
+        isNull(wikiPages.archivedAt),
         isNull(wikiSections.tombstonedAt),
         sql`${tsVector} @@ ${tsQuery}`,
       ),
@@ -109,6 +113,11 @@ export async function fetchPage(userId: string, slug: string): Promise<FetchPage
         eq(wikiPages.scope, 'user'),
         eq(wikiPages.slug, cleanedSlug),
         isNull(wikiPages.tombstonedAt),
+        // Archived pages aren't surfaced via fetch_page either. The live
+        // agent shouldn't be steering the user toward archived content
+        // as if it were current. Future: explicit `include_archived`
+        // parameter for archived-browse use cases (V1+).
+        isNull(wikiPages.archivedAt),
       ),
     )
     .limit(1);

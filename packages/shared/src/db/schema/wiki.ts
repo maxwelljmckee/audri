@@ -57,6 +57,16 @@ export const wikiPages = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     tombstonedAt: timestamp('tombstoned_at', { withTimezone: true }),
+    // Archive — separate from tombstoning. Tombstone = page is deleted +
+    // hidden from every surface; Archive = page kept intact (kind, slug,
+    // parent, sections, history all preserved) but excluded from active
+    // surfaces (preload, search_wiki, fan-out targeting, parent-listing
+    // queries). User can navigate to archived pages explicitly. Archive
+    // applies to the page AND its descendants — if any ancestor in the
+    // parent chain has archived_at set, the page is effectively archived.
+    // First user: the Dreaming automation's promote-or-archive UX for
+    // un-reviewed dreams. Unarchive = `archived_at = NULL`.
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
   (t) => ({
     userScopeSlugUnique: uniqueIndex('wiki_pages_user_scope_slug_idx').on(

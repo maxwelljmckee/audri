@@ -173,6 +173,7 @@ async function fetchPagesByPrefix(
         eq(wikiPages.userId, userId),
         eq(wikiPages.scope, scope),
         isNull(wikiPages.tombstonedAt),
+        isNull(wikiPages.archivedAt),
         sql`(${wikiPages.slug} = ${rootSlug} OR ${wikiPages.slug} LIKE ${`${rootSlug}/%`})`,
       ),
     );
@@ -236,6 +237,7 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
         eq(wikiPages.userId, userId),
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
+        isNull(wikiPages.archivedAt),
         isNull(wikiPages.parentPageId),
       ),
     )
@@ -258,6 +260,7 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
         eq(wikiPages.userId, userId),
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
+        isNull(wikiPages.archivedAt),
         isNotNull(wikiPages.parentPageId),
         inArray(wikiPages.parentPageId, topIds),
       ),
@@ -299,7 +302,13 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
       agentAbstract: wikiPages.agentAbstract,
     })
     .from(wikiPages)
-    .where(and(eq(wikiPages.userId, userId), isNull(wikiPages.tombstonedAt)))
+    .where(
+      and(
+        eq(wikiPages.userId, userId),
+        isNull(wikiPages.tombstonedAt),
+        isNull(wikiPages.archivedAt),
+      ),
+    )
     .orderBy(desc(wikiPages.updatedAt))
     .limit(RECENT_PAGES_LIMIT);
 
