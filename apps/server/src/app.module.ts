@@ -6,6 +6,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { AutomationsModule } from './automations/automations.module.js';
 import { CallsModule } from './calls/calls.module.js';
 import { StorageModule } from './storage/storage.module.js';
+import { UrlsModule } from './urls/urls.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MeModule } from './me/me.module.js';
 import { SeedModule } from './seed/seed.module.js';
@@ -83,6 +84,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
     TodosModule,
     AutomationsModule,
     StorageModule,
+    UrlsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: UserThrottlerGuard }],
 })

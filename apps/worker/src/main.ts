@@ -8,10 +8,12 @@ import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
 import { dispatchRecurring } from './tasks/dispatch-recurring.js';
 import { expireStaleIngestion } from './tasks/expire-stale-ingestion.js';
 import { extractUpload } from './tasks/extract-upload.js';
+import { fetchUrl } from './tasks/fetch-url.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { hygieneSweep } from './tasks/hygiene-sweep.js';
 import { ingestion } from './tasks/ingestion.js';
 import { ingestionUpload } from './tasks/ingestion-upload.js';
+import { ingestionUrlSource } from './tasks/ingestion-url-source.js';
 
 // undici (Node's built-in fetch) defaults to a 5-minute headers timeout.
 // Pro fan-out calls on heavy transcripts (deep thinking budget + large
@@ -63,6 +65,8 @@ async function main(): Promise<void> {
       dispatch_recurring: withSentry('dispatch_recurring', dispatchRecurring),
       extract_upload: withSentry('extract_upload', extractUpload),
       ingestion_upload: withSentry('ingestion_upload', ingestionUpload),
+      fetch_url: withSentry('fetch_url', fetchUrl),
+      ingestion_url_source: withSentry('ingestion_url_source', ingestionUrlSource),
     },
   });
 

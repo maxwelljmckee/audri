@@ -156,3 +156,31 @@ export const uploadExtractionStatusEnum = pgEnum('upload_extraction_status', [
   'succeeded',
   'failed',
 ]);
+
+// URL-source extraction lifecycle. Distinct from upload extraction:
+// URLs don't have a client-upload step (server fetches the URL itself),
+// so there's no 'awaiting_upload' state. Inserted rows go straight to
+// 'pending' for the worker to pick up.
+export const urlSourceExtractionStatusEnum = pgEnum('url_source_extraction_status', [
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+]);
+
+// URL source kind — discriminator for fetch + extraction dispatch.
+// Determined by the worker after fetch (content-type + URL pattern);
+// rows insert with whatever default the controller picked and get
+// updated to the resolved kind once `fetch_url` runs. Drives prompt
+// shape (different content kinds get different fan-out treatment) +
+// UX rendering (icon + label in Storage tile).
+//
+// v0.3.0: 'web_article' (HTML via Readability), 'pdf' (via pdf-parse),
+// 'reddit_thread' (via Reddit's public .json API). Future kinds —
+// 'youtube_video', 'twitter_thread', 'podcast_episode', 'rss_item' —
+// in backlog; add enum values as those land.
+export const urlSourceKindEnum = pgEnum('url_source_kind', [
+  'web_article',
+  'pdf',
+  'reddit_thread',
+]);

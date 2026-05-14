@@ -217,6 +217,18 @@ Items promoted into `build-phases/v0.3.0.md` (Track A1) on 2026-05-12: Proactive
 
 The Supabase Storage bucket layout + document upload pipeline (PDF/markdown/text/DOCX) was promoted into `build-phases/v0.3.0.md` (Track B2.27) on 2026-05-12. Image/audio/URL/RSS source kinds remain in the broader "Upload sources pipeline (non-document kinds)" entry under Knowledge ingestion expansion.
 
+| Name | Priority | Effort | Type | Description |
+|---|---|---|---|---|
+| Per-user storage cap (tier-driven) | P1 | M | Infra | Hard cap on total bytes per user in `audri_storage` bucket, tied to subscription tier (free / paid tiers TBD). Pre-flight check in `POST /uploads` rejects with 413 / typed error before signed-URL issuance. Counter: `SUM(size_bytes) WHERE user_id=$1 AND tombstoned_at IS NULL`. UX path: distinct error code surfaces a "raise limit" affordance similar to the spend-cap banner pattern. Added 2026-05-14 alongside the upload pipeline substrate. |
+| Concurrent upload cap (start at 1) | P1 | S | Infra | Limit concurrent in-flight uploads per user (initially 1). Server-side gate in `POST /uploads`: reject if user has any row in `awaiting_upload` state (or in `extraction_status in (pending, running)` if we want to also serialize extraction). Prevents 5x parallel 50MB uploads from blowing memory + Storage bandwidth. Bump higher as we observe behavior. Added 2026-05-14. |
+| Mixed-media URL ingestion — YouTube transcripts | P1 | M | Feature | New `url_source_kind` enum value `youtube_video`. Detector: `youtube.com/watch?v=` / `youtu.be/`. Extractor: `youtube-transcript` npm package OR YouTube Data API ($ + key). Concatenate captions; metadata from oEmbed (title / channel name). Pro prompt gets a kind-specific section for video transcripts (timestamps optional). Variable transcript availability (auto-captions vs manual). |
+| Mixed-media URL ingestion — Twitter/X threads | P2 | L | Feature | New kind `twitter_thread`. Detector: `x.com/<user>/status/` / `twitter.com/...`. Extractor: paid Twitter API OR Playwright scrape (fragile post-2023). Concatenate tweet thread; author + reply count metadata. Pro prompt: discussion-shape similar to reddit_thread. |
+| Mixed-media URL ingestion — podcast episodes | P2 | XL | Feature | New kind `podcast_episode`. Detector: known platform hosts (Spotify episode pages, Apple Podcasts, audio content-types). Extractor: download audio + Whisper STT transcription (per-minute $$). Significant cost + latency; treat as deferred-async (status='running' for minutes). |
+| Mixed-media URL ingestion — JS-rendered SPA fallback | P2 | M | Infra | When current Readability fetch returns near-empty body (extracted text < threshold), retry through Playwright headless render. Heavy dep (~100MB Chromium). Covers React-based blog SPAs where the initial HTML is a skeleton. |
+| Mixed-media URL ingestion — redd.it short links | P3 | XS | Infra | Resolve `redd.it/<id>` short links → real Reddit URL before pattern matching. Today these fall through to generic Readability path and produce poor results. |
+| Mixed-media URL ingestion — RSS feed items | P2 | M | Feature | New kind `rss_item`. Subscribe to a feed URL → server polls + creates one url_sources row per new item. Different lifecycle from one-shot ingestion (recurring). |
+| PDF metadata extraction | P2 | S | Quality | pdf-parse's `info` field exposes the PDF info dict (Title / Author / CreationDate / Keywords). Surface these into url_sources/uploads metadata so PDF source pages don't fall back to filename for title. Currently we derive title from URL pathname for PDF URLs; the info-dict title is usually canonical. |
+
 ### Rate limiting + abuse
 
 | Name | Priority | Effort | Type | Description |

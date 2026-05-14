@@ -29,7 +29,10 @@ export async function extractText(kind: UploadKind, buf: Buffer): Promise<string
   }
 }
 
-async function extractPdf(buf: Buffer): Promise<string> {
+// Exported so the url-sources pipeline can share the same PDF
+// extraction logic for PDFs fetched from a URL (different fetch path,
+// same extraction).
+export async function extractPdf(buf: Buffer): Promise<string> {
   // pdf-parse v2 API: instantiate PDFParse, call getText(). Returns
   // a TextResult with .text (concatenated) and .pages (per-page).
   // We keep the concatenated string; pagewise citation can be added
