@@ -66,44 +66,56 @@ export function stableJitterOffsetMs(
 }
 
 // Given a YYYY-MM-DD date string + HH:MM time + IANA timezone, return
-// the corresponding UTC Date. We construct an ISO string in the target
-// timezone, then use the JS Date constructor with an offset-style
-// trick: parse using Intl.DateTimeFormat to compute the timezone's
-// offset for that local time, then adjust.
-function utcFromLocal(
-  dateYmd: string,
-  timeHm: string,
-  timezone: string,
-): Date {
-  // Approach: construct a UTC date with the local Y-M-D-H-M components,
-  // then ask Intl what UTC time corresponds to that local time in tz.
-  // We iterate up to twice to handle DST boundary cases.
-  const naiveIso = `${dateYmd}T${timeHm}:00.000Z`;
-  let utc = new Date(naiveIso);
-  for (let i = 0; i < 2; i++) {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).formatToParts(utc);
-    const tzY = parts.find((p) => p.type === 'year')?.value;
-    const tzMo = parts.find((p) => p.type === 'month')?.value;
-    const tzD = parts.find((p) => p.type === 'day')?.value;
-    let tzH = parts.find((p) => p.type === 'hour')?.value;
-    const tzMi = parts.find((p) => p.type === 'minute')?.value;
-    // Intl returns '24' for midnight under some locales; normalize.
-    if (tzH === '24') tzH = '00';
-    const tzAsIso = `${tzY}-${tzMo}-${tzD}T${tzH}:${tzMi}:00.000Z`;
-    const tzDate = new Date(tzAsIso);
-    const drift = utc.getTime() - tzDate.getTime();
-    if (drift === 0) break;
-    utc = new Date(utc.getTime() + drift);
+// the corresponding UTC Date.
+//
+// Approach: interpret the local Y-M-D-H-M as if it were UTC (a "naive"
+// instant), then add the target timezone's UTC offset for that instant.
+// Single-step correction; a second pass handles DST boundaries where
+// the offset at `naive` differs from the offset at the corrected utc.
+function utcFromLocal(dateYmd: string, timeHm: string, timezone: string): Date {
+  const naive = new Date(`${dateYmd}T${timeHm}:00.000Z`);
+  const offset = tzOffsetMs(naive, timezone);
+  let result = new Date(naive.getTime() + offset);
+
+  // DST safety: on a transition day, the offset at the corrected
+  // moment may differ from the offset at `naive`. Re-check; if the
+  // offsets disagree, the second one is the authority for the actual
+  // local→UTC mapping. (Spring forward: 02:30 doesn't exist; we end
+  // up at 03:30 local, acceptable. Fall back: 01:30 exists twice;
+  // we pick the first occurrence, which `tzOffsetMs(naive)` returns.)
+  const offset2 = tzOffsetMs(result, timezone);
+  if (offset2 !== offset) {
+    result = new Date(naive.getTime() + offset2);
   }
-  return utc;
+  return result;
+}
+
+// Returns the timezone's UTC offset (in ms) at the moment `d`. Positive
+// for tz ahead of UTC, negative for tz behind. For America/Denver in
+// MDT this is -6h (returns -21600000); in MST it's -7h.
+//
+// Implementation: format `d` in the target timezone, reinterpret those
+// calendar components as UTC, and subtract from `d`. Yields the
+// difference between "UTC instant" and "what that instant reads in tz",
+// which is the tz's UTC offset.
+function tzOffsetMs(d: Date, timezone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === 'year')?.value;
+  const m = parts.find((p) => p.type === 'month')?.value;
+  const dd = parts.find((p) => p.type === 'day')?.value;
+  let h = parts.find((p) => p.type === 'hour')?.value;
+  const mi = parts.find((p) => p.type === 'minute')?.value;
+  if (h === '24') h = '00'; // some locales return 24 for midnight
+  const tzCalendar = new Date(`${y}-${m}-${dd}T${h}:${mi}:00.000Z`);
+  return d.getTime() - tzCalendar.getTime();
 }
 
 function ymdFromDate(d: Date, timezone: string): string {

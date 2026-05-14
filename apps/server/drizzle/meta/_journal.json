@@ -218,6 +218,13 @@
       "when": 1778708551966,
       "tag": "0030_early_dagger",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1778778263929,
+      "tag": "0031_small_risque",
+      "breakpoints": true
     }
   ]
 }

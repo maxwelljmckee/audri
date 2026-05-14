@@ -131,3 +131,28 @@ export const agentOpenItemStatusEnum = pgEnum('agent_open_item_status', [
 // in v0.2 — code that needs current tier should recompute on demand or read
 // the cached value with the understanding that it may lag behind reality.
 export const wikiMaturityEnum = pgEnum('wiki_maturity', ['stub', 'moderate', 'full']);
+
+// Upload pipeline (v0.3.0 C4/B2.27). Generic over the kinds the Storage
+// tile accepts: textual files now (PDF / markdown / plain / DOCX);
+// image + audio reserved for later kinds without a schema change.
+// URL ingestion lives in a separate `url_sources` table — different
+// lifecycle (no Storage object, no upload step). Distinct from
+// ingestion_status because the lifecycle is sequential: extraction
+// first (raw text from the file), then ingestion (fan-out into wiki).
+export const uploadKindEnum = pgEnum('upload_kind', [
+  'pdf',
+  'markdown',
+  'plain',
+  'docx',
+]);
+
+export const uploadExtractionStatusEnum = pgEnum('upload_extraction_status', [
+  // Row inserted via POST /uploads; client has not yet PUT the file
+  // to the signed Storage URL. Worker doesn't act on these.
+  'awaiting_upload',
+  // Client called /finalize; worker extraction job is enqueued / running.
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+]);

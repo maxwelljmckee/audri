@@ -7,9 +7,11 @@ import { withSentry } from './observability/wrap-task.js';
 import { dispatchAgentTask } from './tasks/dispatch-agent-task.js';
 import { dispatchRecurring } from './tasks/dispatch-recurring.js';
 import { expireStaleIngestion } from './tasks/expire-stale-ingestion.js';
+import { extractUpload } from './tasks/extract-upload.js';
 import { heartbeat } from './tasks/heartbeat.js';
 import { hygieneSweep } from './tasks/hygiene-sweep.js';
 import { ingestion } from './tasks/ingestion.js';
+import { ingestionUpload } from './tasks/ingestion-upload.js';
 
 // undici (Node's built-in fetch) defaults to a 5-minute headers timeout.
 // Pro fan-out calls on heavy transcripts (deep thinking budget + large
@@ -59,6 +61,8 @@ async function main(): Promise<void> {
       hygiene_sweep: withSentry('hygiene_sweep', hygieneSweep),
       expire_stale_ingestion: withSentry('expire_stale_ingestion', expireStaleIngestion),
       dispatch_recurring: withSentry('dispatch_recurring', dispatchRecurring),
+      extract_upload: withSentry('extract_upload', extractUpload),
+      ingestion_upload: withSentry('ingestion_upload', ingestionUpload),
     },
   });
 
