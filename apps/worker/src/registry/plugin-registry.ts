@@ -11,35 +11,23 @@
 // runs against transcripts. Plugins are user-facing capabilities.
 
 // v0.3.0 B1 extension. Each plugin can declare zero or more
-// suggested-default automations. The Automations tile reads this
-// catalog to seed each user's "Available" view; toggling one ON
+// suggested-default automations. The Automations tile reads the
+// catalog to seed each user's "Suggested" view; toggling one ON
 // creates a recurring_agent_tasks row with the declared defaults.
 //
-// `id` is the stable identifier used for dedup — a user can only have
-// one active recurring row per (plugin kind, suggested id). Renaming
-// the id is a breaking change (existing rows would orphan).
-//
-// Schedule defaults follow the recurring_agent_tasks schema shape:
-// daysOfWeek 0-6 (postgres extract(dow), empty = every day), times
-// as "HH:MM" strings. Timezone falls through to user_settings at
-// instantiation time.
-export interface SuggestedAutomation {
-  id: string;
-  name: string;
-  description: string;
-  // Default-on means the row gets created (in paused=false state)
-  // automatically when the user first opens the Automations tile,
-  // without an explicit toggle. Reserve for low-cost / unambiguous
-  // automations (e.g. Dreaming on the default Assistant). User can
-  // still pause/delete after.
-  defaultEnabled: boolean;
-  defaultSchedule: {
-    daysOfWeek: number[];
-    times: string[];
-    jitterMinutes?: number; // default 30 if omitted
-  };
-  defaultPayload?: Record<string, unknown>;
-}
+// The catalog itself lives in @audri/shared/automations so both the
+// server (which exposes /automations/suggested to mobile) and the
+// worker (which uses defaults during scheduled fires) read the same
+// source. The worker registry below maps each kind to its catalog
+// entry's `suggested` array — no duplication.
+
+import { AUTOMATION_CATALOG, type SuggestedAutomation } from '@audri/shared/automations';
+
+const suggestedByKind: Record<string, SuggestedAutomation[]> = Object.fromEntries(
+  AUTOMATION_CATALOG.map((meta) => [meta.kind, meta.suggested]),
+);
+
+export type { SuggestedAutomation };
 
 export interface PluginEntry {
   kind: string;
@@ -92,21 +80,7 @@ export const pluginRegistry: Record<string, PluginEntry> = {
     maxAttempts: 2,
     defaultPriority: 5,
     reingestsIntoWiki: false,
-    suggestedAutomations: [
-      {
-        id: 'morning-brief',
-        name: 'Morning brief',
-        description:
-          'A summary of what is on your plate today — upcoming todos, reminders, ' +
-          'and anything stale that needs attention.',
-        defaultEnabled: false,
-        defaultSchedule: {
-          daysOfWeek: [], // every day
-          times: ['07:00'],
-          jitterMinutes: 30,
-        },
-      },
-    ],
+    suggestedAutomations: suggestedByKind.brief_me,
   },
 
   recap: {
@@ -121,34 +95,7 @@ export const pluginRegistry: Record<string, PluginEntry> = {
     maxAttempts: 2,
     defaultPriority: 5,
     reingestsIntoWiki: false,
-    suggestedAutomations: [
-      {
-        id: 'daily-recap',
-        name: 'Daily recap',
-        description:
-          'An end-of-day reflection on calls, notes, and completed work — ready in the ' +
-          'evening so you can review before tomorrow.',
-        defaultEnabled: false,
-        defaultSchedule: {
-          daysOfWeek: [], // every day
-          times: ['21:00'],
-          jitterMinutes: 30,
-        },
-      },
-      {
-        id: 'weekly-recap',
-        name: 'Weekly recap',
-        description:
-          'A Sunday rollup of the past week — themes, accomplishments, decisions. ' +
-          'Different shape from daily recaps; pulls back further.',
-        defaultEnabled: false,
-        defaultSchedule: {
-          daysOfWeek: [0], // Sunday
-          times: ['09:00'],
-          jitterMinutes: 60,
-        },
-      },
-    ],
+    suggestedAutomations: suggestedByKind.recap,
   },
 
   stalled_work: {
@@ -163,21 +110,7 @@ export const pluginRegistry: Record<string, PluginEntry> = {
     maxAttempts: 2,
     defaultPriority: 5,
     reingestsIntoWiki: false,
-    suggestedAutomations: [
-      {
-        id: 'weekly-stalled',
-        name: 'Weekly stalled-work review',
-        description:
-          'Every Friday afternoon, a sweep of todos and notes that have gone quiet — so ' +
-          'nothing important slips through the cracks.',
-        defaultEnabled: false,
-        defaultSchedule: {
-          daysOfWeek: [5], // Friday
-          times: ['15:00'],
-          jitterMinutes: 60,
-        },
-      },
-    ],
+    suggestedAutomations: suggestedByKind.stalled_work,
   },
 
   // ── Agent-level automation (per-agent) ─────────────────────────────
@@ -195,21 +128,7 @@ export const pluginRegistry: Record<string, PluginEntry> = {
     maxAttempts: 2,
     defaultPriority: 4,
     reingestsIntoWiki: false,
-    suggestedAutomations: [
-      {
-        id: 'weekly-dream-pass',
-        name: 'Weekly dream',
-        description:
-          'Once a week, your agent dreams about everything that has happened — ' +
-          'connecting ideas, surfacing patterns, proposing follow-ups.',
-        defaultEnabled: true, // ON by default on the default Assistant
-        defaultSchedule: {
-          daysOfWeek: [6], // Saturday
-          times: ['23:00'],
-          jitterMinutes: 60,
-        },
-      },
-    ],
+    suggestedAutomations: suggestedByKind.dreaming,
   },
 
   // ── Todos-level capability (per-reminder rows; not a single toggle) ─

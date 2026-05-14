@@ -9,6 +9,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AccountOverlay } from "../components/AccountOverlay";
 import { AgentsOverlay } from "../components/AgentsOverlay";
 import { ChatHistoryOverlay } from "../components/ChatHistoryOverlay";
+import { AutomationsOverlay } from "../components/AutomationsOverlay";
 import { ResearchOverlay } from "../components/ResearchOverlay";
 import { SplashAnimation } from "../components/SplashAnimation";
 import { TodosOverlay } from "../components/TodosOverlay";
@@ -116,6 +117,7 @@ function RootLayout() {
           <TodosOverlay />
           <AgentsOverlay />
           <ChatHistoryOverlay />
+          <AutomationsOverlay />
           {/* Launch animation — mounted last so it sits above all overlays. Plays
               once per cold start, then unmounts itself. */}
           <SplashAnimation />

@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
+import { AutomationsModule } from './automations/automations.module.js';
 import { CallsModule } from './calls/calls.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MeModule } from './me/me.module.js';
@@ -79,6 +80,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
     CallsModule,
     TasksModule,
     TodosModule,
+    AutomationsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: UserThrottlerGuard }],
 })

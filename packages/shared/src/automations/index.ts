@@ -8,3 +8,11 @@ export {
   type JitterIdentity,
   type ScheduleSpec,
 } from './schedule.js';
+export {
+  AUTOMATION_CATALOG,
+  findKindMeta,
+  findSuggestedAutomation,
+  type AutomationCategory,
+  type AutomationKindMeta,
+  type SuggestedAutomation,
+} from './catalog.js';
