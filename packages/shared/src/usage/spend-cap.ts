@@ -11,10 +11,10 @@
 // Returns `null` (allow) when the user has no limit configured.
 
 import { sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { userSettings } from '../db/schema/identity.js';
 import { usageEvents } from '../db/schema/usage.js';
-import { eq } from 'drizzle-orm';
 
 export interface SpendCapStatus {
   // True when current_month_spend >= monthly_spend_limit_cents.
@@ -93,8 +93,9 @@ export async function checkSpendCap(userId: string): Promise<SpendCapStatus> {
     WHERE user_id = ${userId}
       AND created_at >= date_trunc('month', now() AT TIME ZONE ${tz}) AT TIME ZONE ${tz}
   `);
-  const row = (aggregate as unknown as { rows: Array<{ spend_cents: string; month_start: Date }> })
-    .rows[0];
+  // db.execute(sql`...`) with postgres-js returns the Result as an Array
+  // of rows directly, NOT a { rows: [...] } shape. Index the array.
+  const row = (aggregate as unknown as Array<{ spend_cents: string; month_start: Date }>)[0];
   const currentSpendCents = row?.spend_cents ?? '0';
   const monthStart = row?.month_start
     ? new Date(row.month_start).toISOString()

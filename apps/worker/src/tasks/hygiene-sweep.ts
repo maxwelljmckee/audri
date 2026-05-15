@@ -35,7 +35,8 @@ export const hygieneSweep: Task = async (_payload, helpers) => {
     WHERE status = 'pending'
       AND created_at < now() - (${sql.raw(`${MAX_AGE_DAYS}`)} || ' days')::interval
   `);
-  const expired = (result as { rowCount?: number }).rowCount ?? 0;
+  // postgres-js Result uses `.count` (not `.rowCount` — that's node-postgres).
+  const expired = (result as unknown as { count?: number }).count ?? 0;
   const durationMs = Date.now() - start;
   helpers.logger.info(`hygiene_sweep expired=${expired} duration_ms=${durationMs}`);
   logger.info({ jobId: helpers.job.id, expired, durationMs }, 'hygiene_sweep complete');

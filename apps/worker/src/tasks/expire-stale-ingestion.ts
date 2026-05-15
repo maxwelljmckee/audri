@@ -55,7 +55,8 @@ export const expireStaleIngestion: Task = async (_payload, helpers) => {
   // need to update this query. Earlier version of this sweep referenced
   // `j.payload` on the view and silently failed every sweep run for
   // hours before we caught it in Render logs.
-  const rows = await db.execute(sql.raw(`
+  const rows = await db.execute(
+    sql.raw(`
     UPDATE call_transcripts ct
     SET ingestion_status = 'failed',
         ingestion_error = 'SLA timeout (>15min) — ingestion did not complete and no active worker job exists. Worker may have died mid-job or the enqueue silently failed. Retry via the Notes pending banner.'
@@ -69,11 +70,12 @@ export const expireStaleIngestion: Task = async (_payload, helpers) => {
           AND (j.payload::jsonb ->> 'transcriptId') = ct.id::text
       )
     RETURNING id, user_id, session_id, ingestion_status, created_at
-  `));
+  `),
+  );
 
-  // Drizzle returns the postgres driver's QueryResult shape; the rows
-  // sit on .rows. Cast to a row type for the per-row work below.
-  const breached = (rows as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
+  // db.execute() returns the postgres-js Result as an Array directly,
+  // NOT a { rows } shape. Cast and iterate.
+  const breached = rows as unknown as Array<Record<string, unknown>>;
 
   if (breached.length === 0) {
     logger.debug({ jobId: helpers.job.id }, 'sla sweep: no breached rows');

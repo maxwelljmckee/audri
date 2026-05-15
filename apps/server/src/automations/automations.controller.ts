@@ -24,16 +24,7 @@ import {
   computeNextRunAt,
   findSuggestedAutomation,
 } from '@audri/shared/automations';
-import {
-  agents,
-  and,
-  db,
-  desc,
-  eq,
-  isNull,
-  recurringAgentTasks,
-  sql,
-} from '@audri/shared/db';
+import { agents, and, db, desc, eq, isNull, recurringAgentTasks, sql } from '@audri/shared/db';
 import {
   BadRequestException,
   Body,
@@ -109,21 +100,13 @@ export class AutomationsController {
     const rows = await db
       .select()
       .from(recurringAgentTasks)
-      .where(
-        and(
-          eq(recurringAgentTasks.userId, user.id),
-          isNull(recurringAgentTasks.tombstonedAt),
-        ),
-      )
+      .where(and(eq(recurringAgentTasks.userId, user.id), isNull(recurringAgentTasks.tombstonedAt)))
       .orderBy(desc(recurringAgentTasks.createdAt));
     return { rows: rows.map(rowToDTO) };
   }
 
   @Post()
-  async instantiate(
-    @CurrentUser() user: { id: string },
-    @Body() body: InstantiateAutomationBody,
-  ) {
+  async instantiate(@CurrentUser() user: { id: string }, @Body() body: InstantiateAutomationBody) {
     const kind = (body.kind ?? '').trim();
     const suggestedId = (body.suggested_id ?? '').trim();
     if (!kind || !suggestedId) {
@@ -241,7 +224,8 @@ export class AutomationsController {
       scheduleChanged = true;
     }
     if (body.timezone !== undefined) {
-      if (typeof body.timezone !== 'string') throw new BadRequestException('timezone must be a string');
+      if (typeof body.timezone !== 'string')
+        throw new BadRequestException('timezone must be a string');
       patch.timezone = body.timezone;
       scheduleChanged = true;
     }
@@ -265,8 +249,7 @@ export class AutomationsController {
         daysOfWeek: (patch.daysOfWeek as number[] | undefined) ?? existing.daysOfWeek,
         times: (patch.times as string[] | undefined) ?? existing.times,
         timezone: (patch.timezone as string | undefined) ?? existing.timezone,
-        jitterMinutes:
-          (patch.jitterMinutes as number | undefined) ?? existing.jitterMinutes,
+        jitterMinutes: (patch.jitterMinutes as number | undefined) ?? existing.jitterMinutes,
       };
       patch.nextRunAt = computeNextRunAt(spec, {
         userId: user.id,
@@ -277,12 +260,7 @@ export class AutomationsController {
     const [updated] = await db
       .update(recurringAgentTasks)
       .set(patch)
-      .where(
-        and(
-          eq(recurringAgentTasks.id, existing.id),
-          eq(recurringAgentTasks.userId, user.id),
-        ),
-      )
+      .where(and(eq(recurringAgentTasks.id, existing.id), eq(recurringAgentTasks.userId, user.id)))
       .returning();
     if (!updated) throw new NotFoundException();
 
@@ -303,12 +281,7 @@ export class AutomationsController {
         nextRunAt: null, // belt-and-suspenders; dispatcher already filters tombstoned
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(recurringAgentTasks.id, existing.id),
-          eq(recurringAgentTasks.userId, user.id),
-        ),
-      );
+      .where(and(eq(recurringAgentTasks.id, existing.id), eq(recurringAgentTasks.userId, user.id)));
     this.logger.log(
       { userId: user.id, recurringId: existing.id, kind: existing.kind },
       'automation tombstoned',
@@ -336,10 +309,12 @@ async function loadOwn(userId: string, id: string) {
 }
 
 async function resolveUserTimezone(userId: string): Promise<string> {
+  // db.execute() returns the postgres-js Result Array directly, not
+  // a { rows } shape. Index the array.
   const result = (await db.execute(sql`
     SELECT timezone FROM user_settings WHERE user_id = ${userId} LIMIT 1
-  `)) as unknown as { rows?: Array<{ timezone: string | null }> };
-  return result.rows?.[0]?.timezone ?? 'UTC';
+  `)) as unknown as Array<{ timezone: string | null }>;
+  return result[0]?.timezone ?? 'UTC';
 }
 
 async function resolveDefaultAgentId(userId: string): Promise<string | null> {

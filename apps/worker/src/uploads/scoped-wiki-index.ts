@@ -41,7 +41,12 @@ export async function fetchScopedWikiIndex(
   // `page_type` enum vs the recursive step's `::text` cast tripped 42804
   // ("UNION types page_type and text cannot be matched") on the first real
   // attempt 2026-05-15.
-  const result = (await db.execute(sql`
+  // NOTE: `db.execute(sql\`...\`)` with Drizzle + postgres-js returns
+  // the postgres-js Result, which IS an Array of rows (with .count /
+  // .command properties on it) — NOT a `{ rows }` shape. The `result.rows
+  // ?? []` pattern silently returns []. Iterate the result directly.
+  // See feedback_drizzle_postgres_js_execute_shape memory.
+  const rows = (await db.execute(sql`
     WITH RECURSIVE subtree AS (
       SELECT id, slug, title, type::text AS type, parent_page_id, agent_abstract
       FROM wiki_pages
@@ -67,9 +72,8 @@ export async function fetchScopedWikiIndex(
       s.agent_abstract
     FROM subtree s
     LEFT JOIN wiki_pages parents ON s.parent_page_id = parents.id
-  `)) as unknown as { rows?: RawIndexRow[] };
+  `)) as unknown as RawIndexRow[];
 
-  const rows = result.rows ?? [];
   return rows.map((r) => ({
     slug: r.slug,
     title: r.title,

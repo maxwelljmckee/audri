@@ -32,10 +32,12 @@ import type { ActivityWindow } from './activity-window.js';
 
 // user_settings.timezone — falls back to UTC when unset.
 export async function fetchUserTimezone(userId: string): Promise<string> {
+  // db.execute() returns the postgres-js Result Array directly, not
+  // a { rows } shape. Index the array.
   const result = (await db.execute(sql`
     SELECT timezone FROM user_settings WHERE user_id = ${userId} LIMIT 1
-  `)) as unknown as { rows?: Array<{ timezone: string | null }> };
-  return result.rows?.[0]?.timezone ?? 'UTC';
+  `)) as unknown as Array<{ timezone: string | null }>;
+  return result[0]?.timezone ?? 'UTC';
 }
 
 // ── Markdown parse ───────────────────────────────────────────────────────

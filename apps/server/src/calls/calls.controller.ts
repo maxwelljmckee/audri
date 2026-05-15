@@ -245,8 +245,9 @@ export class CallsController {
         AND tombstoned_at IS NULL
       LIMIT 1
     `);
-    const rows =
-      (matched as unknown as { rows?: Array<{ id: string; payload: unknown }> }).rows ?? [];
+    // db.execute() returns the postgres-js Result Array directly,
+    // not a { rows } shape.
+    const rows = matched as unknown as Array<{ id: string; payload: unknown }>;
     const reminder = rows[0];
     if (!reminder) return;
 
