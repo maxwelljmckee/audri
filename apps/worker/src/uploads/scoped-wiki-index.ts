@@ -36,9 +36,14 @@ export async function fetchScopedWikiIndex(
   //
   // The outer SELECT joins to the parent_page_id chain again to
   // surface `parent_slug` for each row, matching WikiIndexEntry shape.
+  // Cast `type` to text in BOTH branches of the recursive UNION — Postgres
+  // requires matching column types across branches and the base case's raw
+  // `page_type` enum vs the recursive step's `::text` cast tripped 42804
+  // ("UNION types page_type and text cannot be matched") on the first real
+  // attempt 2026-05-15.
   const result = (await db.execute(sql`
     WITH RECURSIVE subtree AS (
-      SELECT id, slug, title, type, parent_page_id, agent_abstract
+      SELECT id, slug, title, type::text AS type, parent_page_id, agent_abstract
       FROM wiki_pages
       WHERE id = ${scopeRootPageId}
         AND user_id = ${userId}
@@ -57,7 +62,7 @@ export async function fetchScopedWikiIndex(
     SELECT
       s.slug,
       s.title,
-      s.type::text AS type,
+      s.type,
       parents.slug AS parent_slug,
       s.agent_abstract
     FROM subtree s
