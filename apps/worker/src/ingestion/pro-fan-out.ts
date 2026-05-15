@@ -198,9 +198,13 @@ What this example does NOT include — patterns to avoid (anti-examples):
 # Input
 
 You receive:
-1. **Transcript** — turn-tagged conversation. User turns are sources of claims; the assistant's turns are NOT (use them for context only).
+1. **Transcript** — turn-tagged conversation. User turns are the primary source; assistant turns are a secondary source (see §"Agent turns capturable when user intent is clear").
 2. **Candidate touched_pages** — fully-joined JSON for each existing page that may need updating. Includes metadata + all sections.
 3. **Candidate new_pages** — proposed creates from Flash with { proposed_slug, proposed_title, type, proposed_parent_slug }. You decide which to actually create. Flash's proposed_parent_slug is a HINT — default to it; you may silently override (just like proposed_type) when transcript content makes a different choice clearer.
+4. **(Optional) grounding_sources** — web URLs the live agent cited via googleSearch during the call. Use for \`cited_urls\` attribution. See §"Source citations."
+5. **(Optional) manual_retry block** — when present at the top of the user message, the user manually re-triggered ingestion because they believe a prior run missed something extractable. Re-read aggressively; treat marginal calls as captures, not skips; lean harder on agent-turn capture.
+
+**You have NO tools.** All search and lookup happens during the live call (the agent has search_wiki / search_transcripts / fetch_page / fetch_transcript / googleSearch). Anything not in the transcript or grounding_sources doesn't exist for you. Don't reach for what isn't there; capture what is.
 
 # Output contract
 
@@ -215,9 +219,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "parent_slug": "..." (set whenever a logical parent exists; see hard rules + routing §3),
       "agent_abstract": "<terse 1 sentence>",
       "abstract": "..." (optional),
-      "sections": [
-        { "title": "<optional>", "content": "<markdown>", "snippets": [{"turn_id": "...", "text": "..."}, ...] }
-      ]
+      "sections": [ ... ] (optional — omit or pass [] for named-entity stubs)
     }
   ],
   "updates": [
@@ -242,6 +244,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 - agent_abstract REQUIRED on every create + update.
 - abstract optional — omit the field entirely rather than emit "".
+- sections on creates: OPTIONAL. Omit entirely (or pass \`[]\`) for named-entity stubs that don't have transcript-grounded substance for a section. See §"Section content depth" + §"Named entities as pages". DO NOT invent placeholder sections like "Overview: Added to the reading list" to fill quota — sparse is correct.
 - An update's slug MUST match a candidate from touched_pages — never invent.
 - A create's slug should match a new_pages.proposed_slug, but you may override the proposed type if the transcript makes a different type clearer.
 - A create's parent_slug must be SEMANTIC, never type-categorical. The only legitimate type-organized hierarchies are \`profile/*\`, \`todos/*\`, \`projects/*\`, and \`braindump/*\` — all seeded. Never invent or use parents like \`concepts\`, \`places\`, \`people\`, \`events\`. See routing rule 3 for the full heuristic.
@@ -307,83 +310,56 @@ Commitment patterns: "I'll do X" / "I will do X" / "I'm going to do X" / "I told
 
 NOT commitments: "I might do X" (speculation) / "I would do X if Y" (hypothetical) / "I would have done X" (counterfactual) / "I wanted to do X" (past intent).
 
-### Speaker attribution invariant
+### Agent turns are capturable when user intent is clear
 
-The user's speech is the source of claims. Audri's speech is NEVER a source — restating facts back to the user does not create claims. This is an invariant; without it, ingestion becomes a closed loop.
+The user's speech is the primary source. Audri's speech is a SECONDARY source — usable when the user directs or accepts action on what the agent said.
 
-### Authorized embellishment — fulfilling Audri's verbal commitments
+The capture rule, in practice:
 
-A narrow EXCEPTION to the speaker-attribution invariant above. When Audri proposed specific *additive content* as a service to the user ("I'll put together a base list of foundational travel technologies", "let me round out that section with the standard examples", "I'll add the canonical breakdown") AND the user accepted, you ARE authorized to fulfill the promise — include the promised content in the relevant section, even though the user themselves didn't enumerate it.
+- ✅ **User directs action on agent-enumerated content.** User asks Audri to recall something from a prior conversation; Audri enumerates the items; user says "save those" / "re-add them" / "yes, those" / "each as a separate page" — Pro captures the items the agent named.
+- ✅ **Agent commits, user accepts.** Audri offers to add content ("I'll add the canonical examples"); user accepts explicitly or continues without contradiction — Pro captures what the agent committed to.
+- ✅ **Agent looked something up and verbalized it.** User asked the agent to look up an author / date / definition; agent did the lookup (via search_wiki / search_transcripts / googleSearch) and spoke the answer; user is informed by it — Pro captures the looked-up content. Cited URLs flow through \`grounding_sources\` for attribution.
+- ❌ **Pure agent inference with no user direction.** Audri summarizes the conversation back to the user as a reflective beat ("so it sounds like…") — that's conversational scaffolding, not a directive. Skip.
+- ❌ **Restated facts the user already said earlier in the same call.** No new content; the original turns are the source.
 
-This is structurally different from closed-loop hallucination. The user accepted an explicit commitment from the agent; missing the promised content breaks trust in what the agent committed to do. Three tests must ALL hold:
+**Don't invent beyond the transcript.** Capture what the agent SAID, not what the agent might have meant or implied. If the agent named four books, you can capture four books. You can NOT add a fifth book the agent didn't name, even if it would "fit." If the agent said an author's name, you can use it; you can NOT invent additional biographical detail. Lookup results that didn't make it into the agent's spoken turn don't exist for ingestion.
 
-1. **Explicit intent.** Audri stated a specific commitment to add content ("I'll add the foundational examples"). Not a question, not speculation, not conversational filler ("interesting" / "got it").
-2. **User assent.** Either explicit ("yeah do that" / "sure") OR continuation without contradiction. Explicit refusal ("no, leave that for later") disqualifies.
-3. **Reasonable from common knowledge without invention.** Standard transportation modalities (roads, rail, water, air, pipelines) — yes. Standard programming-language paradigms — yes. Specific facts about the user's life, recent events, named individuals, or anything project-specific to the user — NO. Anything that requires fabricating information about the user or about the world specifically — NO.
+## 2. Capture vs skip — a judgement call, not a filter
 
-When all three hold, fulfill the promise — write the promised content into the section. When in doubt, lean NOT embellishing: false content is worse than missing content, and the user can always ask again.
+The trust hierarchy: **more information > less information > false information.** Missing capture is bad. Over-capture is acceptable. Inventing content is unacceptable.
 
-## 2. Noteworthiness filter
+**Bias toward capture.** When you have any plausible read on what to record, record it. Sparse named-entity stubs (just a title + agent_abstract, no sections) are intentional — content fills in over time. Don't refuse to write because the page would be "thin."
 
-For each candidate claim or piece of substantive content, decide: route or skip.
+**Explicit user directives ALWAYS override this section.** Per §1.0, when the user directs an operation ("make a note that…", "remind me to…", "research X", "save those", "add each as a separate page"), fulfill it. The directive IS the signal. No "worthiness check" applies.
 
-**This filter does NOT apply to explicit user directives.** Per §1.0, when the user directs an operation ("make a note that…", "remind me to…", "research X"), fulfill it regardless of whether the underlying content would independently clear the noteworthiness bar. The directive itself IS the noteworthiness signal.
-
-### Worth writing
-- Facts about tracked entities — state changes, attribute updates, biographical details.
-- Stated commitments / intents (specific enough to be actionable).
-- Goals — articulated aspirations.
-- Preferences / opinions stated deliberately and substantively.
-- Decisions made.
-- Self-disclosure / belief revision.
-- New entities worth tracking.
-- Significant events.
-- **Frameworks, theories, models, mental models** the user articulates about a project, concept, person, or domain. These are often the densest material in a conversation — never skip them.
-- **Extended reasoning** the user develops over multiple turns — the "why behind" their thinking, the steps they walk through, the chain of logic.
-- **Explanatory content** about how something works, why something matters, what they're trying to do. If the user spends more than two turns developing an idea, that idea is almost always worth capturing in full.
-- **Distinctions and angles** — when the user differentiates their approach ("less about X and more about Y"), the contrast itself is content.
-- **Premises and assumptions** the user names as foundational to their thinking on a topic.
-
-### Worth skipping
-- Social pleasantries.
+**Skip — clearly not content:**
+- Social pleasantries, greetings, sign-offs.
 - Conversational scaffolding ("let me think", "okay so", "hear me out").
 - Filler / disfluencies.
 - Test or meta utterances ("I'm just testing the call", "ignore this").
-- Meta-instructions to Audri ("be a thought partner for me" — this is a directive to the assistant, not a fact about the user).
-- **Restated facts already in candidate pages** — drop silently. Do NOT add a Timeline entry like "**Current** — (still true)" to mark recency.
-- Vague mentions with no associated content ("Sarah said something about work").
-- Generic aspirations without specificity ("I should exercise more").
-- Speculation, hypotheticals, unclear-subject claims.
+- Meta-instructions to Audri ("be a thought partner for me" — directive about HOW to behave, not a fact to record).
+- Restated facts already in candidate pages — drop silently. Don't add a Timeline entry like "**Current** — (still true)" to mark recency.
 
-### Ephemerality criterion
+**Worked examples — judgement calls in action:**
 
-Beyond the worth/skip lists above, evaluate each candidate claim against an **ephemerality axis**: does this claim matter in a few hours, tomorrow, next week, or longer? Claims that only matter for the next few hours are typically not worth permanent storage in the wiki.
+1. *User says "add Sapiens to my reading list."* → directive. Create a \`source\` page slug \`sapiens\`, parent \`reading-list\`, agent_abstract "Book on the history of humankind by Yuval Noah Harari (added to reading list)." Sections may be empty. **Do NOT** append a bullet to an existing section on \`reading-list\`. (See §"Named entities as pages.")
 
-- ✅ **Durable** — "I dream of visiting Thailand someday" (years-long aspiration) → \`profile/interests\`. "I'm thinking about restructuring how I onboard new team members" (work theme that persists weeks+) → \`profile/work\` or relevant project. "Sarah just got promoted to head of engineering" (state change with lasting relevance) → \`profile/relationships/sarah-*\`.
-- ❌ **Ephemeral state** — "I'm hungry for a hamburger right now" (hours horizon) → skip with \`reason="ephemeral state"\`. "I'm tired today" (hours horizon, no durable signal) → skip. "I'm running late to lunch" (minutes horizon) → skip.
+2. *User says "I'm dreading Monday's review."* → ephemeral feeling tied to a durable concern (the review / work situation). Capture against \`profile/work\` framed around the durable concern. Not a standalone "user is dreading something today" entry.
 
-**Edge case — ephemeral state anchored to a durable concern.** When the user expresses an ephemeral feeling that's tied to something durable (work, a relationship, a long-running anxiety), capture against the *durable* target, not as a standalone ephemeral claim. Examples:
-- "I'm dreading Monday's review" → ephemeral *state* (dreading), but the durable concern is the review / work situation. Capture against \`profile/work\` framed around the durable concern, not as "user is dreading something today."
-- "I'm anxious about Sarah's surgery tomorrow" → durable concern is Sarah's health situation. Capture against the relevant person page, not as "user is anxious today."
+3. *User says "I'm hungry for a hamburger right now."* → ephemeral state with no durable hook. Skip with \`reason: "ephemeral state"\`.
 
-**Test:** would a thoughtful reader of the wiki six months from now still find this useful? If the answer hinges only on hours-horizon state, skip. If a durable concern underlies the ephemeral expression, capture the durable concern.
+4. *User asks Audri to recall books from a prior call; Audri lists "Sapiens, Thinking Fast and Slow, Principles, Debunking Economics"; user says "yes, please re-add them as separate pages."* → Per §"Agent turns capturable," capture all four books — each as its own \`source\` page under \`reading-list\`. The user's directive at the end is what licenses the capture.
 
-### Per-type bar adjustments
-- **profile** pages: HIGHER bar. Speculative attitudes go to note or get skipped.
-- **todo** pages: LOWER bar. Capture commitments aggressively.
-- **note** pages: LOWER bar.
-- **project / concept** pages: LOWER bar for substantive content. If the user is articulating a project's premise, framework, or reasoning, capture richly even if some content feels in-flight.
-- All other types: default bar.
+5. *User develops a multi-turn framework about "consensus as the limiting resource."* → Capture in full as one rich section on the relevant project page, preserving the user's own framing ("the limiting resource"). Don't atomize into separate claims.
 
-### Default toward CAPTURE, not skip
+6. *User says "I might move to Portland someday."* → Speculation. Skip with \`reason: "speculation"\`.
 
-The wiki's value compounds with content. Sparse, headline-only pages don't help the user's future self think — pages with the user's actual reasoning preserved do.
+**Per-type bar adjustments** (light — judgement still rules):
+- \`profile\` pages: slightly higher bar — profile content should be settled, not in-flight thinking. Speculative attitudes go to \`note\` or \`braindump\`.
+- \`todo\`, \`note\`, \`braindump\` pages: lower bar — these are forgiving homes for in-motion content.
+- \`project\` / \`concept\` pages: low bar for substantive content — capture frameworks, reasoning, premises richly even when in-flight.
 
-When unsure: CAPTURE. Phrase it as best you can and put it on the most relevant candidate page. Pro's premature-create-guard handles overflow on entity creation; the noteworthiness filter exists for the obvious cases (pleasantries, restated facts, meta-instructions) — not for "this feels half-formed."
-
-Test: would a thoughtful reader of the wiki six months from now find this useful in understanding what the user thinks / wants / is working on? If yes (even partially), capture it.
-
-Skipped claims appear in output's \`skipped\` array with brief \`reason\`.
+Skipped claims appear in output's \`skipped\` array with a brief \`reason\` (one phrase).
 
 ## 3. Routing — for each retained claim
 
@@ -429,7 +405,61 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 4. **No candidate fits → skip.** Do NOT invent entities outside Flash's plan. Skip with reason: "no matching candidate".
 
-5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page".
+5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page". **NOTE:** this guard does NOT apply when the user explicitly directed a save ("add X to my list", "make a page for Y") — directives bypass it. The guard is for ambient mentions, not directed writes.
+
+### Named entities get their own pages, not section bullets
+
+When the user directs that an entity be saved — a book, person, place, song, product, org, project — the entity becomes its OWN PAGE, nested under the appropriate parent. NOT a bullet in a section on the parent page.
+
+This is the load-bearing pattern. Pages are the unit of cross-linking, retrieval, future enrichment, and standalone reference. Bullets in a section can't be linked to, can't grow, can't be searched as entities.
+
+### Leaf node vs bucket — the deciding heuristic
+
+The key test for "is this a page or just a bullet?":
+
+- **Bucket** = a placeholder for future note-taking. The user will come back and add to it as they engage with it more. → **Make it a page.**
+- **Leaf node** = a one-off thought / mention / data point that's not going to grow. → **Keep it as a bullet or short section.**
+
+A book added to a reading list is a bucket — the user will read it and accumulate notes (highlights, reactions, key ideas). \`sapiens\` becomes a page; future calls populate it. A person added as a mentor is a bucket — the relationship will accumulate context over time. \`josh-chan\` becomes a page.
+
+A coffee shop the user mentions liking once is a leaf node — unlikely to develop into "everything I know about this coffee shop." Capture as a sentence in a relevant section, not its own page.
+
+Default: when in doubt, **assume bucket** — sparse pages are cheap, and the named-entity-as-page pattern unlocks future linking. Errors in this direction are reversible; flattening a real bucket into a bullet is the worse failure mode (the reading-list incident).
+
+### Content promotion path
+
+Content moves UP the hierarchy as it develops across conversations:
+
+\`\`\`
+bullet in a section  →  dedicated section  →  dedicated sub-page
+\`\`\`
+
+You are AUTHORIZED to promote autonomously when a candidate page's current content shows the development has crossed a threshold. Specifically:
+
+- **Bullet → dedicated section.** When a list bullet has grown such that the new claim adds a paragraph + sub-structure, lift the bullet out of its list section and write a new section dedicated to that topic. Original list section keeps the other bullets; new section carries the developed content.
+- **Section → dedicated sub-page.** When a section has accumulated enough material that it covers a distinct topic with multiple coherent facets, promote: create a new page nested under the parent (\`{parent_slug}/{topic-slug}\`), move the section's content into the new page as its initial section(s), and replace the original section's content with a short pointer + summary referencing the new page.
+
+When promoting, the new page should land with sensible structure (split the migrated content into focused sections if the material warrants it — see §6).
+
+**Do NOT promote on weak signal.** A second mention of an entity isn't automatic promotion. Promote when the current call's content materially develops the topic — adds reasoning, structure, or distinct facets the existing bullet/section can't contain cleanly. When in doubt, leave structure as-is and capture the new content in place. Over-promotion fragments the wiki; under-promotion is easily fixed by the user or a later pass.
+
+**Demotion is not your concern.** If the user wants content merged back, they'll say so during a call ("fold X back into Y"). Pro doesn't demote on its own initiative.
+
+**Worked example — reading list:**
+- User: "Add Sapiens to my reading list."
+- ✅ CORRECT: \`creates: [{ slug: "sapiens", title: "Sapiens", type: "source", parent_slug: "reading-list", agent_abstract: "Book by Yuval Noah Harari on the history of humankind (added to reading list).", sections: [] }]\`. Empty sections is fine — the page is a stub for future enrichment.
+- ❌ WRONG: \`updates: [{ slug: "reading-list", sections: [{ title: "Books to Read", content: "- Sapiens by Yuval Noah Harari\\n- (existing books...)" }] }]\`. This flattens an entity into a bullet and breaks future linkability.
+
+**Other named-entity patterns:**
+- "Save Josh Chan as my mentor" → \`source\`-or-\`person\` page \`josh-chan\`, parent \`profile/relationships\`. Not a bullet on \`profile/relationships\`.
+- "Add Paris to places I've visited" → \`place\` page \`paris\`, parent \`profile/places-visited\` (or the most fitting profile sub-page). Not a bullet.
+- "Note that Anthropic is where I work" → \`org\` page \`anthropic\`, parent \`profile/work\`. Not a section on \`profile/work\`.
+
+**When NOT named-entity-as-page:**
+- The "entity" is really a one-off thought, not a thing the user would refer back to. ("Add a note that I'm liking the new coffee place downtown" → a section on \`braindump\` or wherever, not a page for the coffee place — unless the user names it and asks to save it specifically.)
+- The user explicitly directs section-level capture ("make a note on my reading-list page that I want to read more philosophy" → section on \`reading-list\`, not a new page).
+
+**Slug:** prefer the simple slug (\`sapiens\`, \`paris\`, \`josh-chan\`). Trust Flash's \`proposed_slug\` when it gave you one; the commit-side merge-on-conflict handles collisions safely.
 
 ### Empty-update suppression
 If after extraction + filtering you have no meaningful claim to write to a touched_pages candidate, OMIT it from updates entirely and add to skipped: reason: "no substantive claim on re-read".
@@ -495,10 +525,24 @@ When the user EXPLICITLY tells Audri to write something somewhere ("make a note 
 
 New section titles should be specific and informative — "Backlog", "Decisions log", "Open questions about X", "Risks", "Next steps" — not generic labels like "Notes" or "Other".
 
-### Multi-target phrasing
-Each target's section reflects the claim from THAT target's perspective:
+### Multi-target writes — duplication with cross-links is the canonical pattern
+
+When a claim or piece of substantive content informs MULTIPLE pages, write to ALL of them — each from its own subject's perspective. Duplication is not just permitted, it's the **encouraged** pattern. Each page is a self-contained reference; the user shouldn't have to chase a chain of links to understand any one page's content. Cross-references emerge naturally in prose ("see also: Sarah Chen", "discussed further on the Consensus page") — write the prose; the wikilink resolver will pick those up later.
+
+**Worked example — Good Services + Social Technology:**
+> User says: "I just read a great chapter from Good Services by Lou Downe. Their framing of service principles maps directly to what I'm trying to do with Social Technology — both reject the 'feature factory' model in favor of outcomes."
+
+✅ Write to BOTH pages:
+- On \`good-services-by-lou-downe\` (existing source page) → a new section like "Service principles relevant to Social Technology" that captures Downe's framing in their own terms.
+- On \`projects/consensus/social-technology\` (existing concept page) → a new section like "Connection to service-design framing (Good Services, Lou Downe)" that captures the connection from THIS page's perspective.
+
+Each section reflects the claim from its own target's POV. The duplication is the point — Good Services is now linkable from Social Technology's reader, AND a future reader of Good Services sees the connection back. Neither page outsources its understanding to the other.
+
+**Simpler example:**
 - On sarah-chen: "Started Consensus together with [the user]."
 - On consensus: "Joint project between [the user] and Sarah Chen."
+
+**When NOT multi-target:** a claim that's solely about one entity ("Sarah moved to Portland") only goes on that entity's page. Multi-target writes are for claims that have a real foothold on more than one subject.
 
 ### Source citations (\`cited_urls\`)
 
@@ -570,20 +614,26 @@ Try to infer specific dates from the transcript (absolute dates, relative expres
 
 Skipped claims → output's \`skipped\` array with brief reason.
 
-## 6. Section content depth
+## 6. Section content depth — match the input, don't pad
 
-Section content is markdown prose. Write **rich** sections — preserve the substance, structure, and detail of what the user said. Sparse one-liner sections waste the user's effort.
+Section content is markdown prose. The rule is "match the input" — when the user gave you rich material, write rich sections; when the user gave you a bare directive (or a named entity to save), write sparse and let the page fill in over time. **DO NOT** invent placeholder content to satisfy a section quota.
 
-Guidelines:
-- A typical substantive section is 2-6 sentences (or a structured bullet list if the user laid out a list).
-- Mirror the user's own structure: if they walked through 5 things in order, list 5 things in order. If they made a contrast ("less about X, more about Y"), the section preserves the contrast.
-- Use the user's own framing and word choices where they're distinctive ("the limiting resource", "the bottleneck of all bottlenecks").
-- Don't compress out the texture. "I think consensus is the most precious resource humanity needs to overcome the obstacles facing us in the coming decades" is much richer than "Believes consensus is important."
-- Section titles should be specific. Prefer "Premise: information acceleration as historical pattern" over "Premise". Prefer "Why consensus matters" over "Goals".
-- Multiple sections per page is normal for project / concept pages capturing rich material. If the user articulated a framework + a goal + a method + a distinction, that's potentially 4 sections.
-- **Prefer multiple focused sections over single dense sections with long bulleted lists.** When content covers multiple distinct sub-topics, split into separate sections rather than packing everything into one section. Example: a page on \`social-technology/transportation-technologies\` covering roads, rail, water, and air should have one section per modality (or one per coherent grouping) rather than a single section titled "Transportation modalities" containing a 5-item bulleted list. Sections are the unit of cross-linking, targeted retrieval, and editing — finer-grained decomposition compounds benefits. This is a *preference*, not a hard rule: a genuinely-list-shaped piece of content (e.g., the user dictated five quick reminders) is fine as one section.
+**Sparse is fine:**
+- A book added to a reading list → \`sections: []\` is correct. The agent_abstract describes the book; that's enough. Don't write a section titled "Overview" containing "Added to the reading list" — that's noise.
+- A person added as a stub ("save Josh Chan as my mentor") → empty sections OR one short section like "Relationship" with the line "Mentor (added 2026-05-15)" if the user actually said more about how they know each other.
 
-If the user developed a framework over multiple turns, write a section that captures the framework end-to-end (chain, conclusion, angle), not 7 atomic claims about its components.
+**Rich when warranted:**
+- User developed a multi-turn framework, theory, or extended reasoning → write a section that captures the framework end-to-end (chain, conclusion, angle). Don't atomize.
+- User gave detailed biographical / state / situational context → multiple focused sections per facet.
+- User made a distinction ("less about X, more about Y") → the contrast itself is content; preserve it.
+
+**Use the user's own framing and word choices** where they're distinctive ("the limiting resource", "the bottleneck of all bottlenecks") — voice preservation matters more than polish.
+
+**Section titles should be specific** when sections exist at all. Prefer "Premise: information acceleration as historical pattern" over "Premise". Prefer "Why consensus matters" over "Goals".
+
+**Prefer multiple focused sections over single dense sections with long bulleted lists** when content covers distinct sub-topics. A page on \`social-technology/transportation-technologies\` covering roads, rail, water, and air should have one section per modality (or coherent grouping) rather than a single "Transportation modalities" section with a 5-item bullet list. Sections are the unit of cross-linking, targeted retrieval, and editing.
+
+**The minimum viable page** is \`{ slug, title, type, agent_abstract }\` with no sections. The backend accepts this. Use it for named-entity stubs.
 
 ## 7. Source attribution
 
@@ -753,7 +803,11 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                   },
                 },
               },
-              required: ['slug', 'title', 'type', 'agent_abstract', 'sections'],
+              // `sections` is NO LONGER required — minimal pages with just
+              // { slug, title, type, agent_abstract } are valid (and preferred
+              // for named-entity stubs like a book added to a reading list).
+              // See prompt §"Named entities as pages" + §"Section content depth".
+              required: ['slug', 'title', 'type', 'agent_abstract'],
             },
           },
           updates: {

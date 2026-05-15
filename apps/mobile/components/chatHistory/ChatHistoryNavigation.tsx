@@ -220,7 +220,10 @@ function SearchResultsList({
         }
         const json = (await r.json()) as { results: TranscriptSearchHit[] };
         if (!cancelled) {
-          setResults(json.results);
+          // Server returns FTS-ranked results uncapped. The UI wants
+          // chronological newest-first — re-sort client-side.
+          const sorted = [...json.results].sort((a, b) => b.started_at.localeCompare(a.started_at));
+          setResults(sorted);
           setError(null);
         }
       } catch (err) {
@@ -641,21 +644,22 @@ function formatRowTime(iso: string): string {
 }
 
 // Search results aren't grouped by day, so they need their own row-level
-// timestamp showing the date — otherwise hits from different days are
-// indistinguishable. Format mirrors the relative-date logic in the detail
-// header but compact.
+// timestamp showing BOTH date and time-of-day — date alone makes multiple
+// same-day hits indistinguishable; time alone loses the day. Format mirrors
+// the relative-date logic in the detail header.
 function formatSearchResultTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === now.toDateString()) return `Today at ${time}`;
   const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString(undefined, {
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday at ${time}`;
+  const dateStr = d.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
   });
+  return `${dateStr} at ${time}`;
 }
 
 function formatSectionHeader(d: Date, now: Date): string {

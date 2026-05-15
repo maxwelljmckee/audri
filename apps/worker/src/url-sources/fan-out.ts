@@ -107,64 +107,78 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 ## Hard rules
 
 - agent_abstract REQUIRED on every create + update.
+- sections on creates: OPTIONAL. Sparse cross-link stub pages (just \`{ slug, title, type, agent_abstract }\`) are valid. DO NOT invent placeholder sections like "Overview: Cited in article" to fill quota.
 - An update's slug MUST match a candidate from touched_pages.
 - A create's parent_slug must be SEMANTIC, never type-categorical. NEVER \`concepts\`, \`places\`, \`people\`, \`events\` as parents.
 - A create's parent_slug is REQUIRED — emit \`null\` ONLY when explicitly directed top-level. Default fallback under attachment scope is the scope root itself.
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
 - The \`sections\` field is OPTIONAL on updates. Omit = leave existing sections untouched (move-only metadata update). Include = full new section state; anything missing gets tombstoned. NEVER emit \`sections: []\` to mean "no change".
 - Snippets are verbatim excerpts (~50-300 chars). Every section write must include at least one. Never fabricate content not in the article.
+- **URL ingestion is CONTAINED.** Output a source page (the article) plus minimal cross-link entity stubs when warranted. DO NOT enrich existing user pages with content drawn from this article. Cross-page integration runs LATER as a separate "REM dream" synthesis pass that proposes enrichments for the user to accept/reject via the Dreams UX. \`updates\` should be RARE on URL ingestion — only for cross-link stubs Flash flagged that already exist, or move-only metadata updates the user explicitly directed.
 
 # Decision rules
 
-## Pattern for substantive third-party articles
+## Capture philosophy
 
-The dominant pattern. Produce:
-- 1 source-page create (the article itself).
-- 0-3 concept-page creates or updates (the ideas the article teaches).
-- 0-1 person-page creates for substantive named authors (only if the article gives them attention beyond a byline).
+**Trust hierarchy: more information > less information > false information.** Bias to capture. Articles are deliberate prose; signal-to-noise is high. Skip only when content is genuinely uninformative — boilerplate, navigation chrome from extraction, cookie banners, paywall fragments.
 
-The source page is the canonical home; concept pages are the cross-references.
+**Don't invent content not in the article.** Every section's snippets must be verbatim excerpts. If you'd have to fabricate to fill a section, skip it.
 
-## Source page section structure (generic baseline)
+## Doc-consolidation pattern (THE KEY DIFFERENCE from transcript ingestion)
 
-See the kind-specific structures above (web_article / pdf / reddit_thread) for primary guidance. The general baseline:
+**Articles consolidate; transcripts atomize.** This is an intentional asymmetry.
 
-1. **Summary** — 1-2 paragraphs. Central argument or finding. Specific, not generic.
-2. **Key claims** — bulleted or short-paragraph form. Substantive assertions only.
-3. **Notable quotes** — short list. Quotes worth preserving verbatim (snippets = the quote).
-4. **Methodology / structure** — when relevant.
+In transcripts, named entities get their own pages — many small pages spawn from one conversation.
 
-Adapt section names + structure to fit the source's shape. A reddit_thread "Summary" might read very differently from a pdf "Summary."
+In articles, **the source page is the canonical home.** Bias toward a single rich source page with multiple sections per the kind-specific structure above — not a constellation of fragmented sub-pages.
 
-## Concept page updates
+Cross-link to existing OR newly-created entity pages when:
+- The article gives an entity SUBSTANTIVE treatment (more than a name + role) AND
+- The entity is worth standalone reference (a recurring author, a load-bearing concept, an org the user has other things on).
 
-When an existing concept page already covers the topic, update it conservatively:
-- Add one section grounded in this article ("Per [article], [framing or claim]") — preserve existing sections.
-- If the article contradicts an existing claim, surface it explicitly with a section titled "Conflicting view from [source]" or similar.
-- Don't paraphrase the same point three times; if the article restates something the wiki already has, skip it.
+**Duplication is permitted and encouraged.** The article's "Authors" or "Key claims" section can describe a person in two sentences AND a separate person page can exist with its own treatment. Cross-references in natural prose ("see also: [person's] broader work") are the link mechanism — write prose, not \`[[slug]]\` syntax.
 
-## What NOT to capture
+## Dominant output pattern
 
-- Boilerplate (publisher info, copyright pages, navigation, page-end CTAs).
-- Pure description of UI / paywall / cookie banners that leaked into extraction.
-- Speculative content the article hedges on heavily — only capture if the article explicitly endorses.
-- Anything you can't ground in a verbatim snippet.
+For a substantive third-party article:
+- **1 source-page create** — the article itself, with kind-specific section structure (web_article / pdf / reddit_thread).
+- **0-2 stub entity-page creates** — only when an entity is substantively treated AND is worth standalone reference, AND doesn't already exist. Stubs can be sparse \`{ slug, title, type, agent_abstract }\` only — the article page's section carries the actual treatment; the stub exists as a cross-link target.
+- **0 updates to existing user pages.** Cross-page integration (e.g. "this article enriches \`profile/interests/scaling-laws\`") is RESERVED for REM dreaming, not for this fan-out. The dreaming pass surfaces those as proposals for the user to discuss in their next call.
 
-## Attribution invariant
+Updates ARE permitted only for: (a) move-only metadata changes explicitly directed, or (b) when Flash flagged an existing page that needs metadata regeneration as a side-effect of the new source page being created.
 
-The article's claims are not the user's claims. Frame them as "Per [article title]…" or "[Author] argues that…" — never write claims in the user's voice based on a URL. The source page makes this attribution structural; concept page sections sourced from the article should also keep attribution clear in the prose.
+## Leaf-node vs bucket — for spawned entity pages
+
+When deciding whether a mentioned entity warrants its own stub page (vs. just appearing in the article page's sections):
+
+- **Bucket** = will accumulate notes over time → page (a recurring author, a core concept central to user interests).
+- **Leaf node** = mentioned once, unlikely to grow → keep in the article page's relevant section, no separate page.
+
+Default: when in doubt, **keep it in the article page**. URL ingestion under-spawns rather than over-spawns; if a leaf turns out to be a bucket, REM dreaming or a future article will promote it.
+
+## Content promotion (across articles / calls)
+
+The wiki has a natural promotion path: \`bullet → section → sub-page\`. For URL ingestion:
+
+- If a concept the article develops ALREADY has substantive coverage across other sources / pages, the current article's contribution may warrant a sparse stub concept page (cross-link target).
+- Otherwise: write the concept inside the article page's section. Future sources can promote.
+
+Promote only on strong signal. A first mention isn't enough. Over-spawning fragments the wiki.
+
+## Attribution
+
+The article's claims are not the user's claims. Frame them as "Per [article title]…" or "[Author] argues that…" — never write claims in the user's voice based on a URL. The source page makes this attribution structural; any stub entity pages spawned should also keep attribution clear in their (typically sparse) framing.
 
 ## Cross-references
 
-Reference other wiki pages by NAME, not [[slug]] syntax (the renderer doesn't resolve wikilinks yet — a separate forthcoming pass).
+Reference other wiki pages by NAME, not \`[[slug]]\` syntax — the renderer doesn't resolve wikilinks yet (separate forthcoming pass). Natural prose like "see Lou Downe's framing of service design" is the link mechanism.
 
 ## Parent_slug routing
 
-Same as the upload pipeline:
 - Source page (the article) → attachment scope root (when present), else \`braindump\`.
-- New concept → \`profile/interests\` (or specific interest sub-page) by default; project slug if project-tied.
-- New person (author / subject) → \`profile/relationships\`.
-- New organization → \`profile/work\` if work-related; project slug if project-scoped.
+- Stub concept page → \`profile/interests\` (or specific interest sub-page) by default; project slug if project-tied.
+- Stub person page (author / subject) → \`profile/relationships\`.
+- Stub organization page → \`profile/work\` if work-related; project slug if project-scoped.
 
 ## Skipped
 
@@ -177,26 +191,27 @@ When you decline to capture something the article said, add a \`skipped\` entry 
 Article: "Scaling laws for neural language models" (Kaplan et al., arXiv 2020).
 
 Output sketch:
-- create source page \`<scope>/scaling-laws-neural-language-models\` (type=source) with sections: Summary, Key claims, Notable quotes, Methodology.
-- create or update concept page \`profile/interests/scaling-laws\` with a section grounded in the paper.
+- create source page \`<scope>/scaling-laws-neural-language-models\` (type=source) with rich sections: Summary, Key claims, Notable quotes, Methodology, Authors (mentions Kaplan et al. with 2-3 sentences each).
+- 0-1 stub creates: e.g. \`scaling-laws\` concept page under \`profile/interests\` IF it doesn't exist AND the user has other content suggesting it's a recurring interest. Stub can be just \`{ slug, title, type, agent_abstract }\`.
+- DO NOT update existing \`profile/interests/scaling-laws\` (if it already exists) with a new section. REM dreaming will propose that integration for the user to discuss in their next call.
 
 ## Example 2: opinion essay
 
 Article: "The case for letting AI do nothing" — a NYT op-ed.
 
 Output sketch:
-- create source page \`<scope>/case-for-ai-doing-nothing\` (type=source) with sections: Summary, Key claims.
-- maybe update concept page \`profile/interests/ai-safety\` with a one-section "Argument for non-intervention from [author]".
+- create source page \`<scope>/case-for-ai-doing-nothing\` (type=source) with sections: Summary, Key claims, Author's framing.
+- 0 stubs typically — opinion essays rarely warrant standalone concept pages on their own. If the user has a strong AI-safety interest, REM dreaming will surface "this essay relates to your ai-safety page" as a proposal.
 
 ## Example 3: how-to article
 
 Article: "How to set up pgvector for production."
 
 Output sketch:
-- create source page \`<scope>/pgvector-production-setup\` (type=source) with sections: Summary, Key claims (or "Steps" — list of major directives), Notable quotes (less likely for how-to).
-- only create a concept page (\`pgvector\`) if the user doesn't have one already AND the article gives it substantive treatment beyond the install steps.
+- create source page \`<scope>/pgvector-production-setup\` (type=source) with sections: Summary, Setup steps, Notable gotchas.
+- Stub concept page \`pgvector\` ONLY if the user doesn't have one AND the article gives it standalone treatment beyond the install steps. Sparse is fine.
 
-Your job: produce a tight, well-routed set of wiki writes that preserve the article as a navigable source AND surface its substantive ideas as concepts the user can find later.`;
+Your job: bring the article into the wiki as a navigable, well-structured source. Leave existing user pages untouched — cross-page enrichment runs later via the user-validated Dreams flow.`;
 
 export interface ProUrlSourceArticleMetadata {
   url: string;
@@ -271,7 +286,9 @@ export async function runUrlSourceFanOut(
                   },
                 },
               },
-              required: ['slug', 'title', 'type', 'agent_abstract', 'sections'],
+              // `sections` is OPTIONAL — sparse cross-link stub pages
+              // (just slug + title + type + agent_abstract) are valid.
+              required: ['slug', 'title', 'type', 'agent_abstract'],
             },
           },
           updates: {

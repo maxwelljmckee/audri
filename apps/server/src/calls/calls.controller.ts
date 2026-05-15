@@ -439,7 +439,9 @@ export class CallsController {
   ) {
     const query = (body.query ?? '').trim();
     if (!query) return { results: [] };
-    const results = await searchTranscripts(user.id, query);
+    // Cap at 5 for the live agent — context discipline. The UI endpoint
+    // below is uncapped so the user sees their full result set.
+    const results = await searchTranscripts(user.id, query, 5);
     void recordInferenceUsage({
       userId: user.id,
       callTranscriptId: null,
@@ -453,10 +455,10 @@ export class CallsController {
   }
 
   // User-facing transcript search. Same SQL as the live-agent tool above,
-  // but no usage_events row — UI search is keystroke-driven and would
-  // pollute the per-tool analytics that the `tool_search_transcripts` event
-  // exists to measure. Throttled at 60/min, comfortable with client-side
-  // debounce. Powers the search input on the Chat History list screen.
+  // but uncapped — the UI shows the full match set, sorted by date client-
+  // side — and no usage_events row (UI keystroke-driven search would
+  // pollute the per-tool analytics). Throttled at 60/min, comfortable with
+  // client-side debounce. Powers the search input on the Chat History list.
   @Throttle({ short: { limit: 60, ttl: 60_000 } })
   @Post('transcripts/search')
   async transcriptsSearch(@CurrentUser() user: { id: string }, @Body() body: { query?: string }) {

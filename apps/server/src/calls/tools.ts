@@ -167,7 +167,6 @@ function truncate(s: string, n: number): string {
 // "what did I say about X last week"). Wiki tools above retrieve the
 // distilled knowledge graph; these retrieve the raw conversational record.
 
-const TRANSCRIPT_SEARCH_MAX_RESULTS = 5;
 const TRANSCRIPT_SEARCH_SNIPPET_CHARS = 300;
 const TRANSCRIPT_FETCH_MAX_TURN_CHARS = 1500;
 const TRANSCRIPT_FETCH_MAX_TURNS = 60;
@@ -188,9 +187,14 @@ export interface SearchTranscriptsResult {
 // doesn't see those, and at MVP transcript volume an unindexed sequential
 // scan is acceptable. Add a generated tsvector column + GIN index when
 // transcript counts cross ~10k/user.
+//
+// `limit` is optional — the live-agent endpoint passes 5 to keep its
+// context tight; the UI endpoint passes undefined for unbounded results
+// (UI shows the full result set, sorted by date client-side).
 export async function searchTranscripts(
   userId: string,
   query: string,
+  limit?: number,
 ): Promise<SearchTranscriptsResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
@@ -198,7 +202,7 @@ export async function searchTranscripts(
   const tsQuery = sql`websearch_to_tsquery('english', ${trimmed})`;
   const tsVector = sql`to_tsvector('english', ${callTranscripts.content}::text)`;
 
-  const rows = await db
+  const baseQuery = db
     .select({
       id: callTranscripts.id,
       startedAt: callTranscripts.startedAt,
@@ -216,8 +220,9 @@ export async function searchTranscripts(
         sql`${tsVector} @@ ${tsQuery}`,
       ),
     )
-    .orderBy(sql`ts_rank(${tsVector}, ${tsQuery}) DESC`)
-    .limit(TRANSCRIPT_SEARCH_MAX_RESULTS);
+    .orderBy(sql`ts_rank(${tsVector}, ${tsQuery}) DESC`);
+
+  const rows = limit !== undefined ? await baseQuery.limit(limit) : await baseQuery;
 
   // Snippet extraction: walk the turn list, pick the first turn whose text
   // contains a query term (case-insensitive). Fall back to the first turn

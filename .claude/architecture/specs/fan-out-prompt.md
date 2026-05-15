@@ -1,10 +1,28 @@
 # SPEC — Pro fan-out prompt (KG parsing system instruction)
 
-Status: **draft** — contradiction handling (stage 5) is the most fleshed-out section; other stages are stubs.
+Status: **active** — last rewrite 2026-05-15 (judgement-over-worthiness + named-entity-as-pages + agent-turn capture). Contradiction handling (stage 5) is the most fleshed-out section; other stages have evolved alongside the prompt.
 
 The Pro fan-out prompt is the large, cached, static system instruction that defines how the main ingestion LLM turns a transcript + preloaded page content into a structured write plan. It is the single most load-bearing prompt in the system: its quality determines how well the wiki compounds.
 
 This spec is intended to evolve into the actual prompt text. Rules captured here are the ones Pro must follow to satisfy the architectural decisions made in `todos.md` and `tradeoffs.md`.
+
+## Guiding philosophy (2026-05-15 rewrite)
+
+The fan-out prompt is governed by four principles that supersede prior "worthiness-filter" framings:
+
+1. **Trust hierarchy: more > less > false.** Bias to capture. Missing capture is bad; over-capture is acceptable; invention is unacceptable. Sparse named-entity stubs are the intended outcome of "I'd rather have a thin page than no page."
+
+2. **Named entities get their own pages, not section bullets.** People, places, books, products, orgs, projects, songs — when the user directs them saved, they become standalone pages nested under their semantic parent. The minimum viable page is `{ slug, title, type, agent_abstract }` with no sections. Pages are the unit of cross-linking and future enrichment; bullets are dead-ends. The deciding test: **bucket** (will accumulate notes over time) → page; **leaf node** (one-off mention) → bullet.
+
+   Content moves UP the hierarchy as it develops: `bullet → dedicated section → dedicated sub-page`. Pro promotes autonomously when current-call content materially develops a topic past what the existing container can hold; doesn't demote (user-initiated).
+
+3. **Agent turns are capturable when user intent is clear.** The strict "speaker-attribution invariant" is too conservative. When the user directs or accepts action on agent-enumerated content (recall flow: user asks, agent recalls, user says "save those") — those agent turns become the source for capture. Don't invent beyond what the agent actually said.
+
+4. **Pro has no tools.** All search (wiki, transcripts, web) happens during the live call via the agent's tools (`search_wiki`, `search_transcripts`, `fetch_page`, `fetch_transcript`, `googleSearch`). Pro reads transcript + grounding URLs only. If a capability is missing in practice, the fix is to add a live-agent tool, NOT to give Pro retrieval.
+
+These principles are encoded in the prompt's §2 (Capture vs skip), §"Named entities as pages" under routing, §"Agent turns capturable," and the input contract's "no tools" note.
+
+**Manual retry signal:** when the user manually re-triggers ingestion from the transcript UI, the runtime prepends a `# manual_retry` block to the user message. Pro reads this as "lean harder toward capture" — they retried because they think something was missed. See `apps/worker/src/ingestion/pro-fan-out.ts` (manualRetryBlock).
 
 ---
 
@@ -92,55 +110,49 @@ When a surface claim contains a commitment pattern, extract BOTH the surface fac
 
 The implicit todo is a multi-target write (rule 1 of §4.3). Flash is responsible for flagging `todos/todo` as a candidate when the transcript contains commitment patterns. If Flash misses it, the implicit todo is dropped per the §4.3 no-candidate-skip rule — acceptable MVP loss.
 
-#### Speaker attribution
+#### Speaker attribution — agent turns capturable on user direction
 
-Claims are attributed to the speaker. The user's speech becomes claims about the user (or about entities they mention). **Audri's speech is NOT a source for claims** — Audri cannot author KG content from its own utterances. Restating facts back to the user does not create new claims.
+**Rewritten 2026-05-15.** Prior version was a hard invariant ("Audri's speech is NEVER a source"); this was too conservative and caused the 2026-05-14 reading-list incident where the user clearly directed re-saving books the agent had recalled, and Pro emitted zero writes by pattern-matching on speaker-attribution alone.
 
-This is an invariant, not a heuristic: without it, ingestion becomes a closed loop where Audri's inference during a call could be written into the user's KG as if the user said it.
+Revised rule:
+- User speech is the **primary** source of claims.
+- Agent speech is a **secondary** source — usable when the user directs or accepts action on what the agent said.
 
-### 4.2 Per-claim noteworthiness
+Capture patterns:
+- ✅ User asks agent to recall → agent enumerates → user says "save those" / "re-add them" → capture the agent's enumeration.
+- ✅ Agent proposes additive content → user accepts (explicit or continuation without contradiction) → capture.
+- ✅ Agent does a googleSearch / search_wiki / search_transcripts lookup and speaks the result; user is informed by it → capture the looked-up content. Cited URLs flow via `grounding_sources`.
+- ❌ Agent's reflective scaffolding ("so it sounds like…") with no user direction → not a source. Skip.
+- ❌ Restated facts the user already said in the same call → not new content; original turns are the source.
 
-For each claim extracted in stage 2, decide: proceed to routing, or drop into `skipped`.
+**Don't invent beyond the transcript.** Capture what the agent SAID, not what the agent might have meant. If agent named four books, capture four — not a hypothetical fifth. Lookup results not spoken don't exist for ingestion.
 
-#### Worth writing
+The 2026-05-15 prompt rewrite folded the old "Authorized embellishment" three-test gate (Audri commits → user assents → reasonable from common knowledge) into this single softened rule.
 
-A claim is noteworthy if it would change Audri's understanding of the user, a tracked entity, or the world. Specifically:
+### 4.2 Capture vs skip — judgement, not gating
 
-- **Facts** about tracked entities — state changes, attribute updates, events, biographical details.
-- **Stated commitments or intents** — "I'll do X", "I want to Y" with enough specificity to be actionable.
-- **Goals** — articulated aspirations, milestones, target outcomes.
-- **Preferences and opinions** stated deliberately and substantively — "I prefer X over Y because Z".
-- **Decisions** — choices made, paths committed to.
-- **Self-disclosure / belief revision** — "I'm starting to think...".
-- **New entities** worth tracking — a person, project, org, or concept.
-- **Significant events** — meetings, transitions, milestones.
+**Rewritten 2026-05-15.** Prior version had long worth-writing / worth-skipping lists and a "when in doubt, skip" threshold heuristic. The new philosophy inverts that:
 
-#### Worth skipping
+**Trust hierarchy:** more information > less information > false information. Bias to capture. When in doubt, write — phrased as best you can, on the most relevant candidate, possibly as a sparse stub. The wiki's value compounds with content; sparse pages don't help the user's future self think, but missing pages help even less.
 
-- **Social pleasantries** — greetings, sign-offs, niceties.
-- **Conversational scaffolding** — "let me think", "okay so", "as I mentioned".
-- **Filler / disfluencies** with no informational content.
-- **Restated facts already in the candidate pages** — the page already says it; no new information. Drop silently; do not add a Timeline entry like `**Current** — (still true)` to mark recency. Acceptable failure mode: if Pro misclassifies a new nuance as "already in the wiki," the nuance is lost. The risk is judged smaller than the noise cost of recency-marker entries.
-- **Vague mentions** — too unspecific to inform anything ("Sarah said something about work").
-- **Generic aspirations** without specificity, target, or commitment ("I should exercise more").
-- **Speculation, hypotheticals, unclear-subject claims** — already covered in §4.5.
+**Explicit user directives ALWAYS override.** When the user directs an operation ("make a note that…", "remind me to…", "save those"), fulfill it. No worthiness check applies. The directive IS the signal.
 
-#### Threshold heuristic
+**Skip — clearly not content** (compact list — the prompt names a handful, judgement covers the rest):
+- Social pleasantries, conversational scaffolding ("let me think"), filler.
+- Test / meta utterances ("ignore this, just testing the call").
+- Meta-instructions to Audri about HOW to behave (not what to record).
+- Restated facts already in candidate pages — drop silently. No `**Current** — (still true)` Timeline noise.
 
-When in doubt, **skip**. The wiki suffers more from noise than from missed claims — a missed claim usually returns in another conversation; a noisy claim pollutes search and inflates inference cost permanently.
+**Judgement examples** — the prompt walks through 6 worked cases (book added to reading list, ephemeral feeling tied to durable concern, pure ephemeral state, recall flow with agent-named items, multi-turn framework capture, speculation skip). These replace the prior "worth writing / worth skipping" lists and exist to make judgement-by-pattern-matching feasible.
 
-A useful test the prompt can apply: *would a thoughtful reader of the wiki six months from now gain anything from this claim?* If no clear yes — skip.
+**Per-type bar adjustments** (lightly weighted, judgement still rules):
+- `profile` — slightly higher bar; profile content should be settled, not in-flight.
+- `todo` / `note` / `braindump` — lower bar; forgiving homes for in-motion content.
+- `project` / `concept` — low bar for substantive content; frameworks + reasoning capture richly.
 
-#### Per-type bar adjustments
+**Ephemerality** is one judgement axis among many — handled inline in the worked examples rather than as its own section. The rule: ephemeral state anchored to a durable concern (e.g., "dreading Monday's review") captures against the durable target, not as standalone ephemeral content. Pure ephemeral state ("I'm hungry") skips.
 
-- **`profile` pages** — *higher* bar. Profile content should be settled and significant, not in-flight thinking. Speculative attitudes go to `note` or get skipped.
-- **`todo` pages** — *lower* bar. Capture commitments aggressively; an extra todo is easy to dismiss, a missed one is friction.
-- **`note` pages (when used)** — *lower* bar. Notes are ephemeral by nature and less load-bearing.
-- **All other types** — default bar.
-
-#### Output discipline
-
-Every skipped claim appears in the output's `skipped` array with a brief `reason`. This gives observability into what fan-out chose not to write — load-bearing for evals and prompt iteration.
+**Output discipline:** every skipped claim still appears in the output's `skipped` array with a one-phrase `reason`. Load-bearing for evals + prompt iteration.
 
 ### 4.3 Routing
 
@@ -188,6 +200,52 @@ When `parent_slug` references another create from the same response, order creat
 4. **No candidate fits → skip.** If a claim's subject doesn't correspond to any existing or proposed candidate, skip the claim. Add it to `skipped` with `reason: "no matching candidate"`. Do NOT invent a new entity outside Flash's `new_pages` plan. MVP scope — see §6.4 of the spec / `notes/ingestion-pipeline.md` for refactor paths if Flash recall becomes a problem.
 
 5. **Premature-create guard.** Even when Flash proposed a new page, Pro may decide there is insufficient signal to merit creating it. Heuristic: a single passing mention with no substantive claim attached is not enough. Drop from `creates`; add a `skipped` entry with `reason: "insufficient signal for new page"`. Flash will re-flag the entity if it surfaces again with more substance.
+
+#### Named entities get their own pages, not section bullets — *added 2026-05-15*
+
+When the user directs that an entity be saved — a book, person, place, song, product, org, project — the entity becomes its OWN page, nested under the appropriate parent. NOT a bullet in a section on the parent.
+
+Pages are the unit of cross-linking, retrieval, future enrichment, and standalone reference. Bullets in a section can't be linked to, can't grow into their own page later, and can't be searched as entities.
+
+**Reading-list example (the 2026-05-14 incident that drove this rule):**
+- User: "Add Sapiens to my reading list."
+- ✅ Create a `source` page slug `sapiens`, parent `reading-list`, agent_abstract describing the book, sections may be empty.
+- ❌ Append a bullet to a "Books to Read" section on `reading-list`. This flattens an entity into a bullet and breaks future linkability — and was the exact failure mode where Pro stuffed multiple book titles into a single section's title field, hit the commit-side malformed-payload silent-drop, and produced zero writes.
+
+**Pattern extends to:**
+- People → `<slug>` under `profile/relationships`.
+- Places → `<slug>` under the most fitting profile sub-page (or `places-visited` if user-created).
+- Orgs → `<slug>` under `profile/work` (work) / `profile/communities` (social) / project slug (project-specific).
+
+**The deciding heuristic — leaf node vs bucket:**
+
+- **Bucket** = placeholder for future note-taking; user will come back and accumulate context as they engage with the entity → **page**. Books on a reading list, people in a relationships file, projects, mentors, places visited.
+- **Leaf node** = one-off thought / mention / data point unlikely to grow → **bullet or short section**. A coffee shop mentioned once in passing; a fleeting observation.
+
+Default: when in doubt, **assume bucket**. Sparse pages are cheap; flattening a real bucket into a bullet was the failure mode the reading-list incident exposed. Error toward over-promotion to standalone page; under-promotion (incorrectly leaving a bucket as a bullet) is the worse outcome.
+
+Slug convention: prefer the simple slug (`sapiens`, `paris`). Trust Flash's `proposed_slug`; commit-side merge-on-conflict handles collisions.
+
+This rule interacts with §4.6 (Section content depth): a created named-entity page may legitimately have `sections: []` — sparse is correct, not a quality bug.
+
+#### Content promotion path — *added 2026-05-15*
+
+Content moves UP the hierarchy as it develops across conversations:
+
+```
+bullet in a section  →  dedicated section  →  dedicated sub-page
+```
+
+Pro is AUTHORIZED to promote autonomously when the current call's content materially develops a topic past what the existing container can hold cleanly:
+
+- **Bullet → dedicated section.** A list bullet has grown into a paragraph + sub-structure → lift it out and write a new section.
+- **Section → dedicated sub-page.** A section has accumulated material covering multiple coherent facets of a distinct topic → create `{parent_slug}/{topic-slug}` as a sub-page, move the section's content into it, replace the original section with a short pointer + summary.
+
+**Promote only on strong signal.** A second mention isn't automatic promotion; the new content needs to add reasoning, structure, or facets the existing container can't hold. Over-promotion fragments the wiki; under-promotion is reversible by the user.
+
+**Demotion is not Pro's concern.** If the user wants content merged back, they say so during a call ("fold X back into Y"). Pro doesn't demote on its own initiative.
+
+This interacts with §4.4 (Contradictions) — a Timeline promotion is a special case of section-level promotion driven by 1:1-attribute conflict, not by content development.
 
 #### Empty-update suppression
 
