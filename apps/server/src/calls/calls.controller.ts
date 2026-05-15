@@ -245,8 +245,8 @@ export class CallsController {
         AND tombstoned_at IS NULL
       LIMIT 1
     `);
-    const rows = (matched as unknown as { rows?: Array<{ id: string; payload: unknown }> })
-      .rows ?? [];
+    const rows =
+      (matched as unknown as { rows?: Array<{ id: string; payload: unknown }> }).rows ?? [];
     const reminder = rows[0];
     if (!reminder) return;
 
@@ -293,12 +293,22 @@ export class CallsController {
     );
   }
 
-  // Re-enqueue ingestion for a transcript whose previous run didn't fully
-  // succeed. Idempotent by status: only re-fires when ingestion_status is
-  // `failed` (both scopes broke) or `partial` (user-scope broke, agent-scope
-  // wrote). On `partial` we set userScopeOnly=true on the payload so the
-  // worker skips re-running the agent-scope pass (which would duplicate
-  // writes).
+  // Re-enqueue ingestion for any transcript in the user's history. Per
+  // project_ingestion_philosophy + the Autonomy/Control UX principle, the
+  // user owns the decision to re-run ingestion on any past call — not just
+  // ones the system flagged as broken. Common reasons: zero_claims runs,
+  // succeeded runs where the user notices missing content, partial/failed
+  // recoveries.
+  //
+  // userScopeOnly handling: if agent-scope already wrote on a prior attempt,
+  // re-running it would duplicate. agent-scope writes occur on every status
+  // EXCEPT `failed` (where both scopes broke) and `skipped_over_cap` (where
+  // the job never enqueued). So userScopeOnly defaults to true; only flip
+  // it off for those two cases.
+  //
+  // manualRetry: true is set on the payload regardless of prior status — the
+  // worker passes this into the Pro fan-out prompt so the model can bias
+  // toward more aggressive extraction.
   @Post(':sessionId/retry-ingest')
   async retryIngest(@CurrentUser() user: { id: string }, @Param('sessionId') sessionId: string) {
     const [row] = await db
@@ -309,16 +319,15 @@ export class CallsController {
     if (!row) throw new BadRequestException(`unknown session: ${sessionId}`);
     if (row.userId !== user.id) throw new ConflictException('session does not belong to user');
 
-    const retriable =
-      row.ingestionStatus === 'failed' ||
-      row.ingestionStatus === 'partial' ||
-      row.ingestionStatus === 'skipped_over_cap';
-    if (!retriable) {
-      return { status: 'noop', sessionId, ingestionStatus: row.ingestionStatus };
+    // Block retries while a prior run is mid-flight — the worker would
+    // either race with itself on the same transcript or produce duplicate
+    // writes if both attempts finish.
+    if (row.ingestionStatus === 'pending' || row.ingestionStatus === 'running') {
+      return { status: 'in-flight', sessionId, ingestionStatus: row.ingestionStatus };
     }
 
-    // Same cap-check at retry: if the user is still over their monthly
-    // limit, refuse to re-enqueue. They need to raise the limit first.
+    // Same cap-check at retry: if the user is over their monthly limit,
+    // refuse to re-enqueue. They need to raise the limit first.
     const cap = await checkSpendCap(user.id);
     if (cap.overCap) {
       throw new HttpException(
@@ -334,10 +343,12 @@ export class CallsController {
       );
     }
 
-    // Partial-status path uses userScopeOnly=true so we don't re-run
-    // agent-scope (which already wrote on the original attempt). For
-    // skipped_over_cap and failed, the full pipeline re-runs.
-    const userScopeOnly = row.ingestionStatus === 'partial';
+    // Skip agent-scope re-run for any status where it already wrote. Only
+    // `failed` (both scopes broke) and `skipped_over_cap` (nothing ran) are
+    // safe to re-execute the full pipeline.
+    const agentScopeAlreadyWrote =
+      row.ingestionStatus !== 'failed' && row.ingestionStatus !== 'skipped_over_cap';
+    const userScopeOnly = agentScopeAlreadyWrote;
 
     await db.transaction(async (tx) => {
       await tx
@@ -350,6 +361,7 @@ export class CallsController {
         userId: user.id,
         agentId: row.agentId,
         userScopeOnly,
+        manualRetry: true,
       });
       await tx.execute(sql`
         SELECT graphile_worker.add_job(
@@ -361,7 +373,10 @@ export class CallsController {
       `);
     });
 
-    this.logger.log({ sessionId, userId: user.id, userScopeOnly }, 'ingestion retry enqueued');
+    this.logger.log(
+      { sessionId, userId: user.id, userScopeOnly, priorStatus: row.ingestionStatus },
+      'manual ingestion retry enqueued',
+    );
     return { status: 'retry-enqueued', sessionId, userScopeOnly };
   }
 

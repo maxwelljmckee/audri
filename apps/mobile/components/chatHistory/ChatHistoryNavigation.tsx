@@ -10,34 +10,39 @@
 // fallback path is in place. V1+ wiring (text chat creation) plugs in
 // without further refactors here.
 
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import {
   type NativeStackScreenProps,
   createNativeStackNavigator,
-} from "@react-navigation/native-stack";
-import { useMemo } from "react";
+} from '@react-navigation/native-stack';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   SectionList,
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import type { CallTranscriptDoc, ChatTurn } from "../../lib/rxdb/schemas";
-import { useReplicationResync } from "../../lib/rxdb/useReplicationResync";
-import { useRxdbReady } from "../../lib/rxdb/useRxdbReady";
+} from 'react-native';
+import type { CallTranscriptDoc, ChatTurn } from '../../lib/rxdb/schemas';
 import {
   useCallTranscript,
   useCallTranscripts,
   useSectionsByTranscript,
-} from "../../lib/rxdb/useCallTranscripts";
-import { useWikiPages } from "../../lib/rxdb/useWikiPages";
-import { useMe } from "../../lib/useMe";
-import { useSession } from "../../lib/useSession";
-import { PluginBackRow, pluginStackScreenOptions } from "../PluginStack";
-import { ResyncControl } from "../ResyncControl";
+} from '../../lib/rxdb/useCallTranscripts';
+import { useReplicationResync } from '../../lib/rxdb/useReplicationResync';
+import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
+import { useWikiPages } from '../../lib/rxdb/useWikiPages';
+import { captureClientError } from '../../lib/sentry';
+import { supabase } from '../../lib/supabase';
+import { useMe } from '../../lib/useMe';
+import { useSession } from '../../lib/useSession';
+import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
+import { ResyncControl } from '../ResyncControl';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
 export type ChatHistoryStackParamList = {
   List: undefined;
@@ -48,10 +53,7 @@ const Stack = createNativeStackNavigator<ChatHistoryStackParamList>();
 
 export function ChatHistoryStack() {
   return (
-    <Stack.Navigator
-      screenOptions={pluginStackScreenOptions}
-      initialRouteName="List"
-    >
+    <Stack.Navigator screenOptions={pluginStackScreenOptions} initialRouteName="List">
       <Stack.Screen name="List" component={ListScreen} />
       <Stack.Screen name="Detail" component={DetailScreen} />
     </Stack.Navigator>
@@ -60,14 +62,11 @@ export function ChatHistoryStack() {
 
 // ── List screen ──────────────────────────────────────────────────────────────
 
-function ListScreen({
-  navigation,
-}: NativeStackScreenProps<ChatHistoryStackParamList, "List">) {
+function ListScreen({ navigation }: NativeStackScreenProps<ChatHistoryStackParamList, 'List'>) {
   const ready = useRxdbReady();
   const transcripts = useCallTranscripts();
   const session = useSession();
-  const accessToken =
-    session.status === "signed-in" ? session.session.access_token : null;
+  const accessToken = session.status === 'signed-in' ? session.session.access_token : null;
   const me = useMe(accessToken);
   const { refreshing, onRefresh } = useReplicationResync();
 
@@ -75,7 +74,7 @@ function ListScreen({
   // hosted the chat. Agents come from /me, not RxDB.
   const agentNameById = useMemo(() => {
     const m = new Map<string, string>();
-    if (me.status === "ready") {
+    if (me.status === 'ready') {
       for (const a of me.data.agents) m.set(a.id, a.name);
     }
     return m;
@@ -85,10 +84,7 @@ function ListScreen({
   // newest-first; groups inherit that order naturally.
   const sections = useMemo(() => {
     const now = new Date();
-    const groups = new Map<
-      string,
-      { title: string; data: CallTranscriptDoc[] }
-    >();
+    const groups = new Map<string, { title: string; data: CallTranscriptDoc[] }>();
     for (const t of transcripts) {
       const d = new Date(t.started_at);
       const key = d.toDateString();
@@ -116,9 +112,7 @@ function ListScreen({
       keyExtractor={(t) => t.id}
       contentContainerStyle={styles.list}
       stickySectionHeadersEnabled={false}
-      refreshControl={
-        <ResyncControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
       ListEmptyComponent={
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
@@ -132,8 +126,8 @@ function ListScreen({
       renderItem={({ item }) => (
         <ChatRow
           transcript={item}
-          agentName={agentNameById.get(item.agent_id) ?? "Audri"}
-          onPress={() => navigation.push("Detail", { transcriptId: item.id })}
+          agentName={agentNameById.get(item.agent_id) ?? 'Audri'}
+          onPress={() => navigation.push('Detail', { transcriptId: item.id })}
         />
       )}
     />
@@ -152,12 +146,8 @@ function ChatRow({
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.kindAvatar}>
-        {transcript.kind === "text" ? (
-          <MaterialCommunityIcons
-            name="message-text-outline"
-            size={20}
-            color="#7aa3d4"
-          />
+        {transcript.kind === 'text' ? (
+          <MaterialCommunityIcons name="message-text-outline" size={20} color="#7aa3d4" />
         ) : (
           <Ionicons name="mic-outline" size={20} color="#7aa3d4" />
         )}
@@ -169,9 +159,7 @@ function ChatRow({
           </Text>
           <IngestionBadge status={transcript.ingestion_status} />
         </View>
-        <Text style={styles.rowTimestamp}>
-          {formatRowTime(transcript.started_at)}
-        </Text>
+        <Text style={styles.rowTimestamp}>{formatRowTime(transcript.started_at)}</Text>
         {transcript.title ? (
           <Text style={styles.rowTitle} numberOfLines={1}>
             {transcript.title}
@@ -186,14 +174,20 @@ function ChatRow({
 function IngestionBadge({
   status,
 }: {
-  status: CallTranscriptDoc["ingestion_status"];
+  status: CallTranscriptDoc['ingestion_status'];
 }) {
-  if (status === "succeeded") return null;
-  if (status === "failed") {
+  if (status === 'succeeded') return null;
+  if (status === 'failed') {
     return <Text style={[styles.badge, styles.badgeFailed]}>failed</Text>;
   }
-  if (status === "partial") {
+  if (status === 'partial') {
     return <Text style={[styles.badge, styles.badgeFailed]}>partial</Text>;
+  }
+  if (status === 'zero_claims') {
+    return <Text style={[styles.badge, styles.badgeMuted]}>no notes</Text>;
+  }
+  if (status === 'skipped_over_cap') {
+    return <Text style={[styles.badge, styles.badgeMuted]}>over cap</Text>;
   }
   // pending or running — both indicate in-flight work
   return <Text style={[styles.badge, styles.badgePending]}>processing…</Text>;
@@ -204,20 +198,17 @@ function IngestionBadge({
 function DetailScreen({
   navigation,
   route,
-}: NativeStackScreenProps<ChatHistoryStackParamList, "Detail">) {
+}: NativeStackScreenProps<ChatHistoryStackParamList, 'Detail'>) {
   const transcript = useCallTranscript(route.params.transcriptId);
   const sectionLinks = useSectionsByTranscript(route.params.transcriptId);
   const wikiPages = useWikiPages();
   const session = useSession();
-  const accessToken =
-    session.status === "signed-in" ? session.session.access_token : null;
+  const accessToken = session.status === 'signed-in' ? session.session.access_token : null;
   const me = useMe(accessToken);
 
   const agentName = useMemo(() => {
-    if (!transcript || me.status !== "ready") return "Audri";
-    return (
-      me.data.agents.find((a) => a.id === transcript.agent_id)?.name ?? "Audri"
-    );
+    if (!transcript || me.status !== 'ready') return 'Audri';
+    return me.data.agents.find((a) => a.id === transcript.agent_id)?.name ?? 'Audri';
   }, [transcript, me]);
 
   // Resolve section links → page titles. Junction has section_id only;
@@ -244,10 +235,7 @@ function DetailScreen({
   if (!transcript) {
     return (
       <View style={styles.flex}>
-        <PluginBackRow
-          label="Chat History"
-          onPress={() => navigation.goBack()}
-        />
+        <PluginBackRow label="Chat History" onPress={() => navigation.goBack()} />
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Call not found.</Text>
         </View>
@@ -263,49 +251,40 @@ function DetailScreen({
       <ScrollView contentContainerStyle={styles.detailScroll}>
         <View style={styles.detailHeader}>
           <View style={styles.kindAvatarLarge}>
-            {transcript.kind === "text" ? (
-              <MaterialCommunityIcons
-                name="message-text-outline"
-                size={28}
-                color="#7aa3d4"
-              />
+            {transcript.kind === 'text' ? (
+              <MaterialCommunityIcons name="message-text-outline" size={28} color="#7aa3d4" />
             ) : (
               <Ionicons name="mic-outline" size={28} color="#7aa3d4" />
             )}
           </View>
           <Text style={styles.detailName}>{agentName}</Text>
-          <Text style={styles.detailTimestamp}>
-            {formatTimestamp(transcript.started_at)}
-          </Text>
-          {transcript.title ? (
-            <Text style={styles.detailTitle}>{transcript.title}</Text>
-          ) : null}
+          <Text style={styles.detailTimestamp}>{formatTimestamp(transcript.started_at)}</Text>
+          {transcript.title ? <Text style={styles.detailTitle}>{transcript.title}</Text> : null}
         </View>
 
         {sectionLinks.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionLabel}>
-              Notes touched ({sectionLinks.length})
-            </Text>
+            <Text style={styles.sectionLabel}>Notes touched ({sectionLinks.length})</Text>
             <Text style={styles.subtle}>
-              This call contributed to {sectionLinks.length}{" "}
-              {sectionLinks.length === 1 ? "note section" : "note sections"}.
-              {linkedPages.length > 0
-                ? ` Across ${linkedPages.length} pages.`
-                : ""}
+              This call contributed to {sectionLinks.length}{' '}
+              {sectionLinks.length === 1 ? 'note section' : 'note sections'}.
+              {linkedPages.length > 0 ? ` Across ${linkedPages.length} pages.` : ''}
             </Text>
           </View>
         )}
 
-        {transcript.ingestion_status !== "succeeded" && (
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Ingestion</Text>
-            <IngestionStatus
-              status={transcript.ingestion_status}
-              error={transcript.ingestion_error}
-            />
-          </View>
-        )}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Ingestion</Text>
+          <IngestionStatus
+            status={transcript.ingestion_status}
+            error={transcript.ingestion_error}
+          />
+          {transcript.ingestion_status !== 'pending' &&
+            transcript.ingestion_status !== 'running' &&
+            transcript.ingestion_status !== 'skipped_over_cap' && (
+              <RetryIngestionButton sessionId={transcript.session_id} />
+            )}
+        </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Transcript</Text>
@@ -314,10 +293,7 @@ function DetailScreen({
           ) : (
             <View style={styles.turnsList}>
               {turns.map((turn, i) => (
-                <TurnBubble
-                  key={`${i}-${String(turn.role ?? "turn")}`}
-                  turn={turn}
-                />
+                <TurnBubble key={`${i}-${String(turn.role ?? 'turn')}`} turn={turn} />
               ))}
             </View>
           )}
@@ -332,31 +308,14 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
   // Treat anything keyed `role`/`from` as the speaker, `text`/`content`/
   // `transcript` as the body. Falls back to JSON-stringify if the shape
   // is unrecognized so debugging is possible.
-  const role = String(turn.role ?? turn.from ?? "agent");
-  const isUser = role === "user" || role === "human";
-  const text = String(
-    turn.text ?? turn.content ?? turn.transcript ?? JSON.stringify(turn),
-  );
+  const role = String(turn.role ?? turn.from ?? 'agent');
+  const isUser = role === 'user' || role === 'human';
+  const text = String(turn.text ?? turn.content ?? turn.transcript ?? JSON.stringify(turn));
 
   return (
-    <View
-      style={[
-        styles.turnRow,
-        isUser ? styles.turnRowRight : styles.turnRowLeft,
-      ]}
-    >
-      <View
-        style={[
-          styles.turnBubble,
-          isUser ? styles.turnBubbleUser : styles.turnBubbleAgent,
-        ]}
-      >
-        <Text
-          style={[
-            styles.turnText,
-            isUser ? styles.turnTextUser : styles.turnTextAgent,
-          ]}
-        >
+    <View style={[styles.turnRow, isUser ? styles.turnRowRight : styles.turnRowLeft]}>
+      <View style={[styles.turnBubble, isUser ? styles.turnBubbleUser : styles.turnBubbleAgent]}>
+        <Text style={[styles.turnText, isUser ? styles.turnTextUser : styles.turnTextAgent]}>
           {text}
         </Text>
       </View>
@@ -368,41 +327,130 @@ function IngestionStatus({
   status,
   error,
 }: {
-  status: CallTranscriptDoc["ingestion_status"];
+  status: CallTranscriptDoc['ingestion_status'];
   error: string | null;
 }) {
-  if (status === "pending" || status === "running") {
+  if (status === 'pending' || status === 'running') {
     return (
       <View style={styles.statusRow}>
         <ActivityIndicator color="#4d8fdb" size="small" />
-        <Text style={styles.subtle}>
-          Processing — new notes arrive in a moment.
+        <Text style={styles.subtle}>Processing — new notes arrive in a moment.</Text>
+      </View>
+    );
+  }
+  if (status === 'failed') {
+    return (
+      <View style={styles.statusRow}>
+        <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
+        <Text style={[styles.subtle, { color: '#f87171' }]} numberOfLines={3}>
+          Ingestion failed{error ? `: ${error}` : '.'}
         </Text>
       </View>
     );
   }
-  if (status === "failed") {
+  if (status === 'partial') {
     return (
       <View style={styles.statusRow}>
         <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
-        <Text style={[styles.subtle, { color: "#f87171" }]} numberOfLines={3}>
-          Ingestion failed{error ? `: ${error}` : "."}
-        </Text>
-      </View>
-    );
-  }
-  if (status === "partial") {
-    return (
-      <View style={styles.statusRow}>
-        <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
-        <Text style={[styles.subtle, { color: "#f87171" }]} numberOfLines={3}>
+        <Text style={[styles.subtle, { color: '#f87171' }]} numberOfLines={3}>
           Some notes from this call didn't write
-          {error ? `: ${error}` : "."}
+          {error ? `: ${error}` : '.'}
         </Text>
       </View>
     );
   }
-  return null;
+  if (status === 'zero_claims') {
+    return (
+      <View style={styles.statusRow}>
+        <Ionicons name="information-circle-outline" size={16} color="#7aa3d4" />
+        <Text style={styles.subtle} numberOfLines={3}>
+          No notes were saved from this call. Tap retry if you think Audri missed something.
+        </Text>
+      </View>
+    );
+  }
+  if (status === 'skipped_over_cap') {
+    return (
+      <View style={styles.statusRow}>
+        <Ionicons name="alert-circle-outline" size={16} color="#f87171" />
+        <Text style={[styles.subtle, { color: '#f87171' }]} numberOfLines={3}>
+          Ingestion skipped — monthly spending cap exceeded. Raise the limit in Account → Usage to
+          retry.
+        </Text>
+      </View>
+    );
+  }
+  // succeeded
+  return (
+    <View style={styles.statusRow}>
+      <Ionicons name="checkmark-circle-outline" size={16} color="#7aa3d4" />
+      <Text style={styles.subtle}>Notes saved from this call.</Text>
+    </View>
+  );
+}
+
+// Manual retry of the ingestion pipeline for a past transcript. Per the
+// Autonomy/Control UX principle, any call in the user's history can be
+// re-ingested — not just ones the system flagged broken. Cost-aware: Pro
+// fan-out is the spendy step, so we confirm before firing. Server-side
+// /retry-ingest sets manualRetry=true on the payload so the worker biases
+// toward more aggressive extraction.
+function RetryIngestionButton({ sessionId }: { sessionId: string }) {
+  const [pending, setPending] = useState(false);
+
+  const fire = async () => {
+    setPending(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const jwt = data.session?.access_token;
+      if (!jwt) throw new Error('not signed in');
+      const r = await fetch(`${API_URL}/calls/${sessionId}/retry-ingest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${jwt}`,
+        },
+      });
+      if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        throw new Error(`${r.status} ${body.slice(0, 200)}`);
+      }
+      // No optimistic update — server flips ingestion_status='pending' and
+      // realtime sync propagates back through RxDB within ~1s. The status
+      // row above swaps to the "Processing" branch automatically.
+    } catch (err) {
+      captureClientError('ingestion.retry', err, { sessionId });
+      Alert.alert('Retry failed', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const onPress = () => {
+    Alert.alert(
+      'Re-run ingestion?',
+      'Audri will re-read this call and try again to extract notes. This uses your monthly inference budget.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: fire },
+      ],
+    );
+  };
+
+  return (
+    <Pressable
+      style={[styles.retryButton, pending && styles.retryButtonDisabled]}
+      onPress={onPress}
+      disabled={pending}
+    >
+      {pending ? (
+        <ActivityIndicator color="#4d8fdb" size="small" />
+      ) : (
+        <Ionicons name="refresh-outline" size={16} color="#4d8fdb" />
+      )}
+      <Text style={styles.retryButtonText}>{pending ? 'Retrying…' : 'Retry ingestion'}</Text>
+    </Pressable>
+  );
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -412,31 +460,30 @@ function formatTimestamp(iso: string): string {
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   const time = d.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
+    hour: 'numeric',
+    minute: '2-digit',
   });
   if (sameDay) return `Today at ${time}`;
   const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
-  if (d.toDateString() === yesterday.toDateString())
-    return `Yesterday at ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday at ${time}`;
   const dateStr = d.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: d.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    month: 'short',
+    day: 'numeric',
+    year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
   });
   return `${dateStr} at ${time}`;
 }
 
 function formatRowTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
+    hour: 'numeric',
+    minute: '2-digit',
   });
 }
 
 function formatSectionHeader(d: Date, now: Date): string {
-  const weekday = d.toLocaleDateString(undefined, { weekday: "long" });
-  const month = d.toLocaleDateString(undefined, { month: "long" });
+  const weekday = d.toLocaleDateString(undefined, { weekday: 'long' });
+  const month = d.toLocaleDateString(undefined, { month: 'long' });
   const day = d.getDate();
   const ord = ordinalSuffix(day);
   if (d.getFullYear() === now.getFullYear()) {
@@ -447,16 +494,16 @@ function formatSectionHeader(d: Date, now: Date): string {
 
 function ordinalSuffix(n: number): string {
   const v = n % 100;
-  if (v >= 11 && v <= 13) return "th";
+  if (v >= 11 && v <= 13) return 'th';
   switch (n % 10) {
     case 1:
-      return "st";
+      return 'st';
     case 2:
-      return "nd";
+      return 'nd';
     case 3:
-      return "rd";
+      return 'rd';
     default:
-      return "th";
+      return 'th';
   }
 }
 
@@ -464,21 +511,21 @@ function ordinalSuffix(n: number): string {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingText: { color: "#7aa3d4" },
-  empty: { padding: 24, alignItems: "center" },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loadingText: { color: '#7aa3d4' },
+  empty: { padding: 24, alignItems: 'center' },
   emptyText: {
-    color: "#7aa3d4",
+    color: '#7aa3d4',
     fontSize: 14,
-    textAlign: "center",
+    textAlign: 'center',
     lineHeight: 20,
   },
   list: { paddingVertical: 4 },
   sectionHeader: {
-    color: "#7aa3d4",
+    color: '#7aa3d4',
     fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
+    fontWeight: '600',
+    textTransform: 'uppercase',
     letterSpacing: 1,
     paddingHorizontal: 16,
     paddingTop: 18,
@@ -486,8 +533,8 @@ const styles = StyleSheet.create({
   },
 
   row: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 12,
@@ -496,69 +543,84 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#11203a",
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: '#11203a',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowMain: { flex: 1, gap: 2 },
-  rowHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
-  rowName: { color: "#e8f1ff", fontSize: 15, fontWeight: "600", flex: 1 },
-  rowTimestamp: { color: "#7aa3d4", fontSize: 12 },
-  rowTitle: { color: "#7aa3d4", fontSize: 12, marginTop: 2 },
+  rowHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowName: { color: '#e8f1ff', fontSize: 15, fontWeight: '600', flex: 1 },
+  rowTimestamp: { color: '#7aa3d4', fontSize: 12 },
+  rowTitle: { color: '#7aa3d4', fontSize: 12, marginTop: 2 },
   badge: {
     fontSize: 10,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
-    overflow: "hidden",
+    overflow: 'hidden',
   },
-  badgePending: { backgroundColor: "#0e1c30", color: "#4d8fdb" },
-  badgeFailed: { backgroundColor: "#2a1414", color: "#f87171" },
+  badgePending: { backgroundColor: '#0e1c30', color: '#4d8fdb' },
+  badgeFailed: { backgroundColor: '#2a1414', color: '#f87171' },
+  badgeMuted: { backgroundColor: '#1a2438', color: '#7aa3d4' },
 
   detailScroll: { paddingBottom: 24 },
-  detailHeader: { alignItems: "center", paddingVertical: 24, gap: 6 },
+  detailHeader: { alignItems: 'center', paddingVertical: 24, gap: 6 },
   kindAvatarLarge: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#11203a",
-    alignItems: "center",
-    justifyContent: "center",
+    backgroundColor: '#11203a',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  detailName: { color: "#e8f1ff", fontSize: 20, fontWeight: "600" },
-  detailTimestamp: { color: "#7aa3d4", fontSize: 13 },
+  detailName: { color: '#e8f1ff', fontSize: 20, fontWeight: '600' },
+  detailTimestamp: { color: '#7aa3d4', fontSize: 13 },
   detailTitle: {
-    color: "#7aa3d4",
+    color: '#7aa3d4',
     fontSize: 13,
     marginTop: 4,
-    fontStyle: "italic",
+    fontStyle: 'italic',
   },
 
   section: { paddingHorizontal: 16, paddingTop: 16, gap: 8 },
   sectionLabel: {
-    color: "#7aa3d4",
+    color: '#7aa3d4',
     fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
+    fontWeight: '600',
+    textTransform: 'uppercase',
     letterSpacing: 1,
   },
-  subtle: { color: "#7aa3d4", fontSize: 13, lineHeight: 18 },
+  subtle: { color: '#7aa3d4', fontSize: 13, lineHeight: 18 },
 
-  statusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#11203a',
+    marginTop: 4,
+  },
+  retryButtonDisabled: { opacity: 0.5 },
+  retryButtonText: { color: '#4d8fdb', fontSize: 13, fontWeight: '500' },
 
   turnsList: { gap: 8, marginTop: 4 },
-  turnRow: { flexDirection: "row" },
-  turnRowLeft: { justifyContent: "flex-start" },
-  turnRowRight: { justifyContent: "flex-end" },
+  turnRow: { flexDirection: 'row' },
+  turnRowLeft: { justifyContent: 'flex-start' },
+  turnRowRight: { justifyContent: 'flex-end' },
   turnBubble: {
-    maxWidth: "85%",
+    maxWidth: '85%',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 14,
   },
-  turnBubbleUser: { backgroundColor: "#3a5a8d" },
-  turnBubbleAgent: { backgroundColor: "#11203a" },
+  turnBubbleUser: { backgroundColor: '#3a5a8d' },
+  turnBubbleAgent: { backgroundColor: '#11203a' },
   turnText: { fontSize: 14, lineHeight: 20 },
-  turnTextUser: { color: "#e8f1ff" },
-  turnTextAgent: { color: "#cdd9eb" },
+  turnTextUser: { color: '#e8f1ff' },
+  turnTextAgent: { color: '#cdd9eb' },
 });

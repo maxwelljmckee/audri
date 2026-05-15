@@ -345,7 +345,8 @@ export interface CallTranscriptDoc {
     | 'succeeded'
     | 'partial'
     | 'failed'
-    | 'skipped_over_cap';
+    | 'skipped_over_cap'
+    | 'zero_claims';
   ingestion_error: string | null;
   created_at: string;
 }
@@ -371,9 +372,17 @@ export const callTranscriptSchema: RxJsonSchema<CallTranscriptDoc> = {
     end_reason: { type: ['string', 'null'] },
     ingestion_status: {
       type: 'string',
-      enum: ['pending', 'running', 'succeeded', 'partial', 'failed', 'skipped_over_cap'],
-      // 'skipped_over_cap' is 16 chars — fits the existing length cap, so
-      // no maxLength bump needed, no schema-version migration required.
+      enum: [
+        'pending',
+        'running',
+        'succeeded',
+        'partial',
+        'failed',
+        'skipped_over_cap',
+        'zero_claims',
+      ],
+      // longest value ('skipped_over_cap') is 16 chars — fits the existing
+      // length cap, so no maxLength bump needed and no schema-version migration.
       maxLength: 16,
     },
     ingestion_error: { type: ['string', 'null'] },

@@ -43,6 +43,12 @@ export interface IngestionPayload {
   // agent-scope already wrote on the previous attempt, so re-running it would
   // duplicate. Skips the agent-scope branch and reruns user-scope only.
   userScopeOnly?: boolean;
+  // Set by the retry-ingest controller when the user manually triggered a
+  // re-ingest from the transcript UI (as opposed to an automatic retry of a
+  // failed/partial job). Plumbed into the Pro fan-out prompt so the model can
+  // bias toward more aggressive extraction — the user retried because they
+  // believe something was missed.
+  manualRetry?: boolean;
 }
 
 export const ingestion: Task = async (payload, helpers) => {
@@ -169,7 +175,10 @@ export const ingestion: Task = async (payload, helpers) => {
     transcriptRow.startedAt,
     groundingSources,
     log,
-  );
+  ).then((r) => {
+    log('user-scope complete', { wrote: r.wrote });
+    return r;
+  });
   const agentScopePromise = p.userScopeOnly
     ? Promise.resolve({ skipped: true } as const)
     : runAgentScopeIngestion({
@@ -238,19 +247,28 @@ export const ingestion: Task = async (payload, helpers) => {
     return;
   }
 
-  // User-scope succeeded; agent-scope may have failed silently. Wiki pages
-  // exist, so no user-actionable retry surface — log via Sentry (above) and
-  // mark `succeeded` so the banner clears.
+  // User-scope succeeded. Two outcomes:
+  //   - wrote=true  → real `succeeded` status (banner clears, content landed)
+  //   - wrote=false → `zero_claims` status (pipeline ran cleanly but produced
+  //     no writes — Flash dump, noteworthiness gate, Pro-skipped-everything,
+  //     or commit-dropped malformed payload). The UI surfaces a retry CTA so
+  //     the user can re-trigger ingestion when they believe something was
+  //     missed. Agent-scope may still have failed silently — logged above.
+  const userScopeWrote = userScopeResult.status === 'fulfilled' && userScopeResult.value.wrote;
+  const finalStatus: 'succeeded' | 'zero_claims' = userScopeWrote ? 'succeeded' : 'zero_claims';
+
   await db
     .update(callTranscripts)
-    .set({ ingestionStatus: 'succeeded', ingestionError: null })
+    .set({ ingestionStatus: finalStatus, ingestionError: null })
     .where(eq(callTranscripts.id, p.transcriptId));
 
   capture(p.userId, 'ingestion.succeeded', {
     transcriptId: p.transcriptId,
+    finalStatus,
     userScope: userScopeResult.status,
     agentScope: agentScopeResult.status,
     userScopeOnly: p.userScopeOnly === true,
+    manualRetry: p.manualRetry === true,
   });
 };
 
@@ -260,7 +278,7 @@ async function runUserScopePipeline(
   callTimestamp: Date,
   groundingSources: Array<{ uri: string; title?: string; domain?: string }>,
   log: (msg: string, extra?: Record<string, unknown>) => void,
-) {
+): Promise<{ wrote: boolean }> {
   const wikiIndex = await fetchUserWikiIndex(p.userId);
   log(`wiki index size = ${wikiIndex.length}`);
 
@@ -287,12 +305,12 @@ async function runUserScopePipeline(
   // flash-candidate-retrieval.ts's prompt for the bar.
   if (candidates.dump) {
     log('flash dumped call — no fan-out', { reason: candidates.dump.reason });
-    return;
+    return { wrote: false };
   }
 
   if (candidates.touched_pages.length === 0 && candidates.new_pages.length === 0) {
     log('noteworthiness gate failed — no fan-out');
-    return;
+    return { wrote: false };
   }
 
   const touchedSlugs = candidates.touched_pages.map((tp) => tp.slug);
@@ -305,6 +323,7 @@ async function runUserScopePipeline(
     touchedPages: candidatePages,
     callTimestamp,
     groundingSources,
+    manualRetry: p.manualRetry === true,
   });
   const fanOut = fanOutReturn.result;
   await recordInferenceUsage({
@@ -328,6 +347,20 @@ async function runUserScopePipeline(
     groundingSources,
   });
   log('user-scope commit complete', { ...commitResult });
+
+  // "Wrote" means the commit produced at least one real write — page,
+  // section, or task. Tombstones alone don't qualify (they're cleanup, not
+  // capture). Drives the zero_claims status decision in the caller.
+  const wrote =
+    commitResult.pagesCreated +
+      commitResult.pagesUpdated +
+      commitResult.pagesMerged +
+      commitResult.sectionsCreated +
+      commitResult.sectionsUpdated +
+      commitResult.sectionsMerged +
+      commitResult.tasksCreated >
+    0;
+  return { wrote };
 }
 
 // Count total `webSearchQueries` across all grounding hits in the tool

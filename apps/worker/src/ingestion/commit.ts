@@ -57,6 +57,16 @@ function truncateForTitle(s: string, max = 60): string {
   return `${(lastSpace > 30 ? slice.slice(0, lastSpace) : slice).trimEnd()}…`;
 }
 
+// Section titles are h2-granular plain strings. A title with newlines or
+// markdown bullet markers is a Pro misemission — it has stuffed content into
+// the title field. Reject (log loud, return null so callers treat as
+// title-absent) rather than persisting the garbage. Observed in the wild on
+// 2026-05-14 — Pro emitted the entire "Books to Read" list payload as a
+// single multi-line title.
+function isMalformedTitle(title: string): boolean {
+  return /[\n\r]/.test(title) || /^\s*[-*]\s/.test(title);
+}
+
 export interface CommitResult {
   pagesCreated: number;
   pagesUpdated: number;
@@ -311,6 +321,21 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         const section = create.sections[i];
         if (!section) continue;
 
+        // Sanitize title up front — malformed titles (newlines / markdown
+        // bullets) get nulled out before they reach the merge probe or the
+        // insert. Mutate-in-place is safe; we only read `section.title`
+        // downstream after this point.
+        if (section.title && isMalformedTitle(section.title)) {
+          logger.warn(
+            {
+              slug: create.slug,
+              titlePreview: section.title.slice(0, 200),
+            },
+            'commit: create section has malformed title — nulling out',
+          );
+          section.title = undefined;
+        }
+
         // Try merge if (a) we're in merge mode, (b) the new section has a
         // title, (c) an active section with that title exists on this page.
         let existingSection: { id: string; content: string } | undefined;
@@ -520,10 +545,46 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         if (!ref) continue;
         const sortOrder = i;
 
-        if (ref.id && !ref.content) {
-          // Keep as-is. Preserve content; only update sort_order if changed.
+        if (ref.id && ref.content === undefined) {
+          // No content payload. Either pure keep-as-is (title also absent —
+          // legitimate, used by Pro to preserve a section while reordering)
+          // OR title-only update (Pro changed just the heading). The latter
+          // is permissible — per project_ingestion_philosophy memory, sparse
+          // / title-only writes serve the bias-to-capture goal. Log loud so
+          // we can spot Pro misemissions that should have carried content.
           keptOrUpdatedIds.add(ref.id);
-          await tx.update(wikiSections).set({ sortOrder }).where(eq(wikiSections.id, ref.id));
+
+          let titlePatch: { title: string | null } | null = null;
+          if (ref.title !== undefined) {
+            if (ref.title && isMalformedTitle(ref.title)) {
+              logger.warn(
+                {
+                  sectionId: ref.id,
+                  slug: update.slug,
+                  titlePreview: ref.title.slice(0, 200),
+                },
+                'commit: section update has malformed title (newlines / markdown bullets) — dropping title patch',
+              );
+            } else {
+              titlePatch = { title: ref.title || null };
+              logger.warn(
+                {
+                  sectionId: ref.id,
+                  slug: update.slug,
+                  newTitle: ref.title || null,
+                },
+                'commit: title-only section update (no content payload) — applying',
+              );
+            }
+          }
+
+          await tx
+            .update(wikiSections)
+            .set({
+              ...(titlePatch ?? {}),
+              sortOrder,
+            })
+            .where(eq(wikiSections.id, ref.id));
           continue;
         }
 
@@ -531,10 +592,28 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
           // Update existing section.
           keptOrUpdatedIds.add(ref.id);
 
+          // Guard title before persisting — Pro occasionally stuffs content
+          // into the title field.
+          let titlePatch: { title: string | null } | null = null;
+          if (ref.title !== undefined) {
+            if (ref.title && isMalformedTitle(ref.title)) {
+              logger.warn(
+                {
+                  sectionId: ref.id,
+                  slug: update.slug,
+                  titlePreview: ref.title.slice(0, 200),
+                },
+                'commit: section update has malformed title — keeping existing title',
+              );
+            } else {
+              titlePatch = { title: ref.title || null };
+            }
+          }
+
           await tx
             .update(wikiSections)
             .set({
-              ...(ref.title !== undefined ? { title: ref.title || null } : {}),
+              ...(titlePatch ?? {}),
               content: ref.content,
               sortOrder,
             })
@@ -575,11 +654,22 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
 
         if (ref.content !== undefined) {
           // New section on this page.
+          let newSectionTitle: string | null = ref.title ?? null;
+          if (newSectionTitle && isMalformedTitle(newSectionTitle)) {
+            logger.warn(
+              {
+                slug: update.slug,
+                titlePreview: newSectionTitle.slice(0, 200),
+              },
+              'commit: new-section-on-update has malformed title — inserting with title=null',
+            );
+            newSectionTitle = null;
+          }
           const [sectionRow] = await tx
             .insert(wikiSections)
             .values({
               pageId: candidate.id,
-              title: ref.title ?? null,
+              title: newSectionTitle,
               content: ref.content,
               sortOrder,
             })

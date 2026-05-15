@@ -95,6 +95,13 @@ export const ingestionStatusEnum = pgEnum('ingestion_status', [
   // 'failed' so the Notes pending banner can render a different UX
   // (deep-link to SetLimit rather than retry CTA).
   'skipped_over_cap',
+  // Pipeline ran without error but produced ZERO writes (Flash dumped,
+  // noteworthiness gate failed, Pro emitted only skipped claims, OR Pro
+  // emitted a malformed payload that the commit dropped). Distinct from
+  // 'succeeded' so the user can manually retry on the suspicion that
+  // something extractable was missed. See feedback_ingestion_failure_modes
+  // memory + retry-ingest endpoint.
+  'zero_claims',
 ]);
 
 // Todo lifecycle status. v0.2.1 sidecar refactor — status moved off the
@@ -139,12 +146,7 @@ export const wikiMaturityEnum = pgEnum('wiki_maturity', ['stub', 'moderate', 'fu
 // lifecycle (no Storage object, no upload step). Distinct from
 // ingestion_status because the lifecycle is sequential: extraction
 // first (raw text from the file), then ingestion (fan-out into wiki).
-export const uploadKindEnum = pgEnum('upload_kind', [
-  'pdf',
-  'markdown',
-  'plain',
-  'docx',
-]);
+export const uploadKindEnum = pgEnum('upload_kind', ['pdf', 'markdown', 'plain', 'docx']);
 
 export const uploadExtractionStatusEnum = pgEnum('upload_extraction_status', [
   // Row inserted via POST /uploads; client has not yet PUT the file
@@ -179,8 +181,4 @@ export const urlSourceExtractionStatusEnum = pgEnum('url_source_extraction_statu
 // 'reddit_thread' (via Reddit's public .json API). Future kinds —
 // 'youtube_video', 'twitter_thread', 'podcast_episode', 'rss_item' —
 // in backlog; add enum values as those land.
-export const urlSourceKindEnum = pgEnum('url_source_kind', [
-  'web_article',
-  'pdf',
-  'reddit_thread',
-]);
+export const urlSourceKindEnum = pgEnum('url_source_kind', ['web_article', 'pdf', 'reddit_thread']);

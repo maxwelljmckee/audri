@@ -653,6 +653,12 @@ export interface ProFanOutInput {
   // (or undefined) for calls with no grounding activity. Pro reads this
   // to decide which sections deserve `cited_urls` attribution.
   groundingSources?: GroundingSource[];
+  // True when this run was triggered by a manual retry from the transcript
+  // UI — the user re-ran ingestion because they believe content was missed
+  // on a prior attempt. Surfaces as a header in the user message so Pro
+  // can re-read the transcript more aggressively. See specs/fan-out-prompt.md
+  // (manual-retry section, pending v0.3.x prompt rewrite).
+  manualRetry?: boolean;
 }
 
 export interface RunFanOutReturn {
@@ -673,7 +679,21 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
       ? `# grounding_sources (web URLs Audri cited via googleSearch during the call — use for cited_urls attribution)\n${JSON.stringify(input.groundingSources, null, 2)}\n\n`
       : '';
 
-  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${groundingBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
+  // Manual-retry hint. When the user manually re-triggered ingestion from
+  // the transcript UI, it means a prior attempt either failed to capture
+  // something they expected OR was an obvious zero-claim no-op. Bias toward
+  // more aggressive extraction: re-read the full transcript including agent
+  // turns, treat user directives ("save this", "add to my list") as
+  // overriding any worthiness filter, and accept agent-enumerated content
+  // when the user clearly directed action on it (e.g. user asks agent to
+  // recall items, agent names them, user says "those — please save").
+  // Final prompt content lives in specs/fan-out-prompt.md; this is the
+  // wire-level hint until the v0.3.x prompt rewrite folds it in formally.
+  const manualRetryBlock = input.manualRetry
+    ? '# manual_retry\nThe user manually re-triggered ingestion for this transcript — they believe something extractable was missed on the prior run. Re-read aggressively. Treat user directives as overriding the worthiness filter. Agent-enumerated content (where the user accepted or directed action on it) IS capturable; bias toward writing rather than skipping. Do not invent content beyond what the transcript supports.\n\n'
+    : '';
+
+  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${manualRetryBlock}${groundingBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
 
   const resp = await callProWithRetry({
     model: PRO_MODEL,
