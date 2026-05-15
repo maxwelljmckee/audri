@@ -19,7 +19,7 @@ import { Throttle } from '@nestjs/throttler';
 import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { CallsService } from './calls.service.js';
-import { fetchPage, searchWiki } from './tools.js';
+import { fetchPage, fetchTranscript, searchTranscripts, searchWiki } from './tools.js';
 import type { TranscriptTurn } from './transcript.types.js';
 
 interface StartCallBody {
@@ -429,6 +429,63 @@ export class CallsController {
     });
     if (!page) return { page: null, error: 'page not found' };
     return { page };
+  }
+
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
+  @Post('tools/search_transcripts')
+  async toolSearchTranscripts(
+    @CurrentUser() user: { id: string },
+    @Body() body: { query?: string },
+  ) {
+    const query = (body.query ?? '').trim();
+    if (!query) return { results: [] };
+    const results = await searchTranscripts(user.id, query);
+    void recordInferenceUsage({
+      userId: user.id,
+      callTranscriptId: null,
+      eventKind: 'tool_search_transcripts',
+      model: 'tool',
+      usage: { totalTokenCount: 0 },
+    }).catch(() => {
+      // Swallow — observability write shouldn't fail the tool response.
+    });
+    return { results };
+  }
+
+  // User-facing transcript search. Same SQL as the live-agent tool above,
+  // but no usage_events row — UI search is keystroke-driven and would
+  // pollute the per-tool analytics that the `tool_search_transcripts` event
+  // exists to measure. Throttled at 60/min, comfortable with client-side
+  // debounce. Powers the search input on the Chat History list screen.
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
+  @Post('transcripts/search')
+  async transcriptsSearch(@CurrentUser() user: { id: string }, @Body() body: { query?: string }) {
+    const query = (body.query ?? '').trim();
+    if (!query) return { results: [] };
+    const results = await searchTranscripts(user.id, query);
+    return { results };
+  }
+
+  @Throttle({ short: { limit: 60, ttl: 60_000 } })
+  @Post('tools/fetch_transcript')
+  async toolFetchTranscript(
+    @CurrentUser() user: { id: string },
+    @Body() body: { transcript_id?: string },
+  ) {
+    const transcriptId = (body.transcript_id ?? '').trim();
+    if (!transcriptId) throw new BadRequestException('transcript_id required');
+    const transcript = await fetchTranscript(user.id, transcriptId);
+    void recordInferenceUsage({
+      userId: user.id,
+      callTranscriptId: null,
+      eventKind: 'tool_fetch_transcript',
+      model: 'tool',
+      usage: { totalTokenCount: 0 },
+    }).catch(() => {
+      // Swallow — observability write shouldn't fail the tool response.
+    });
+    if (!transcript) return { transcript: null, error: 'transcript not found' };
+    return { transcript };
   }
 }
 

@@ -15,11 +15,12 @@ import { loadGenericCallContext, renderPreloadBlock } from './preload.js';
 import { composeSystemPrompt } from './system-prompt.js';
 
 // Function declarations for live-agent tool calls. Backed by endpoints in
-// calls.controller.ts (tools/search_wiki, tools/fetch_page). googleSearch
-// grounding is a built-in Gemini tool — model handles it internally, no
-// client fulfillment needed. Wiki tools cost roughly nothing on each call;
-// googleSearch grounding bills per request, so the prompt steers the model
-// toward wiki-first / web-conservative.
+// calls.controller.ts (tools/{search_wiki, fetch_page, search_transcripts,
+// fetch_transcript}). googleSearch grounding is a built-in Gemini tool —
+// model handles it internally, no client fulfillment needed. Wiki +
+// transcript tools cost roughly nothing on each call (SQL only); googleSearch
+// grounding bills per request, so the prompt steers the model toward
+// wiki-first / web-conservative.
 const SEARCH_WIKI_DECL: FunctionDeclaration = {
   name: 'search_wiki',
   description:
@@ -54,9 +55,47 @@ const FETCH_PAGE_DECL: FunctionDeclaration = {
   },
 };
 
+const SEARCH_TRANSCRIPTS_DECL: FunctionDeclaration = {
+  name: 'search_transcripts',
+  description:
+    'Search the user\'s past call transcripts for content they discussed in earlier conversations. Cheap; use whenever the user references something they said before ("the books we discussed", "what I told you about my project last week"). Returns up to 5 matching transcripts with date + a snippet of the matching turn. Transcripts are the raw conversational record — distinct from the wiki, which holds distilled knowledge.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description:
+          "Free-form natural-language search query over past call content. Example: 'books reading list' or 'Sarah co-founder'.",
+      },
+    },
+    required: ['query'],
+  },
+};
+
+const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
+  name: 'fetch_transcript',
+  description:
+    'Fetch the full turn-by-turn content of a single past call transcript by its id. Use after search_transcripts when you need to read the full conversation, not just the matching snippet. Returns ordered turns with role + text. Long transcripts truncate to the last 60 turns (a `truncated` flag indicates when this happens).',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      transcript_id: {
+        type: Type.STRING,
+        description: 'The transcript id returned by search_transcripts (a UUID string).',
+      },
+    },
+    required: ['transcript_id'],
+  },
+};
+
 const LIVE_TOOLS: Tool[] = [
   {
-    functionDeclarations: [SEARCH_WIKI_DECL, FETCH_PAGE_DECL],
+    functionDeclarations: [
+      SEARCH_WIKI_DECL,
+      FETCH_PAGE_DECL,
+      SEARCH_TRANSCRIPTS_DECL,
+      FETCH_TRANSCRIPT_DECL,
+    ],
   },
   // Gemini-native grounded web search. Model handles internally; no client
   // fulfillment. Billed per request — use conservatively (steered by prompt).

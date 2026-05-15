@@ -7,9 +7,10 @@
 //      we lose the source attribution unless we record it here.
 //
 //   2. `customToolCalls` — invocations of our function tools (search_wiki,
-//      fetch_page). Records the args the model passed and the response
-//      that came back (success payload OR `{ error }`). Useful for
-//      debugging weird agent behavior + future ingestion-side citation.
+//      fetch_page, search_transcripts, fetch_transcript). Records the args
+//      the model passed and the response that came back (success payload OR
+//      `{ error }`). Useful for debugging weird agent behavior + future
+//      ingestion-side citation.
 //
 // Both blobs ship as a single `tool_calls` field on POST /calls/:id/end;
 // server stores in `call_transcripts.tool_calls` (jsonb). Ingestion can

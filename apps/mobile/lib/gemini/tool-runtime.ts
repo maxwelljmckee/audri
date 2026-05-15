@@ -1,9 +1,11 @@
 // Live-agent tool runtime. Receives tool-call batches from Gemini Live and
 // fulfills them via the server's /calls/tools/* endpoints.
 //
-// Two custom tools today:
+// Four custom tools today:
 //   - search_wiki({ query }) → list of matching pages with snippets
 //   - fetch_page({ slug }) → full page (title + abstract + sections)
+//   - search_transcripts({ query }) → list of matching past calls + snippets
+//   - fetch_transcript({ transcript_id }) → full turn list of one past call
 //
 // Gemini-native googleSearch grounding is also wired (server-side); it has
 // no client fulfillment path — the model handles it internally during the
@@ -44,6 +46,20 @@ async function executeOne(call: FunctionCall): Promise<FunctionResponse> {
     if (name === 'fetch_page') {
       const args = (call.args ?? {}) as { slug?: string };
       const data = await callApi('/calls/tools/fetch_page', { slug: args.slug ?? '' });
+      return { ...base, response: { output: data } };
+    }
+    if (name === 'search_transcripts') {
+      const args = (call.args ?? {}) as { query?: string };
+      const data = await callApi('/calls/tools/search_transcripts', {
+        query: args.query ?? '',
+      });
+      return { ...base, response: { output: data } };
+    }
+    if (name === 'fetch_transcript') {
+      const args = (call.args ?? {}) as { transcript_id?: string };
+      const data = await callApi('/calls/tools/fetch_transcript', {
+        transcript_id: args.transcript_id ?? '',
+      });
       return { ...base, response: { output: data } };
     }
     return {

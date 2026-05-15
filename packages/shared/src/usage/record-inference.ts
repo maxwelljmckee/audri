@@ -22,6 +22,8 @@ export type UsageEventKind =
   | 'plugin_research'
   | 'tool_search_wiki'
   | 'tool_fetch_page'
+  | 'tool_search_transcripts'
+  | 'tool_fetch_transcript'
   | 'web_search';
 
 export interface RecordInferenceOpts {

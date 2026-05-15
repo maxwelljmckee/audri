@@ -15,15 +15,17 @@ import {
   type NativeStackScreenProps,
   createNativeStackNavigator,
 } from '@react-navigation/native-stack';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Pressable,
   ScrollView,
   SectionList,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import type { CallTranscriptDoc, ChatTurn } from '../../lib/rxdb/schemas';
@@ -69,6 +71,7 @@ function ListScreen({ navigation }: NativeStackScreenProps<ChatHistoryStackParam
   const accessToken = session.status === 'signed-in' ? session.session.access_token : null;
   const me = useMe(accessToken);
   const { refreshing, onRefresh } = useReplicationResync();
+  const [query, setQuery] = useState('');
 
   // Build agentId → agent name lookup so each row can show the agent that
   // hosted the chat. Agents come from /me, not RxDB.
@@ -106,29 +109,185 @@ function ListScreen({ navigation }: NativeStackScreenProps<ChatHistoryStackParam
     );
   }
 
+  const trimmedQuery = query.trim();
+
   return (
-    <SectionList
-      sections={sections}
-      keyExtractor={(t) => t.id}
-      contentContainerStyle={styles.list}
-      stickySectionHeadersEnabled={false}
-      refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
-      ListEmptyComponent={
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>
-            No calls yet. After your first call with Audri, it'll show up here.
-          </Text>
-        </View>
-      }
-      renderSectionHeader={({ section }) => (
-        <Text style={styles.sectionHeader}>{section.title}</Text>
-      )}
-      renderItem={({ item }) => (
-        <ChatRow
-          transcript={item}
-          agentName={agentNameById.get(item.agent_id) ?? 'Audri'}
-          onPress={() => navigation.push('Detail', { transcriptId: item.id })}
+    <View style={styles.flex}>
+      <SearchBar query={query} onChange={setQuery} />
+      {trimmedQuery === '' ? (
+        <SectionList
+          sections={sections}
+          keyExtractor={(t) => t.id}
+          contentContainerStyle={styles.list}
+          stickySectionHeadersEnabled={false}
+          refreshControl={<ResyncControl refreshing={refreshing} onRefresh={onRefresh} />}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Text style={styles.emptyText}>
+                No calls yet. After your first call with Audri, it'll show up here.
+              </Text>
+            </View>
+          }
+          renderSectionHeader={({ section }) => (
+            <Text style={styles.sectionHeader}>{section.title}</Text>
+          )}
+          renderItem={({ item }) => (
+            <ChatRow
+              transcript={item}
+              agentName={agentNameById.get(item.agent_id) ?? 'Audri'}
+              onPress={() => navigation.push('Detail', { transcriptId: item.id })}
+            />
+          )}
         />
+      ) : (
+        <SearchResultsList
+          query={trimmedQuery}
+          onPress={(transcriptId) => navigation.push('Detail', { transcriptId })}
+        />
+      )}
+    </View>
+  );
+}
+
+function SearchBar({ query, onChange }: { query: string; onChange: (q: string) => void }) {
+  return (
+    <View style={styles.searchBar}>
+      <Ionicons name="search-outline" size={16} color="#7aa3d4" />
+      <TextInput
+        style={styles.searchInput}
+        value={query}
+        onChangeText={onChange}
+        placeholder="Search past calls"
+        placeholderTextColor="#3f5a83"
+        autoCorrect={false}
+        autoCapitalize="none"
+        returnKeyType="search"
+        clearButtonMode="while-editing"
+      />
+      {query.length > 0 && (
+        <Pressable onPress={() => onChange('')} hitSlop={8}>
+          <Ionicons name="close-circle" size={16} color="#3f5a83" />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+// Server-side FTS results from /calls/transcripts/search. Same shape as
+// the live-agent tool — we reuse the search function on the server.
+interface TranscriptSearchHit {
+  transcript_id: string;
+  agent_name: string;
+  started_at: string;
+  title: string | null;
+  snippet: string;
+}
+
+function SearchResultsList({
+  query,
+  onPress,
+}: {
+  query: string;
+  onPress: (transcriptId: string) => void;
+}) {
+  const [results, setResults] = useState<TranscriptSearchHit[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // Debounce + race protection. Each keystroke schedules a fetch ~250ms
+  // out; if the query changes again the timer resets. The `cancelled` flag
+  // discards stale responses if the user typed faster than the network
+  // returned — without it, a slow response from query A could overwrite
+  // results for query B.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const jwt = data.session?.access_token;
+        if (!jwt) throw new Error('not signed in');
+        const r = await fetch(`${API_URL}/calls/transcripts/search`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({ query }),
+        });
+        if (!r.ok) {
+          throw new Error(`${r.status}`);
+        }
+        const json = (await r.json()) as { results: TranscriptSearchHit[] };
+        if (!cancelled) {
+          setResults(json.results);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          captureClientError('transcript-search', err, { query });
+          setError(err instanceof Error ? err.message : 'Search failed');
+          setResults([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  if (loading && results === null) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator color="#4d8fdb" />
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View style={styles.empty}>
+        <Text style={[styles.emptyText, { color: '#f87171' }]}>Search failed: {error}</Text>
+      </View>
+    );
+  }
+  if (results && results.length === 0) {
+    return (
+      <View style={styles.empty}>
+        <Text style={styles.emptyText}>No calls match "{query}".</Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={results ?? []}
+      keyExtractor={(r) => r.transcript_id}
+      contentContainerStyle={styles.list}
+      renderItem={({ item }) => (
+        <Pressable style={styles.row} onPress={() => onPress(item.transcript_id)}>
+          <View style={styles.kindAvatar}>
+            <Ionicons name="search" size={18} color="#7aa3d4" />
+          </View>
+          <View style={styles.rowMain}>
+            <View style={styles.rowHeader}>
+              <Text style={styles.rowName} numberOfLines={1}>
+                {item.agent_name}
+              </Text>
+              <Text style={styles.rowTimestamp}>{formatSearchResultTime(item.started_at)}</Text>
+            </View>
+            {item.title ? (
+              <Text style={styles.rowTitle} numberOfLines={1}>
+                {item.title}
+              </Text>
+            ) : null}
+            <Text style={styles.searchSnippet} numberOfLines={2}>
+              {item.snippet}
+            </Text>
+          </View>
+        </Pressable>
       )}
     />
   );
@@ -481,6 +640,24 @@ function formatRowTime(iso: string): string {
   });
 }
 
+// Search results aren't grouped by day, so they need their own row-level
+// timestamp showing the date — otherwise hits from different days are
+// indistinguishable. Format mirrors the relative-date logic in the detail
+// header but compact.
+function formatSearchResultTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const yesterday = new Date(now.getTime() - 24 * 3600 * 1000);
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+  });
+}
+
 function formatSectionHeader(d: Date, now: Date): string {
   const weekday = d.toLocaleDateString(undefined, { weekday: 'long' });
   const month = d.toLocaleDateString(undefined, { month: 'long' });
@@ -521,6 +698,31 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   list: { paddingVertical: 4 },
+
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    backgroundColor: '#11203a',
+    borderRadius: 10,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#e8f1ff',
+    fontSize: 14,
+    paddingVertical: 2,
+  },
+  searchSnippet: {
+    color: '#cdd9eb',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+  },
   sectionHeader: {
     color: '#7aa3d4',
     fontSize: 11,

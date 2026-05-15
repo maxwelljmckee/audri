@@ -64,6 +64,11 @@ export const usageEventKindEnum = pgEnum('usage_event_kind', [
   'plugin_research',
   'tool_search_wiki',
   'tool_fetch_page',
+  // Cross-call retrieval tools (v0.3.x). SQL-only — zero inference cost,
+  // but recorded as 0-cost usage_events for per-tool analytics symmetry
+  // with the wiki retrieval tools.
+  'tool_search_transcripts',
+  'tool_fetch_transcript',
   'web_search',
 ]);
 
