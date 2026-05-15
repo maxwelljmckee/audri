@@ -12,9 +12,13 @@ The fan-out prompt is governed by four principles that supersede prior "worthine
 
 1. **Trust hierarchy: more > less > false.** Bias to capture. Missing capture is bad; over-capture is acceptable; invention is unacceptable. Sparse named-entity stubs are the intended outcome of "I'd rather have a thin page than no page."
 
-2. **Named entities get their own pages, not section bullets.** People, places, books, products, orgs, projects, songs — when the user directs them saved, they become standalone pages nested under their semantic parent. The minimum viable page is `{ slug, title, type, agent_abstract }` with no sections. Pages are the unit of cross-linking and future enrichment; bullets are dead-ends. The deciding test: **bucket** (will accumulate notes over time) → page; **leaf node** (one-off mention) → bullet.
+2. **Page vs section/bullet — tiered priority.** (Revised 2026-05-15 after the proactive-stub overcorrection.) Decision rules in priority order:
+   1. **Explicit current-call user direction** ("make a page for X" / "add as bullet") — respect it.
+   2. **Established precedent for the context** — wiki structure already follows a pattern (e.g., `reading-list` is all sub-pages, no bullet section) → follow it. Or page-level "Conventions" notes carry binding precedent.
+   3. **Substance heuristic** — bare mention → bullet; paragraph → section; multi-paragraph → page. Don't spawn empty pages in anticipation of future content.
+   4. **Promotion path** — `bullet → section → sub-page` as content develops across calls. Pro promotes on strong signal; doesn't demote.
 
-   Content moves UP the hierarchy as it develops: `bullet → dedicated section → dedicated sub-page`. Pro promotes autonomously when current-call content materially develops a topic past what the existing container can hold; doesn't demote (user-initiated).
+   Live agent asks when ambiguous (Pro reads post-call, no chance to clarify). Under-spawn beats over-spawn — clutter is harder to clean than gaps are to fill.
 
 3. **Agent turns are capturable when user intent is clear.** The strict "speaker-attribution invariant" is too conservative. When the user directs or accepts action on agent-enumerated content (recall flow: user asks, agent recalls, user says "save those") — those agent turns become the source for capture. Don't invent beyond what the agent actually said.
 
@@ -201,51 +205,53 @@ When `parent_slug` references another create from the same response, order creat
 
 5. **Premature-create guard.** Even when Flash proposed a new page, Pro may decide there is insufficient signal to merit creating it. Heuristic: a single passing mention with no substantive claim attached is not enough. Drop from `creates`; add a `skipped` entry with `reason: "insufficient signal for new page"`. Flash will re-flag the entity if it surfaces again with more substance.
 
-#### Named entities get their own pages, not section bullets — *added 2026-05-15*
+#### Page vs section/bullet — explicit direction first, then precedent, then substance — *added 2026-05-15, revised same day*
 
-When the user directs that an entity be saved — a book, person, place, song, product, org, project — the entity becomes its OWN page, nested under the appropriate parent. NOT a bullet in a section on the parent.
+**History note:** the first version of this rule (also 2026-05-15) prescribed "named entities → own pages always, sparse stubs allowed." That swung too far the other way of the original reading-list bug and produced its own failure mode: Pro spawned empty stub pages for every named entity mention (Plato's Republic doc ingestion produced 4 sibling empty stubs). The revised rule below uses a tiered priority chain instead of a single prescription. See `feedback_proactive_stub_overcorrection` memory.
 
-Pages are the unit of cross-linking, retrieval, future enrichment, and standalone reference. Bullets in a section can't be linked to, can't grow into their own page later, and can't be searched as entities.
+When Pro is deciding how to capture a referenced entity (book, person, place, project, org, etc.), the decision rules apply in priority order — first match wins:
 
-**Reading-list example (the 2026-05-14 incident that drove this rule):**
-- User: "Add Sapiens to my reading list."
-- ✅ Create a `source` page slug `sapiens`, parent `reading-list`, agent_abstract describing the book, sections may be empty.
-- ❌ Append a bullet to a "Books to Read" section on `reading-list`. This flattens an entity into a bullet and breaks future linkability — and was the exact failure mode where Pro stuffed multiple book titles into a single section's title field, hit the commit-side malformed-payload silent-drop, and produced zero writes.
+**1. Explicit current-call user direction.** "Make a page for X", "save each as separate pages", "add as a bullet", "put it under projects/consensus". The user told you the shape. Don't second-guess.
 
-**Pattern extends to:**
-- People → `<slug>` under `profile/relationships`.
-- Places → `<slug>` under the most fitting profile sub-page (or `places-visited` if user-created).
-- Orgs → `<slug>` under `profile/work` (work) / `profile/communities` (social) / project slug (project-specific).
+**2. Established precedent for the context.** When the user has previously directed a structural pattern for a given context, respect it on subsequent calls even when not restated. Sources Pro can read TODAY:
+- **Visible wiki pattern.** If the candidate page's existing structure is consistent (e.g., `reading-list` only contains sub-pages of type `source`, no bullet-list section), infer the pattern and follow it. Pro already gets `touched_pages` fully joined — the children + section shapes are visible.
+- **Page-level convention notes.** If the candidate page carries a section like "Conventions" or "Structure" describing the pattern, or if `agent_abstract` records the convention, treat it as binding precedent.
+- **User-wide preferences (future).** A `profile/preferences` page or persona-level prefs substrate that records user-wide structural rules. Not yet plumbed; for MVP, the visible-wiki-pattern signal carries it.
 
-**The deciding heuristic — leaf node vs bucket:**
+The user can override precedent at any time by restating direction (rule 1). When the live agent records a new structural preference mid-call, the persistence should land somewhere Pro will see next time — see "Capturing precedents" note below.
 
-- **Bucket** = placeholder for future note-taking; user will come back and accumulate context as they engage with the entity → **page**. Books on a reading list, people in a relationships file, projects, mentors, places visited.
-- **Leaf node** = one-off thought / mention / data point unlikely to grow → **bullet or short section**. A coffee shop mentioned once in passing; a fleeting observation.
+**3. Substance-based promotion.** Absent direction or precedent, decide based on how much content is attached to the entity in this transcript:
+- **Bullet** — a name + one short clause of context, no further development → list-item bullet within an existing section on the most natural page.
+- **Section** — a paragraph or two of substantive content → section on the most natural page (or new section if no fitting one exists).
+- **Page** — multi-paragraph block / sustained framing / rich content that warrants its own home → spawn the page with that content as its initial sections.
 
-Default: when in doubt, **assume bucket**. Sparse pages are cheap; flattening a real bucket into a bullet was the failure mode the reading-list incident exposed. Error toward over-promotion to standalone page; under-promotion (incorrectly leaving a bucket as a bullet) is the worse outcome.
+The bar for spawning a page is **content present right now**, not "this entity might accumulate content later." Empty stubs spawned in anticipation tend to clutter the wiki without delivering value.
 
-Slug convention: prefer the simple slug (`sapiens`, `paris`). Trust Flash's `proposed_slug`; commit-side merge-on-conflict handles collisions.
-
-This rule interacts with §4.6 (Section content depth): a created named-entity page may legitimately have `sections: []` — sparse is correct, not a quality bug.
-
-#### Content promotion path — *added 2026-05-15*
-
-Content moves UP the hierarchy as it develops across conversations:
+**4. Content promotion path.** Content moves UP the hierarchy as it develops across conversations:
 
 ```
 bullet in a section  →  dedicated section  →  dedicated sub-page
 ```
 
-Pro is AUTHORIZED to promote autonomously when the current call's content materially develops a topic past what the existing container can hold cleanly:
+Pro promotes autonomously when current-call content materially develops a topic past what the existing container can hold:
+- **Bullet → dedicated section.** A list bullet has grown into a paragraph + sub-structure → lift it out.
+- **Section → dedicated sub-page.** A section has accumulated material covering multiple coherent facets of a distinct topic → create `{parent_slug}/{topic-slug}`, move the section's content into the new page, replace the original section with a short pointer + summary.
 
-- **Bullet → dedicated section.** A list bullet has grown into a paragraph + sub-structure → lift it out and write a new section.
-- **Section → dedicated sub-page.** A section has accumulated material covering multiple coherent facets of a distinct topic → create `{parent_slug}/{topic-slug}` as a sub-page, move the section's content into it, replace the original section with a short pointer + summary.
+Promote only on strong signal. A second mention isn't automatic. Over-promotion fragments the wiki; under-promotion is reversible. Pro does NOT demote — user-directed only.
 
-**Promote only on strong signal.** A second mention isn't automatic promotion; the new content needs to add reasoning, structure, or facets the existing container can't hold. Over-promotion fragments the wiki; under-promotion is reversible by the user.
+**Live-agent contract.** When the user is ambiguous about shape, the LIVE AGENT should ASK ("want this as its own page or a quick mention?") — not Pro (Pro reads post-call, no chance to clarify). If the agent didn't ask and the transcript is unclear, Pro falls back to rule 3 (substance heuristic). Better to under-spawn (recoverable) than over-spawn (clutter).
 
-**Demotion is not Pro's concern.** If the user wants content merged back, they say so during a call ("fold X back into Y"). Pro doesn't demote on its own initiative.
+**Reading-list / Sapiens worked examples:**
 
-This interacts with §4.4 (Contradictions) — a Timeline promotion is a special case of section-level promotion driven by 1:1-attribute conflict, not by content development.
+- ✅ User: *"Add Sapiens to my reading list."* (no detail, no prior precedent) → bullet on `reading-list`. Rule 3 (substance heuristic — bare mention).
+- ✅ User: *"Add Sapiens — and each book on that list should be its own page so I can take notes as I read."* → spawn `sapiens` page (sparse OK because explicit direction). Rule 1.
+- ✅ User established "each book = its own page" in a prior call. Wiki shows `reading-list` already has `good-services-by-lou-downe` as a child page, no bullet-list section. User adds "Sapiens" in a new call with no extra detail → spawn `sapiens` page following precedent. Rule 2.
+- ✅ User: *"I've been reading Sapiens — Harari's premise is that humans dominated other species via shared fictions. The cognitive revolution ~70k years ago. He divides it into four revolutions..."* → spawn `sapiens` page with sections capturing the framework. Rule 3 (substance is rich).
+- ❌ User: *"Add Sapiens to my reading list"* + reading-list shows no prior pattern + no rich content → spawning a sparse `sapiens` page anyway, anticipating future content. This is the overcorrection failure mode.
+
+**Capturing precedents (live-agent / persistence concern, not Pro's job).** When the user states a structural preference mid-call ("from now on, books always get their own page"), the live agent should ensure that preference is captured somewhere Pro can see on subsequent runs. MVP route: write the convention into the relevant wiki page's `agent_abstract` or as a "Conventions" section on the page itself. Future: a dedicated preferences substrate. Tracked in backlog (Dreams + per-page conventions).
+
+Slug convention: prefer the simple slug (`sapiens`, `paris`). Trust Flash's `proposed_slug`; commit-side merge-on-conflict handles collisions.
 
 #### Empty-update suppression
 

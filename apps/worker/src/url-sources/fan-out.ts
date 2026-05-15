@@ -106,17 +106,25 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 ## Hard rules
 
-- agent_abstract REQUIRED on every create + update.
-- sections on creates: OPTIONAL. Sparse cross-link stub pages (just \`{ slug, title, type, agent_abstract }\`) are valid. DO NOT invent placeholder sections like "Overview: Cited in article" to fill quota.
-- An update's slug MUST match a candidate from touched_pages.
+- **Output is EXACTLY ONE create + zero updates.** The single create is the source page for the article. No entity stubs, no concept spin-offs, no updates to existing user pages. Cross-page synthesis runs LATER via the REM dreaming pass.
+- agent_abstract REQUIRED on every create.
+- **sections on the source page: REQUIRED, with at least one section. Every section MUST have a non-empty title (h2-granular invariant).** Untitled sections have no anchor / navigation. Titles should be specific.
 - A create's parent_slug must be SEMANTIC, never type-categorical. NEVER \`concepts\`, \`places\`, \`people\`, \`events\` as parents.
 - A create's parent_slug is REQUIRED — emit \`null\` ONLY when explicitly directed top-level. Default fallback under attachment scope is the scope root itself.
-- Sections in an update use uuid \`id\` for existing sections; new sections omit id.
-- The \`sections\` field is OPTIONAL on updates. Omit = leave existing sections untouched (move-only metadata update). Include = full new section state; anything missing gets tombstoned. NEVER emit \`sections: []\` to mean "no change".
-- Snippets are verbatim excerpts (~50-300 chars). Every section write must include at least one. Never fabricate content not in the article.
-- **URL ingestion is CONTAINED.** Output a source page (the article) plus minimal cross-link entity stubs when warranted. DO NOT enrich existing user pages with content drawn from this article. Cross-page integration runs LATER as a separate "REM dream" synthesis pass that proposes enrichments for the user to accept/reject via the Dreams UX. \`updates\` should be RARE on URL ingestion — only for cross-link stubs Flash flagged that already exist, or move-only metadata updates the user explicitly directed.
+- Snippets are verbatim excerpts (~50-300 chars). Every section MUST include at least one. Never fabricate content not in the article.
 
 # Decision rules
+
+## One canonical page — the dominant rule
+
+**URL ingestion produces EXACTLY ONE page: the source page for the article.** No entity stubs, no concept spin-offs, no author pages, no updates to existing user pages.
+
+Everything else — connections to existing user pages, related concepts, author pages — is the job of REM dreaming, which runs LATER and surfaces proposals via Dreams + the user's next live call. The dreaming pass has the right context to decide whether a concept warrants its own page (it sees the whole wiki + recent activity); this fan-out only sees the current article. Don't pre-empt that judgment by spawning eager stubs.
+
+**Output shape (always):**
+- \`creates\`: exactly ONE element — the source page for the article.
+- \`updates\`: empty array.
+- \`skipped\`: any content the source page omitted, with brief reasons.
 
 ## Capture philosophy
 
@@ -124,65 +132,29 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 **Don't invent content not in the article.** Every section's snippets must be verbatim excerpts. If you'd have to fabricate to fill a section, skip it.
 
-## Doc-consolidation pattern (THE KEY DIFFERENCE from transcript ingestion)
+## Source-page structure
 
-**Articles consolidate; transcripts atomize.** This is an intentional asymmetry.
+The single source page should be RICH and well-structured. **Depth scales with the article** — a short post gets a few sections; a long-form essay gets more; a research paper or PDF gets the most. Match analytical depth to source density.
 
-In transcripts, named entities get their own pages — many small pages spawn from one conversation.
+Use the kind-specific structure above (web_article / pdf / reddit_thread) for primary guidance. Every section needs a specific h2 title — not "Section 1" or "Notes".
 
-In articles, **the source page is the canonical home.** Bias toward a single rich source page with multiple sections per the kind-specific structure above — not a constellation of fragmented sub-pages.
-
-Cross-link to existing OR newly-created entity pages when:
-- The article gives an entity SUBSTANTIVE treatment (more than a name + role) AND
-- The entity is worth standalone reference (a recurring author, a load-bearing concept, an org the user has other things on).
-
-**Duplication is permitted and encouraged.** The article's "Authors" or "Key claims" section can describe a person in two sentences AND a separate person page can exist with its own treatment. Cross-references in natural prose ("see also: [person's] broader work") are the link mechanism — write prose, not \`[[slug]]\` syntax.
-
-## Dominant output pattern
-
-For a substantive third-party article:
-- **1 source-page create** — the article itself, with kind-specific section structure (web_article / pdf / reddit_thread).
-- **0-2 stub entity-page creates** — only when an entity is substantively treated AND is worth standalone reference, AND doesn't already exist. Stubs can be sparse \`{ slug, title, type, agent_abstract }\` only — the article page's section carries the actual treatment; the stub exists as a cross-link target.
-- **0 updates to existing user pages.** Cross-page integration (e.g. "this article enriches \`profile/interests/scaling-laws\`") is RESERVED for REM dreaming, not for this fan-out. The dreaming pass surfaces those as proposals for the user to discuss in their next call.
-
-Updates ARE permitted only for: (a) move-only metadata changes explicitly directed, or (b) when Flash flagged an existing page that needs metadata regeneration as a side-effect of the new source page being created.
-
-## Leaf-node vs bucket — for spawned entity pages
-
-When deciding whether a mentioned entity warrants its own stub page (vs. just appearing in the article page's sections):
-
-- **Bucket** = will accumulate notes over time → page (a recurring author, a core concept central to user interests).
-- **Leaf node** = mentioned once, unlikely to grow → keep in the article page's relevant section, no separate page.
-
-Default: when in doubt, **keep it in the article page**. URL ingestion under-spawns rather than over-spawns; if a leaf turns out to be a bucket, REM dreaming or a future article will promote it.
-
-## Content promotion (across articles / calls)
-
-The wiki has a natural promotion path: \`bullet → section → sub-page\`. For URL ingestion:
-
-- If a concept the article develops ALREADY has substantive coverage across other sources / pages, the current article's contribution may warrant a sparse stub concept page (cross-link target).
-- Otherwise: write the concept inside the article page's section. Future sources can promote.
-
-Promote only on strong signal. A first mention isn't enough. Over-spawning fragments the wiki.
+**Optional TLDR pattern.** When the article warrants one, the FIRST section may be titled "TLDR" or "Executive summary" — exactly ONE short paragraph capturing the central thrust. Precedes detailed sections. Omit entirely when it adds no value (short posts, where Summary already does the job).
 
 ## Attribution
 
-The article's claims are not the user's claims. Frame them as "Per [article title]…" or "[Author] argues that…" — never write claims in the user's voice based on a URL. The source page makes this attribution structural; any stub entity pages spawned should also keep attribution clear in their (typically sparse) framing.
+The article's claims are not the user's claims. Frame them as "Per [article title]…" or "[Author] argues that…" — never write claims in the user's voice based on a URL.
 
 ## Cross-references
 
-Reference other wiki pages by NAME, not \`[[slug]]\` syntax — the renderer doesn't resolve wikilinks yet (separate forthcoming pass). Natural prose like "see Lou Downe's framing of service design" is the link mechanism.
+Reference other wiki pages by NAME, not \`[[slug]]\` syntax — the renderer doesn't resolve wikilinks yet. Natural prose like "see Lou Downe's framing of service design" is the link mechanism.
 
 ## Parent_slug routing
 
-- Source page (the article) → attachment scope root (when present), else \`braindump\`.
-- Stub concept page → \`profile/interests\` (or specific interest sub-page) by default; project slug if project-tied.
-- Stub person page (author / subject) → \`profile/relationships\`.
-- Stub organization page → \`profile/work\` if work-related; project slug if project-scoped.
+- Source page → attachment scope root (when present), else \`braindump\`.
 
 ## Skipped
 
-When you decline to capture something the article said, add a \`skipped\` entry with a one-sentence reason. Useful for audit + for future cycles to recheck.
+When you decline to capture something the article said, add a \`skipped\` entry with a brief reason. Useful for audit.
 
 # Examples
 
@@ -190,28 +162,39 @@ When you decline to capture something the article said, add a \`skipped\` entry 
 
 Article: "Scaling laws for neural language models" (Kaplan et al., arXiv 2020).
 
-Output sketch:
-- create source page \`<scope>/scaling-laws-neural-language-models\` (type=source) with rich sections: Summary, Key claims, Notable quotes, Methodology, Authors (mentions Kaplan et al. with 2-3 sentences each).
-- 0-1 stub creates: e.g. \`scaling-laws\` concept page under \`profile/interests\` IF it doesn't exist AND the user has other content suggesting it's a recurring interest. Stub can be just \`{ slug, title, type, agent_abstract }\`.
-- DO NOT update existing \`profile/interests/scaling-laws\` (if it already exists) with a new section. REM dreaming will propose that integration for the user to discuss in their next call.
+Output: ONE create — source page \`<scope>/scaling-laws-neural-language-models\` (type=source) with rich titled sections:
+- Optional TLDR (one short paragraph)
+- Background and motivation
+- Key claims / findings
+- Methodology
+- Notable quotes
+- Implications / open questions
+
+NO stub for \`scaling-laws\` concept page, NO stub for the authors. REM dreaming proposes those if warranted.
 
 ## Example 2: opinion essay
 
 Article: "The case for letting AI do nothing" — a NYT op-ed.
 
-Output sketch:
-- create source page \`<scope>/case-for-ai-doing-nothing\` (type=source) with sections: Summary, Key claims, Author's framing.
-- 0 stubs typically — opinion essays rarely warrant standalone concept pages on their own. If the user has a strong AI-safety interest, REM dreaming will surface "this essay relates to your ai-safety page" as a proposal.
+Output: ONE create — source page \`<scope>/case-for-ai-doing-nothing\` (type=source) with sections:
+- Summary
+- Author's argument
+- Counterpoints the author addresses
+
+No TLDR (Summary already does that work). NO stubs.
 
 ## Example 3: how-to article
 
 Article: "How to set up pgvector for production."
 
-Output sketch:
-- create source page \`<scope>/pgvector-production-setup\` (type=source) with sections: Summary, Setup steps, Notable gotchas.
-- Stub concept page \`pgvector\` ONLY if the user doesn't have one AND the article gives it standalone treatment beyond the install steps. Sparse is fine.
+Output: ONE create — source page \`<scope>/pgvector-production-setup\` (type=source) with sections:
+- Summary
+- Setup steps
+- Notable gotchas
 
-Your job: bring the article into the wiki as a navigable, well-structured source. Leave existing user pages untouched — cross-page enrichment runs later via the user-validated Dreams flow.`;
+3 sections is fine for a short doc — depth matches input.
+
+Your job: bring the article into the wiki as a single navigable, well-structured source page — with section depth and titles matching the input. Cross-page synthesis happens later via the user-validated Dreams flow.`;
 
 export interface ProUrlSourceArticleMetadata {
   url: string;
@@ -271,7 +254,9 @@ export async function runUrlSourceFanOut(
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      title: { type: Type.STRING, nullable: true },
+                      // REQUIRED — sections are h2-granular; untitled
+                      // sections have no anchor / navigation.
+                      title: { type: Type.STRING },
                       content: { type: Type.STRING },
                       snippets: {
                         type: Type.ARRAY,
@@ -282,13 +267,12 @@ export async function runUrlSourceFanOut(
                         },
                       },
                     },
-                    required: ['content', 'snippets'],
+                    required: ['title', 'content', 'snippets'],
                   },
                 },
               },
-              // `sections` is OPTIONAL — sparse cross-link stub pages
-              // (just slug + title + type + agent_abstract) are valid.
-              required: ['slug', 'title', 'type', 'agent_abstract'],
+              // URL ingestion: ONE source page, must carry titled sections.
+              required: ['slug', 'title', 'type', 'agent_abstract', 'sections'],
             },
           },
           updates: {

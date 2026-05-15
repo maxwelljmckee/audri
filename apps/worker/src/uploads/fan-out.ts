@@ -40,13 +40,13 @@ Layer-1 roots (all seeded): \`profile\`, \`todos\`, \`projects\`, \`braindump\`.
 
 # The document's role
 
-Treat the document as substantive content the user has put into their wiki via the Storage tile. Routing depends on what KIND of document it is — your judgment based on its content:
+Treat the document as substantive content the user has put into their wiki via the Storage tile. Your output is exactly ONE page that represents the document. Page type depends on what KIND of document it is — your judgment based on its content:
 
-- **Third-party source material** (research paper, article, book chapter, course notes, talk transcript) — create a \`source\` type page representing the document itself, plus sparse cross-link stub pages for substantive entities (key authors, central concepts) that warrant standalone reference. Most output is the rich source page.
-- **Reference document the user collected** (PDF of a contract, a manual, a how-to guide) — usually one \`source\` page is enough; stub concept pages only if the doc introduces a load-bearing concept the user might reference across other sources.
-- **User's own notes / journal / planning doc** — STILL produces a contained representation. Even for user-authored content, output a source-or-note page that holds the content; do NOT enrich existing user pages directly. The user's next call can do that integration explicitly, or REM dreaming will propose it.
+- **Third-party source material** (research paper, article, book chapter, course notes, talk transcript) → \`source\` page.
+- **Reference document the user collected** (PDF of a contract, a manual, a how-to guide) → \`source\` page (or \`note\` if very short).
+- **User's own notes / journal / planning doc** → \`note\` page (or \`braindump\` sub-page for exploratory drafts).
 
-Across all three: the doc IS the canonical home for its content. Don't fragment a coherent document into many small entity pages, and don't push the doc's content out into existing user pages (that's a Dreams + next-call job).
+In all three cases the output shape is the same: one page, with sections (each titled), depth matching the doc. No entity stubs, no concept spin-offs, no updates to existing user pages. Cross-page synthesis is REM dreaming's job, not this fan-out's.
 
 # Input
 
@@ -95,18 +95,15 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 ## Hard rules
 
-- agent_abstract REQUIRED on every create + update.
+- **Output is EXACTLY ONE create + zero updates.** The single create is the source page representing the document. No entity stubs, no concept spin-offs, no author pages, no updates to existing user pages. Cross-page synthesis runs LATER via the REM dreaming pass. See "One canonical page" rule below for the full rationale.
+- agent_abstract REQUIRED on every create.
 - abstract optional — omit the field entirely rather than emit "".
-- sections on creates: OPTIONAL. Stub entity pages (a cross-link target with just \`{ slug, title, type, agent_abstract }\` and no sections) are valid. DO NOT invent placeholder sections like "Overview: Mentioned in doc" to fill quota.
-- An update's slug MUST match a candidate from touched_pages — never invent.
+- **sections on the source page: REQUIRED, with at least one section. Every section MUST have a non-empty title (h2-granular invariant).** Untitled sections have no anchor / no navigation and are a structural failure. Be specific in titles — "Books I-II: Justice as advantage" not "Section 1".
 - A create's slug should match a new_pages.proposed_slug, but you may override the proposed type if document content makes a different type clearer.
 - A create's parent_slug must be SEMANTIC, never type-categorical. NEVER propose parents like \`concepts\`, \`places\`, \`people\`, \`events\`.
-- A create's parent_slug is REQUIRED — emit \`null\` ONLY when the document explicitly says top-level. Default fallback for ambiguous "this is about the user" content is a profile sub-page; default for "this is transient/exploratory" is \`braindump\`. NEVER null as a fallback.
-- Sections in an update use uuid \`id\` for existing sections; new sections omit id.
-- The \`sections\` field is OPTIONAL on updates. When you OMIT it (move-only metadata updates), the page's existing sections are left untouched. When you INCLUDE it, the array is the full new section state — any existing section not listed gets tombstoned. NEVER emit \`sections: []\` to mean "no change".
+- A create's parent_slug is REQUIRED — emit \`null\` ONLY when the document explicitly says top-level. Default fallback for ambiguous "this is about the user" content is a profile sub-page; default for "this is transient/exploratory" is \`braindump\`. NEVER null as a fallback. Under attachment scope, parent_slug must point inside the scope subtree.
 - \`tasks\` MUST always be an empty array. Uploads don't generate research tasks — users spawn those by voice.
 - Snippets are verbatim excerpts of the document text, up to ~300 characters each. Use them to ground every claim — never fabricate content not in the document.
-- **Doc ingestion is CONTAINED.** Your output is a source page (the doc itself) plus minimal cross-link entity stubs when the doc substantively introduces an entity worth standalone reference. DO NOT enrich existing user pages with content drawn from this doc — cross-page integration runs LATER as a separate "REM dream" synthesis pass that proposes enrichments for the user to accept/reject via the Dreams UX. The contract here is: bring the doc into the wiki as a navigable source; leave existing pages alone.
 
 # Decision rules
 
@@ -127,54 +124,52 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 - Acknowledgements without substance.
 - Heavy hedging the document doesn't endorse ("might suggest", "could imply") — capture only what the doc actually commits to.
 
-## Doc-consolidation pattern (THE KEY DIFFERENCE from transcript ingestion)
+## One canonical page — the dominant rule
 
-**Documents consolidate; transcripts atomize.** This is an intentional asymmetry.
+**Doc ingestion produces EXACTLY ONE page: the source page for the document itself.** No entity stubs. No concept spin-offs. No author pages. No cross-references into existing user pages.
 
-In transcripts, when the user names entities, those entities get their own pages — many small pages spawn from a conversation.
+Everything else — connections to existing concepts, related-author pages, conceptual cross-links, integration with the broader knowledge base — is the job of REM dreaming, which runs LATER as a separate proposal pass surfaced to the user via Dreams + their next live call.
 
-In documents, **the doc itself is the canonical home.** Bias toward a single rich source page with multiple sections (TLDR / overview / authors / key claims / methodology / notable quotes / detailed analysis, etc.) — not a constellation of fragmented sub-pages.
+This is intentionally restrictive. The earlier "spawn stubs when warranted" / "leaf-node vs bucket" / "content promotion path" guidance led Pro to over-spawn under-content pages (the 2026-05-15 Plato's Republic incident produced 4 sibling stub pages with empty bodies). The clean rule is simpler: **one doc → one page.**
 
-Cross-link to existing OR newly-created entity pages when:
-- The doc gives an entity SUBSTANTIVE treatment (more than a name + role) AND
-- The entity is worth standalone reference (a recurring author, a load-bearing concept, an org the user has other things on).
+If the document mentions an entity that warrants standalone treatment, that's a real signal — but it's a signal for the Dreams pass to surface as a proposal ("you uploaded a paper that introduces a concept worth its own page — want to talk about it?"), NOT for this fan-out to spawn a stub eagerly.
 
-**Duplication is permitted and encouraged.** The doc page's "Authors" section can describe Lou Downe in two sentences AND a separate \`lou-downe\` page can exist with its own treatment. Cross-references in natural prose ("see also: Lou Downe's broader work") are the link mechanism. The wikilink resolver will pick those up later — write prose now, not \`[[slug]]\` syntax.
+**Output shape (always):**
+- \`creates\`: exactly ONE element — the source page for the document.
+- \`updates\`: empty array. Doc ingestion never updates existing pages.
+- \`skipped\`: any content the source page omitted, with brief reasons.
 
-**Worked example — the Good Services / Social Technology pattern:**
+## Source-page structure
 
-> Document: a chapter from "Good Services" by Lou Downe.
-> User has an existing wiki page \`projects/consensus/social-technology\`.
+The single source page should be RICH and well-structured. Depth scales with the document — a short article gets a few sections; a dense paper gets many; a full book gets potentially dozens. Match the depth of analysis to the depth + density of the source material. A 400-page book deserves treatment substantially deeper than the same-template "TLDR / key claims / notable quotes" you'd give a blog post.
 
-✅ CORRECT:
-- Create source page \`good-services-by-lou-downe\` (type=source, parent=\`reading-list\` or similar) with rich sections: TLDR, key principles, methodology, notable quotes.
-- Mention Lou Downe in an "Authors" section on the source page (2-3 sentences).
-- Optionally create a thin \`lou-downe\` page if the user might track him as a recurring author.
-- DO NOT write to \`projects/consensus/social-technology\`. That connection is real, but it's the user's call — the REM dreaming pass will surface "this doc looks relevant to Social Technology" as a proposed dream for the user to discuss in their next call.
+**Section titles are REQUIRED.** Every section MUST have a non-empty title — sections are h2-granular and an untitled section is a structural failure (no anchor, no navigation, no scannability). Titles should be specific and informative ("Books I-II: Justice as advantage" or "Tripartite soul: reason, spirit, appetite" — not "Section 1" or "Notes").
 
-❌ WRONG (silent cross-page integration):
-- Adding a new section to \`projects/consensus/social-technology\` titled "Related: Good Services by Lou Downe" with paraphrased content. Even though the connection is real, this is the kind of silent edit the contained model exists to prevent.
+**Optional TLDR pattern.** When the doc warrants one, the FIRST section may be titled "TLDR" or "Executive summary" — one short paragraph that captures the document's central thrust at a glance. This is exactly ONE section (not a recurring pattern). It precedes the detailed sections below. Omit entirely for docs where it adds no value — short articles, how-to guides, anything where the detailed sections are themselves brief enough to scan.
 
-❌ ALSO WRONG (over-atomization):
-- Creating 7 concept pages for each of Downe's 7 principles. Better: one source page with 7 sections (one per principle), or one section with the principles laid out. Concept pages are warranted only when one of the principles is itself a load-bearing idea the user will reference across other sources.
+**Worked structure — Plato's Republic (~400 pages):**
 
-## Leaf-node vs bucket — for spawned entity pages
+✅ CORRECT shape (illustrative; adapt section titles + count to actual content):
+- TLDR — 1 short section, executive summary of the dialogue
+- Setting and dramatic frame — Cephalus's house, who's present, the conversational pretext
+- Book I: Conventional definitions of justice — Cephalus, Polemarchus, Thrasymachus
+- Books II–IV: Constructing the ideal city — division of labor, the three classes, the tripartite soul analogy
+- Book V: Community of wives, children, philosopher-kings
+- Books VI–VII: The Forms, the divided line, the cave allegory
+- Books VIII–IX: Degeneration of regimes — timocracy → oligarchy → democracy → tyranny
+- Book X: Critique of imitative poetry, the Myth of Er
+- Reception and influence — brief, only if the doc covers it
 
-When deciding whether a mentioned entity warrants its own page (vs. just appearing in the doc page's sections):
+That's 8-9 substantive sections for a book of this size, each with a specific h2 title, each with multi-paragraph content. Compare to the 2026-05-15 first attempt which produced 6 untitled sections averaging ~220 chars each for the same book — that's 1300 chars total to represent 400 pages. Don't be that thin.
 
-- **Bucket** = will accumulate notes over time → page (a key author whose work the user is collecting, a concept central to the doc that the user might develop further across calls).
-- **Leaf node** = mentioned once, unlikely to grow → keep as content in the doc page's relevant section, no separate page.
+❌ WRONG shapes:
+- 6 sections with no titles (the 2026-05-15 incident).
+- 200 sections matching every chapter / sub-chapter (over-fragmentation).
+- TLDR + 1 other section called "Detailed overview" containing one giant wall of text.
 
-Default: when in doubt, **keep it in the doc page**. Doc ingestion under-spawns rather than over-spawns; if a leaf turns out to be a bucket, the REM dream pass or a future doc will promote it.
+## Skipped — for content the source page omits
 
-## Content promotion (across docs / across calls)
-
-The wiki has a natural promotion path: \`bullet in a section → dedicated section → dedicated sub-page\`. For doc ingestion, this means:
-
-- If a concept the current doc develops ALREADY has substantive coverage across other docs / pages, the current doc's contribution may warrant promoting that concept to its own page (if it isn't one yet).
-- Otherwise: write the concept into the doc page's section. Future docs can promote.
-
-Promote only on strong signal. A first mention isn't enough. Over-spawning fragments the wiki.
+When you deliberately leave material out of the source page (because the doc has digressions, repetition, or content too narrow to warrant inclusion), add a \`skipped\` entry with a brief reason. Useful audit trail.
 
 ## Attribution (NOT speaker attribution — document attribution)
 
@@ -213,30 +208,50 @@ When you create a page representing the document (rather than a page representin
 
 # Examples
 
-## Example 1: research paper (third-party source)
+## Example 1: medium-length research paper (~30 pages)
 
-Document: "Consensus in Distributed Systems: A Survey" — a 30-page academic paper.
+Document: "Consensus in Distributed Systems: A Survey" — 30-page academic paper.
 
-Output sketch:
-- create source page \`survey-consensus-distributed-systems\` (type=source, parent=braindump or projects/consensus if user is working on Consensus) with multiple rich sections: TLDR, key contributions, methodology, summary, notable quotes.
-- create at MOST 1-2 stub concept pages for major load-bearing concepts the paper introduces IF they don't already exist (e.g. \`byzantine-fault-tolerance\` under \`profile/interests\`). Stubs can be \`{ slug, title, type, agent_abstract }\` only — the doc page's section carries the actual treatment; the stub exists as a cross-link target.
-- DO NOT add sections to existing user pages (e.g. \`projects/consensus\`) referencing this paper. REM dreaming handles that proposal flow.
+Output:
+- ONE create — source page \`survey-consensus-distributed-systems\` (type=source) under the attachment-scope parent. Sections (each with required h2 title):
+  - Optional TLDR (1 short paragraph)
+  - Background and motivation
+  - Key contributions
+  - Methodology
+  - Notable findings
+  - Limitations / open questions
 
-## Example 2: user's own markdown notes (user-authored)
+About 5-7 substantive sections, each multi-paragraph. NO concept-page spin-offs (e.g., \`byzantine-fault-tolerance\`) — REM dreaming will propose those if the paper warrants them.
 
-Document: "Sarah's birthday brainstorm.md" — user's notes on planning Sarah's 30th.
+## Example 2: full-length book (~400 pages)
 
-Output sketch:
-- Even though it's user-authored, this is still doc ingestion. Create a contained representation: either a source page \`sarahs-birthday-brainstorm\` under \`profile/relationships/sarah-chen\` (or wherever fits), OR a note page if shorter.
-- DO NOT directly modify \`profile/relationships/sarah-chen\` with the brainstorm contents. The user's next call can do that integration explicitly, or REM dreaming can propose it.
+Document: "Plato's Republic" — full book.
 
-## Example 3: a how-to guide
+Output:
+- ONE create — source page \`plato-the-republic\` (type=source) under the attachment-scope parent. Sections (each with required h2 title):
+  - Optional TLDR (1 short paragraph)
+  - Setting and dramatic frame
+  - Book I: Conventional definitions of justice
+  - Books II–IV: Constructing the ideal city
+  - Book V: Community of wives, children, philosopher-kings
+  - Books VI–VII: Forms, divided line, cave allegory
+  - Books VIII–IX: Degeneration of regimes
+  - Book X: Critique of poetry, Myth of Er
+  - Author and reception (brief, only if covered in the doc)
 
-Document: "Setting up Postgres with pgvector.pdf"
+8-9 substantive sections matching the book's actual structure. NO sibling pages for Plato, Socrates, "Justice (Platonic Concept)", etc. — those characters / concepts appear inline within the relevant sections. REM dreaming proposes any spin-offs the user might want.
 
-Output sketch:
-- create source page \`postgres-pgvector-setup\` (type=source, parent=projects/consensus if relevant, otherwise braindump) with sections: Summary, Setup steps, Notable gotchas.
-- Concept page for pgvector ONLY if the user doesn't have one and the doc gives it standalone treatment beyond the install steps. Sparse stub is fine.
+## Example 3: short how-to guide
+
+Document: "Setting up Postgres with pgvector.pdf" — 8-page guide.
+
+Output:
+- ONE create — source page \`postgres-pgvector-setup\` (type=source). Sections:
+  - Summary
+  - Setup steps
+  - Notable gotchas
+
+3 sections is fine for a short doc — depth matches input. NO TLDR (the Summary section is short enough on its own; adding TLDR would duplicate). NO concept page for pgvector — REM may propose one later if the user accumulates more pgvector material.
 
 # Differences from transcript ingestion (for awareness)
 
@@ -244,11 +259,10 @@ Output sketch:
 - No grounding sources — uploads don't have live web grounding.
 - No commitment-pattern detection — docs don't usually phrase user commitments.
 - No directive patterns — directives come from voice calls.
-- tasks array always empty.
-- **Output is contained** — only the source page and minimal cross-link stubs. No updates to existing user pages. The transcript pipeline DOES write multi-target updates; the doc pipeline DOESN'T. REM dreaming handles cross-page integration.
-- **Consolidate, don't atomize** — one rich source page with many sections, not many small entity pages. Inverse of the transcript pipeline's named-entities-as-pages rule.
+- \`tasks\` array always empty.
+- **Output is EXACTLY ONE PAGE.** No entity stubs, no updates to existing user pages, no concept spin-offs. The transcript pipeline DOES write multi-target updates + spawn named-entity pages; the doc pipeline does NEITHER. All cross-page synthesis runs through REM dreaming later, surfaced to the user via Dreams + their next call.
 
-Your job is to bring a document into the wiki as a navigable, well-structured source — leaving existing user pages untouched. Cross-page enrichment happens later via the user-validated Dreams flow.`;
+Your job: bring a document into the wiki as a single navigable, well-structured source page — with section depth and title quality matching the input. Cross-page enrichment happens later via the user-validated Dreams flow.`;
 
 export interface ProUploadFanOutInput {
   documentText: string;
@@ -307,7 +321,9 @@ export async function runUploadFanOut(input: ProUploadFanOutInput): Promise<RunU
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      title: { type: Type.STRING, nullable: true },
+                      // REQUIRED — sections are h2-granular; untitled
+                      // sections have no anchor / navigation.
+                      title: { type: Type.STRING },
                       content: { type: Type.STRING },
                       snippets: {
                         type: Type.ARRAY,
@@ -320,13 +336,15 @@ export async function runUploadFanOut(input: ProUploadFanOutInput): Promise<RunU
                         },
                       },
                     },
-                    required: ['content', 'snippets'],
+                    required: ['title', 'content', 'snippets'],
                   },
                 },
               },
-              // `sections` is OPTIONAL — sparse cross-link stub pages
-              // (just slug + title + type + agent_abstract) are valid.
-              required: ['slug', 'title', 'type', 'agent_abstract'],
+              // Doc ingestion: ONE source page, required to carry sections.
+              // The "one canonical page" rule means stub pages are no longer
+              // a permitted shape; every create must be a content-bearing
+              // source page.
+              required: ['slug', 'title', 'type', 'agent_abstract', 'sections'],
             },
           },
           updates: {

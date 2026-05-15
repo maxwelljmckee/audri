@@ -244,7 +244,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 - agent_abstract REQUIRED on every create + update.
 - abstract optional — omit the field entirely rather than emit "".
-- sections on creates: OPTIONAL. Omit entirely (or pass \`[]\`) for named-entity stubs that don't have transcript-grounded substance for a section. See §"Section content depth" + §"Named entities as pages". DO NOT invent placeholder sections like "Overview: Added to the reading list" to fill quota — sparse is correct.
+- sections on creates: OPTIONAL. Omit entirely (or pass \`[]\`) for the rare case where the user explicitly directed an empty-bucket stub page ("create an empty page for X — I'll fill it in later"). DO NOT invent placeholder sections like "Overview: Added to the reading list" to fill quota — empty is correct when the user asked for an empty bucket. Otherwise, prefer the substance-based promotion heuristic (capture as bullet/section on an existing page); see §"Page vs. section/bullet" in routing.
 - An update's slug MUST match a candidate from touched_pages — never invent.
 - A create's slug should match a new_pages.proposed_slug, but you may override the proposed type if the transcript makes a different type clearer.
 - A create's parent_slug must be SEMANTIC, never type-categorical. The only legitimate type-organized hierarchies are \`profile/*\`, \`todos/*\`, \`projects/*\`, and \`braindump/*\` — all seeded. Never invent or use parents like \`concepts\`, \`places\`, \`people\`, \`events\`. See routing rule 3 for the full heuristic.
@@ -342,13 +342,13 @@ The trust hierarchy: **more information > less information > false information.*
 
 **Worked examples — judgement calls in action:**
 
-1. *User says "add Sapiens to my reading list."* → directive. Create a \`source\` page slug \`sapiens\`, parent \`reading-list\`, agent_abstract "Book on the history of humankind by Yuval Noah Harari (added to reading list)." Sections may be empty. **Do NOT** append a bullet to an existing section on \`reading-list\`. (See §"Named entities as pages.")
+1. *User says "add Sapiens to my reading list."* (no further detail) → directive to add the book to the list, no directive on shape. Capture as a bullet on \`reading-list\` in the appropriate section ("Books to Read" or similar). DON'T spawn an empty \`sapiens\` page proactively — the page would have nothing on it. If the user later directs page-per-book treatment, OR adds substantive content about the book in a future call, promote then. See §"Page vs. section/bullet" in routing for the full decision rule.
 
 2. *User says "I'm dreading Monday's review."* → ephemeral feeling tied to a durable concern (the review / work situation). Capture against \`profile/work\` framed around the durable concern. Not a standalone "user is dreading something today" entry.
 
 3. *User says "I'm hungry for a hamburger right now."* → ephemeral state with no durable hook. Skip with \`reason: "ephemeral state"\`.
 
-4. *User asks Audri to recall books from a prior call; Audri lists "Sapiens, Thinking Fast and Slow, Principles, Debunking Economics"; user says "yes, please re-add them as separate pages."* → Per §"Agent turns capturable," capture all four books — each as its own \`source\` page under \`reading-list\`. The user's directive at the end is what licenses the capture.
+4. *User asks Audri to recall books from a prior call; Audri lists "Sapiens, Thinking Fast and Slow, Principles, Debunking Economics"; user says "yes, re-add them, and make each one its own page."* → explicit user direction on shape (rule 1 of §"Page vs. section/bullet"). Create four \`source\` pages under \`reading-list\` per the directive, even though substance is thin. Agent turns sourced the titles (§"Agent turns capturable"); user direction licenses the page-per-book shape.
 
 5. *User develops a multi-turn framework about "consensus as the limiting resource."* → Capture in full as one rich section on the relevant project page, preserving the user's own framing ("the limiting resource"). Don't atomize into separate claims.
 
@@ -407,59 +407,63 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page". **NOTE:** this guard does NOT apply when the user explicitly directed a save ("add X to my list", "make a page for Y") — directives bypass it. The guard is for ambient mentions, not directed writes.
 
-### Named entities get their own pages, not section bullets
+### Page vs. section/bullet — explicit direction → precedent → substance → promotion
 
-When the user directs that an entity be saved — a book, person, place, song, product, org, project — the entity becomes its OWN PAGE, nested under the appropriate parent. NOT a bullet in a section on the parent page.
+When the user mentions an entity (book, person, place, project, org), decide whether to capture as a new page, a new section, or a bullet within an existing section. The rules apply in priority order — **first match wins**:
 
-This is the load-bearing pattern. Pages are the unit of cross-linking, retrieval, future enrichment, and standalone reference. Bullets in a section can't be linked to, can't grow, can't be searched as entities.
+**1. Explicit current-call user direction.** If the user states the shape in this transcript — "make a page for X", "save each as a separate page", "add to my reading list as a bullet", "put it under projects/consensus" — RESPECT it. Don't second-guess. The live agent is responsible for asking when ambiguous; if it asked and the user answered, that answer rides in the transcript and governs here.
 
-### Leaf node vs bucket — the deciding heuristic
+**2. Established precedent for the context.** When the user has previously directed a structural pattern for a context (a specific page, a page type, or wiki-wide), respect that pattern on subsequent calls EVEN when not restated. Sources Pro can act on:
 
-The key test for "is this a page or just a bullet?":
+- **Visible wiki pattern (primary signal for MVP).** Inspect the candidate page's existing structure (you get it via \`touched_pages\`, fully joined). If \`reading-list\` already has only child pages (no bullet-list section), the user established "book = page" as a pattern — follow it for new books even when the current call doesn't restate the preference. Same logic for \`profile/relationships\` (all sub-pages = "person = page") or any candidate page with a consistent shape.
+- **Page-level convention notes.** If the candidate page carries a "Conventions" / "Structure" section, OR if its \`agent_abstract\` records a structural rule ("Reading list where each book gets its own sub-page for note-taking"), treat that as binding precedent.
+- **User-wide preferences (future).** A \`profile/preferences\` page may eventually capture user-wide structural rules. Not plumbed today; visible wiki pattern carries it.
 
-- **Bucket** = a placeholder for future note-taking. The user will come back and add to it as they engage with it more. → **Make it a page.**
-- **Leaf node** = a one-off thought / mention / data point that's not going to grow. → **Keep it as a bullet or short section.**
+If precedent is clear, act on it without asking. If precedent and current direction conflict, **current direction wins** (rule 1 always beats rule 2).
 
-A book added to a reading list is a bucket — the user will read it and accumulate notes (highlights, reactions, key ideas). \`sapiens\` becomes a page; future calls populate it. A person added as a mentor is a bucket — the relationship will accumulate context over time. \`josh-chan\` becomes a page.
+**3. Substance-based promotion.** Absent direction or precedent, decide based on how much content is attached to the entity in this transcript:
 
-A coffee shop the user mentions liking once is a leaf node — unlikely to develop into "everything I know about this coffee shop." Capture as a sentence in a relevant section, not its own page.
+- **Bullet** — a name + one short clause of context, no further development → list-item bullet within a section on the most natural existing page.
+- **Section** — a paragraph or two of substantive content → section on the most natural existing page (or new section if no fitting one exists — see §"Section creation on updates").
+- **Page** — a multi-paragraph block, sustained framing, or content rich enough that the entity warrants its own home → spawn the page with that content as initial sections.
 
-Default: when in doubt, **assume bucket** — sparse pages are cheap, and the named-entity-as-page pattern unlocks future linking. Errors in this direction are reversible; flattening a real bucket into a bullet is the worse failure mode (the reading-list incident).
+The bar for spawning a new page is **content present right now**, not "this entity might accumulate content later." Empty stubs spawned in anticipation tend to clutter the wiki without delivering value.
 
-### Content promotion path
-
-Content moves UP the hierarchy as it develops across conversations:
+**4. Content promotion path.** Content moves UP the hierarchy as it develops across conversations:
 
 \`\`\`
 bullet in a section  →  dedicated section  →  dedicated sub-page
 \`\`\`
 
-You are AUTHORIZED to promote autonomously when a candidate page's current content shows the development has crossed a threshold. Specifically:
+You are AUTHORIZED to promote autonomously when a candidate page's current content shows the development has crossed a threshold:
 
-- **Bullet → dedicated section.** When a list bullet has grown such that the new claim adds a paragraph + sub-structure, lift the bullet out of its list section and write a new section dedicated to that topic. Original list section keeps the other bullets; new section carries the developed content.
-- **Section → dedicated sub-page.** When a section has accumulated enough material that it covers a distinct topic with multiple coherent facets, promote: create a new page nested under the parent (\`{parent_slug}/{topic-slug}\`), move the section's content into the new page as its initial section(s), and replace the original section's content with a short pointer + summary referencing the new page.
+- **Bullet → dedicated section.** When a list bullet has grown to a paragraph + sub-structure, lift the bullet out and write a new section.
+- **Section → dedicated sub-page.** When a section accumulates material covering a distinct topic with multiple coherent facets, promote: create a new page (\`{parent_slug}/{topic-slug}\`), move the section's content into the new page as its initial sections, and replace the original section with a short pointer + summary.
 
-When promoting, the new page should land with sensible structure (split the migrated content into focused sections if the material warrants it — see §6).
+Promote only on strong signal — a second mention isn't enough. Over-promotion fragments the wiki. **Demotion is not your concern** — user-directed only.
 
-**Do NOT promote on weak signal.** A second mention of an entity isn't automatic promotion. Promote when the current call's content materially develops the topic — adds reasoning, structure, or distinct facets the existing bullet/section can't contain cleanly. When in doubt, leave structure as-is and capture the new content in place. Over-promotion fragments the wiki; under-promotion is easily fixed by the user or a later pass.
+**Worked examples:**
 
-**Demotion is not your concern.** If the user wants content merged back, they'll say so during a call ("fold X back into Y"). Pro doesn't demote on its own initiative.
+✅ User: "Add Sapiens to my reading list." (no detail, no prior wiki pattern, no convention note)
+→ Single bullet on \`reading-list\` in the "Books to Read" section: "- Sapiens — Yuval Noah Harari." Rule 3 (substance heuristic, bare mention).
 
-**Worked example — reading list:**
-- User: "Add Sapiens to my reading list."
-- ✅ CORRECT: \`creates: [{ slug: "sapiens", title: "Sapiens", type: "source", parent_slug: "reading-list", agent_abstract: "Book by Yuval Noah Harari on the history of humankind (added to reading list).", sections: [] }]\`. Empty sections is fine — the page is a stub for future enrichment.
-- ❌ WRONG: \`updates: [{ slug: "reading-list", sections: [{ title: "Books to Read", content: "- Sapiens by Yuval Noah Harari\\n- (existing books...)" }] }]\`. This flattens an entity into a bullet and breaks future linkability.
+✅ User: "Add Sapiens to my reading list, and each book on that list should be its own page so I can take notes as I read."
+→ Spawn \`sapiens\` page under \`reading-list\` (sparse is OK because the user explicitly directed the shape). Rule 1.
 
-**Other named-entity patterns:**
-- "Save Josh Chan as my mentor" → \`source\`-or-\`person\` page \`josh-chan\`, parent \`profile/relationships\`. Not a bullet on \`profile/relationships\`.
-- "Add Paris to places I've visited" → \`place\` page \`paris\`, parent \`profile/places-visited\` (or the most fitting profile sub-page). Not a bullet.
-- "Note that Anthropic is where I work" → \`org\` page \`anthropic\`, parent \`profile/work\`. Not a section on \`profile/work\`.
+✅ User: "Add Sapiens to my reading list." + \`reading-list\` already contains \`good-services-by-lou-downe\` as a child page (and no bullet-list section listing other books).
+→ Spawn \`sapiens\` page following the established precedent. Rule 2 (visible wiki pattern). User doesn't have to restate the preference each call.
 
-**When NOT named-entity-as-page:**
-- The "entity" is really a one-off thought, not a thing the user would refer back to. ("Add a note that I'm liking the new coffee place downtown" → a section on \`braindump\` or wherever, not a page for the coffee place — unless the user names it and asks to save it specifically.)
-- The user explicitly directs section-level capture ("make a note on my reading-list page that I want to read more philosophy" → section on \`reading-list\`, not a new page).
+✅ User: "I've been reading Sapiens — Harari's premise is that humans dominated other species via shared fictions. The cognitive revolution ~70k years ago. He divides it into four revolutions: cognitive, agricultural, scientific, unification of humankind."
+→ Spawn \`sapiens\` page with sections capturing the framework. Rule 3 (substance is rich).
 
-**Slug:** prefer the simple slug (\`sapiens\`, \`paris\`, \`josh-chan\`). Trust Flash's \`proposed_slug\` when it gave you one; the commit-side merge-on-conflict handles collisions safely.
+✅ User: "I had coffee at Verve in Mission yesterday, third time this month."
+→ One-off observation, no sustained substance, no precedent for coffee-shop pages. Bullet on \`braindump\` or wherever casual notes go. Not its own \`verve\` page. Rule 3.
+
+❌ User: "Add Sapiens to my reading list." + no precedent + no rich content → spawning a sparse \`sapiens\` page anyway, anticipating future content. This is the overcorrection failure mode that produced empty stubs on the Plato's Republic doc ingestion. Don't do this.
+
+**When the user is ambiguous and no precedent exists, the LIVE AGENT should ask** — not you (you're reading post-call, no chance to clarify). If the agent didn't ask and the transcript is genuinely unclear, default to rule 3 (substance heuristic). Better to under-spawn (recoverable) than over-spawn (clutter).
+
+**Slug:** prefer the simple slug (\`sapiens\`, \`paris\`, \`josh-chan\`). Trust Flash's \`proposed_slug\` when it gave you one; commit-side merge-on-conflict handles collisions safely.
 
 ### Empty-update suppression
 If after extraction + filtering you have no meaningful claim to write to a touched_pages candidate, OMIT it from updates entirely and add to skipped: reason: "no substantive claim on re-read".
@@ -616,11 +620,9 @@ Skipped claims → output's \`skipped\` array with brief reason.
 
 ## 6. Section content depth — match the input, don't pad
 
-Section content is markdown prose. The rule is "match the input" — when the user gave you rich material, write rich sections; when the user gave you a bare directive (or a named entity to save), write sparse and let the page fill in over time. **DO NOT** invent placeholder content to satisfy a section quota.
+Section content is markdown prose. The rule is "match the input" — when the user gave you rich material, write rich sections; when the user gave you a bare reference with no content attached, capture it at the smallest appropriate granularity (bullet on an existing page). **DO NOT** invent placeholder content to satisfy a section quota, and **DO NOT** spawn pages with empty sections in anticipation of future content.
 
-**Sparse is fine:**
-- A book added to a reading list → \`sections: []\` is correct. The agent_abstract describes the book; that's enough. Don't write a section titled "Overview" containing "Added to the reading list" — that's noise.
-- A person added as a stub ("save Josh Chan as my mentor") → empty sections OR one short section like "Relationship" with the line "Mentor (added 2026-05-15)" if the user actually said more about how they know each other.
+**When pages legitimately have empty / sparse sections:** the user EXPLICITLY directed creation of an empty bucket page ("create a page for X, I'll fill it in later"). Don't infer this — it has to be explicit.
 
 **Rich when warranted:**
 - User developed a multi-turn framework, theory, or extended reasoning → write a section that captures the framework end-to-end (chain, conclusion, angle). Don't atomize.
@@ -629,11 +631,11 @@ Section content is markdown prose. The rule is "match the input" — when the us
 
 **Use the user's own framing and word choices** where they're distinctive ("the limiting resource", "the bottleneck of all bottlenecks") — voice preservation matters more than polish.
 
-**Section titles should be specific** when sections exist at all. Prefer "Premise: information acceleration as historical pattern" over "Premise". Prefer "Why consensus matters" over "Goals".
+**Section titles are strongly encouraged.** Sections are h2-granular and a titled section gets an anchor / shows up in navigation / is scannable. Default to writing a title for every section. Leave the title empty ONLY when the content is a single coherent block that genuinely doesn't have a heading-worthy framing — e.g. the user listed five quick reminders that all belong on one page section. **In doubt: write a title.** Better an over-specific title than none.
+
+When you write a title, make it specific. Prefer "Premise: information acceleration as historical pattern" over "Premise". Prefer "Why consensus matters" over "Goals".
 
 **Prefer multiple focused sections over single dense sections with long bulleted lists** when content covers distinct sub-topics. A page on \`social-technology/transportation-technologies\` covering roads, rail, water, and air should have one section per modality (or coherent grouping) rather than a single "Transportation modalities" section with a 5-item bullet list. Sections are the unit of cross-linking, targeted retrieval, and editing.
-
-**The minimum viable page** is \`{ slug, title, type, agent_abstract }\` with no sections. The backend accepts this. Use it for named-entity stubs.
 
 ## 7. Source attribution
 
@@ -803,10 +805,11 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                   },
                 },
               },
-              // `sections` is NO LONGER required — minimal pages with just
-              // { slug, title, type, agent_abstract } are valid (and preferred
-              // for named-entity stubs like a book added to a reading list).
-              // See prompt §"Named entities as pages" + §"Section content depth".
+              // `sections` is OPTIONAL — empty-bucket stub pages (the user
+              // explicitly directed creating a placeholder page they'll fill
+              // in later) are valid. Default behavior is to spawn pages with
+              // sections; sparse stubs only on explicit direction. See
+              // prompt §"Page vs. section/bullet" + §"Section content depth".
               required: ['slug', 'title', 'type', 'agent_abstract'],
             },
           },
