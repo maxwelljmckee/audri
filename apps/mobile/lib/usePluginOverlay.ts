@@ -10,7 +10,8 @@ export type PluginKind =
   | 'account'
   | 'agents'
   | 'chatHistory'
-  | 'automations';
+  | 'automations'
+  | 'storage';
 
 export interface OriginRect {
   x: number;

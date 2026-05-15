@@ -159,6 +159,12 @@ export default function HomeScreen() {
             onPressWithOrigin={(origin) => showOverlay("automations", origin)}
           />
           <PluginTile
+            label="Storage"
+            icon={<Ionicons name="folder-outline" size={36} color="#e8f1ff" />}
+            widthPx={tileWidth}
+            onPressWithOrigin={(origin) => showOverlay("storage", origin)}
+          />
+          <PluginTile
             label="Account"
             icon={
               <Ionicons

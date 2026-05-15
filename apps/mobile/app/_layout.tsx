@@ -11,6 +11,7 @@ import { AgentsOverlay } from "../components/AgentsOverlay";
 import { ChatHistoryOverlay } from "../components/ChatHistoryOverlay";
 import { AutomationsOverlay } from "../components/AutomationsOverlay";
 import { ResearchOverlay } from "../components/ResearchOverlay";
+import { StorageOverlay } from "../components/StorageOverlay";
 import { SplashAnimation } from "../components/SplashAnimation";
 import { TodosOverlay } from "../components/TodosOverlay";
 import { WikiOverlay } from "../components/WikiOverlay";
@@ -81,14 +82,14 @@ function RootLayout() {
     // azure surface so it shows through faintly. Stack contentStyle is
     // transparent so route transitions don't paint over it.
     <View style={styles.root}>
-      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <View style={StyleSheet.absoluteFillObject} pointerEvents='none'>
         <LavaLamp
           count={COUNT}
           colors={LAVA_COLORS}
           bgColor={LAVA_BG}
           duration={DURATION}
           intensity={INTENSITY}
-          tint="dark"
+          tint='dark'
           paused={overlayOpen}
         />
       </View>
@@ -104,10 +105,10 @@ function RootLayout() {
               contentStyle: { backgroundColor: "transparent" },
             }}
           >
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(app)" />
+            <Stack.Screen name='(auth)' />
+            <Stack.Screen name='(app)' />
           </Stack>
-          <StatusBar style="light" />
+          <StatusBar style='light' />
           {/* Plugin overlays mount at app root so navigation away (e.g., to /call)
               doesn't tear them down. Each handles its own visibility via the
               plugin-overlay store. */}
@@ -118,6 +119,7 @@ function RootLayout() {
           <AgentsOverlay />
           <ChatHistoryOverlay />
           <AutomationsOverlay />
+          <StorageOverlay />
           {/* Launch animation — mounted last so it sits above all overlays. Plays
               once per cold start, then unmounts itself. */}
           <SplashAnimation />
