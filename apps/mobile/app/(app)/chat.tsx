@@ -1,12 +1,12 @@
-// Text-modality chat screen. Parity with /call lifecycle (CallProvider at
-// root, mount-once start, leave-doesn't-end). Renders the conversation as
-// iMessage-style bubbles — user bubbles get a per-bubble pink→purple→cyan
-// gradient via expo-linear-gradient.
+// Text-chat screen. Parity with /call lifecycle (ChatProvider at root,
+// mount-once start, leave-doesn't-end). Renders the conversation as
+// iMessage-style bubbles — user bubbles get a per-bubble pink→purple→
+// cyan gradient via expo-linear-gradient.
 //
-// Audri streams in token-by-token; the in-progress bubble at the bottom
-// reads from useCall's streamingAgentText. On stream-end the streaming
-// buffer empties and the response lands in the transcript as a
-// finalized agent turn.
+// Audri streams in token-by-token; the in-progress bubble at the
+// bottom reads from useChat's streamingAgentText. On stream-end the
+// streaming buffer empties and the response lands in the transcript as
+// a finalized agent turn.
 
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,9 +24,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GlassButton } from '../../components/buttons';
-import { useCallContext } from '../../lib/CallContext';
+import { useChatContext } from '../../lib/ChatContext';
 import type { TranscriptTurn } from '../../lib/gemini/transcript';
-import { useCallStore } from '../../lib/useCallStore';
+import { useChatStore } from '../../lib/useChatStore';
 
 const ENDING_DELAY_MS = 400;
 const GRADIENT_COLORS = ['#FD84AA', '#A38CF9', '#09E0FF'] as const;
@@ -56,23 +56,23 @@ function buildVisibleMessages(
 }
 
 export default function ChatScreen() {
-  const status = useCallStore((s) => s.status);
-  const endCall = useCallStore((s) => s.endCall);
-  const reset = useCallStore((s) => s.reset);
-  const startCall = useCallStore((s) => s.startCall);
+  const status = useChatStore((s) => s.status);
+  const endChat = useChatStore((s) => s.endChat);
+  const reset = useChatStore((s) => s.reset);
+  const startChat = useChatStore((s) => s.startChat);
 
-  const { start, end, sendUserText, transcript, streamingAgentText, error } = useCallContext();
+  const { start, end, sendUserText, transcript, streamingAgentText, error } = useChatContext();
 
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
 
-  // Mount-once kick — text modality. Same idle-gate as /call so navigating
-  // back into the screen mid-session rejoins without re-starting.
+  // Mount-once kick. Same idle-gate as /call so navigating back into
+  // the screen mid-session rejoins without re-starting.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once
   useEffect(() => {
     if (status !== 'idle') return;
-    startCall();
-    void start({ modality: 'text' });
+    startChat();
+    void start();
   }, []);
 
   // Hang-up flow: ending → tear down + return home.
@@ -124,7 +124,7 @@ export default function ChatScreen() {
             <Ionicons name="chevron-back" size={22} color="#e8f1ff" />
           </GlassButton>
           <GlassButton
-            onPress={endCall}
+            onPress={endChat}
             disabled={status !== 'connected'}
             tintColor="#f43f5e"
             style={styles.endButton}

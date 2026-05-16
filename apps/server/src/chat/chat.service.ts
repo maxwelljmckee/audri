@@ -4,6 +4,7 @@
 // server-side. Mobile clients post {history, userText} per turn and read
 // chunked text back as the response streams.
 
+import { randomUUID } from 'node:crypto';
 import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
 import { checkSpendCap, recordInferenceUsage } from '@audri/shared/usage';
@@ -18,6 +19,7 @@ import {
   type UsageMetadata,
 } from '@google/genai';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { AGENT_FUNCTION_DECLARATIONS } from '../agent-tools/declarations.js';
 import { loadGenericCallContext, renderPreloadBlock } from '../calls/preload.js';
 import { composeSystemPrompt } from '../calls/system-prompt.js';
 import { fetchPage, fetchTranscript, searchTranscripts, searchWiki } from '../calls/tools.js';
@@ -32,70 +34,17 @@ const CHAT_MODEL = 'gemini-2.5-flash';
 // loop back. 5 is generous — typical turn calls 0–2 tools.
 const MAX_TOOL_ITERATIONS = 5;
 
-// Match the Live agent's tool declarations. Same DB-backed handlers, so
-// behaviour is identical to voice-mode tool use.
-const SEARCH_WIKI_DECL: FunctionDeclaration = {
-  name: 'search_wiki',
-  description:
-    "Search the user's personal notes (wiki) for content related to a topic. Cheap; use freely whenever you suspect the user has notes on something. Returns up to 5 best-matching pages with a short snippet from each.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: {
-        type: Type.STRING,
-        description:
-          "Free-form natural-language search query — the topic or entity you're looking up. Example: 'consensus social technology' or 'Sarah relationship'.",
-      },
-    },
-    required: ['query'],
-  },
-};
-const FETCH_PAGE_DECL: FunctionDeclaration = {
-  name: 'fetch_page',
-  description:
-    "Fetch the full content of a single wiki page by its slug. Use after a search_wiki result if you need the page's full content, or to read a page the user references by name.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      slug: { type: Type.STRING, description: 'The wiki page slug.' },
-    },
-    required: ['slug'],
-  },
-};
-const SEARCH_TRANSCRIPTS_DECL: FunctionDeclaration = {
-  name: 'search_transcripts',
-  description:
-    "Search the user's past call and chat transcripts for content they discussed in earlier conversations. Cheap; use whenever the user references something they said before.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: {
-        type: Type.STRING,
-        description: 'Free-form natural-language search query over past transcript content.',
-      },
-    },
-    required: ['query'],
-  },
-};
-const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
-  name: 'fetch_transcript',
-  description: 'Fetch the full turn-by-turn content of a single past transcript by its id.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      transcript_id: { type: Type.STRING, description: 'The transcript id (UUID).' },
-    },
-    required: ['transcript_id'],
-  },
-};
-
-// googleSearch grounding wrapped as a function. Gemini rejects configs
-// that mix the built-in googleSearch tool with function declarations in
-// the same request ("Built-in tools ... and Function Calling cannot be
-// combined"), so we expose web_search as a function the model can call;
-// the handler then makes a separate internal generateContent with
-// googleSearch alone and returns the grounded answer + sources.
-// Expensive — prompt guidance steers conservative usage.
+// Chat-specific tool: googleSearch grounding wrapped as a function.
+// Gemini rejects configs that mix the built-in googleSearch tool with
+// function declarations in the same request ("Built-in tools ... and
+// Function Calling cannot be combined"), so we expose web_search as a
+// function the model can call; the handler makes a separate internal
+// generateContent with googleSearch alone and returns the grounded
+// answer + sources. Expensive — prompt guidance steers conservative
+// usage.
+//
+// Voice mode uses Gemini's native googleSearch tool directly (lives in
+// calls.service.ts:LIVE_TOOLS_AUDIO), so this wrapper is chat-only.
 const WEB_SEARCH_DECL: FunctionDeclaration = {
   name: 'web_search',
   description:
@@ -114,15 +63,7 @@ const WEB_SEARCH_DECL: FunctionDeclaration = {
 };
 
 const CHAT_TOOLS: Tool[] = [
-  {
-    functionDeclarations: [
-      SEARCH_WIKI_DECL,
-      FETCH_PAGE_DECL,
-      SEARCH_TRANSCRIPTS_DECL,
-      FETCH_TRANSCRIPT_DECL,
-      WEB_SEARCH_DECL,
-    ],
-  },
+  { functionDeclarations: [...AGENT_FUNCTION_DECLARATIONS, WEB_SEARCH_DECL] },
 ];
 
 export interface ChatTurn {
@@ -145,16 +86,63 @@ export interface ChatTurnResult {
   usage: UsageMetadata | undefined;
 }
 
+export interface StartChatArgs {
+  userId: string;
+  agentSlug: string;
+}
+
+export interface StartChatResult {
+  sessionId: string;
+}
+
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
+
+  async startChat({ userId, agentSlug }: StartChatArgs): Promise<StartChatResult> {
+    // Hard spending-cap pre-flight. Same shape as the voice startCall
+    // path — refuse a new session if the user is over the monthly cap.
+    const cap = await checkSpendCap(userId);
+    if (cap.overCap) {
+      const err = new Error('SPEND_CAP_EXCEEDED');
+      (err as Error & { spendCap?: typeof cap }).spendCap = cap;
+      throw err;
+    }
+
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.userId, userId), eq(agents.slug, agentSlug)))
+      .limit(1);
+    if (!agent) throw new NotFoundException(`agent not found: ${agentSlug}`);
+
+    const sessionId = randomUUID();
+
+    // Pre-create the call_transcripts row so /chat/turn can validate
+    // the sessionId and /calls/:id/end can commit + ingest. kind='text'
+    // distinguishes from voice rows in the Chat History UI.
+    await db
+      .insert(callTranscripts)
+      .values({
+        userId,
+        agentId: agent.id,
+        sessionId,
+        callType: 'generic',
+        kind: 'text',
+        startedAt: new Date(),
+      })
+      .onConflictDoNothing({ target: callTranscripts.sessionId });
+
+    this.logger.log({ userId, agentSlug, sessionId }, 'chat session started');
+    return { sessionId };
+  }
 
   async runTurn(args: ChatTurnArgs): Promise<ChatTurnResult> {
     const { userId, sessionId, history, userText, onChunk } = args;
 
     // Validate session — must exist and belong to this user. The chat
-    // screen on mount POSTs /calls/start with modality=text, which
-    // pre-creates the call_transcripts row we look up here.
+    // screen on mount POSTs /chat/start, which pre-creates the
+    // call_transcripts row (kind='text') we look up here.
     const [session] = await db
       .select({
         id: callTranscripts.id,

@@ -1,25 +1,26 @@
-import { Comfortaa_400Regular, useFonts } from "@expo-google-fonts/comfortaa";
-import { Stack } from "expo-router";
-import * as SplashScreen from "expo-splash-screen";
-import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
-import { StyleSheet, View } from "react-native";
-import "react-native-reanimated";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { AccountOverlay } from "../components/AccountOverlay";
-import { AgentsOverlay } from "../components/AgentsOverlay";
-import { ChatHistoryOverlay } from "../components/ChatHistoryOverlay";
-import { AutomationsOverlay } from "../components/AutomationsOverlay";
-import { ResearchOverlay } from "../components/ResearchOverlay";
-import { StorageOverlay } from "../components/StorageOverlay";
-import { SplashAnimation } from "../components/SplashAnimation";
-import { TodosOverlay } from "../components/TodosOverlay";
-import { WikiOverlay } from "../components/WikiOverlay";
-import { LavaLamp } from "../components/animations/lava-lamp-background-animation";
-import { CallProvider } from "../lib/CallContext";
-import { Sentry, initSentry } from "../lib/sentry";
-import { usePluginOverlay } from "../lib/usePluginOverlay";
-import "../global.css";
+import { Comfortaa_400Regular, useFonts } from '@expo-google-fonts/comfortaa';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
+import 'react-native-reanimated';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AccountOverlay } from '../components/AccountOverlay';
+import { AgentsOverlay } from '../components/AgentsOverlay';
+import { AutomationsOverlay } from '../components/AutomationsOverlay';
+import { ChatHistoryOverlay } from '../components/ChatHistoryOverlay';
+import { ResearchOverlay } from '../components/ResearchOverlay';
+import { SplashAnimation } from '../components/SplashAnimation';
+import { StorageOverlay } from '../components/StorageOverlay';
+import { TodosOverlay } from '../components/TodosOverlay';
+import { WikiOverlay } from '../components/WikiOverlay';
+import { LavaLamp } from '../components/animations/lava-lamp-background-animation';
+import { CallProvider } from '../lib/CallContext';
+import { ChatProvider } from '../lib/ChatContext';
+import { Sentry, initSentry } from '../lib/sentry';
+import { usePluginOverlay } from '../lib/usePluginOverlay';
+import '../global.css';
 
 // Lava lamp blob set — blob color is a brighter step within the same
 // blue family as the azure bg (rgb 10/22/40), so the blobs read as
@@ -31,8 +32,8 @@ import "../global.css";
 // darkens the surface, so the perceived post-blur color is slightly
 // muddier than the input — the matching surfaces are pre-desaturated to
 // match what the eye reads off the lava lamp.
-const LAVA_BG = "#0a1628"; // rgb(10, 22, 40) — azure-bg
-const LAVA_BLOB = "rgba(33, 72, 143, 0.5)"; // mid-saturated azure — settled 2026-05-10 between the original muted rgba(25, 48, 85, 0.5) and a fully-bumped rgba(40, 95, 200, 0.5); kept the blue hue family, more chroma than original without dominating the surface
+const LAVA_BG = '#0a1628'; // rgb(10, 22, 40) — azure-bg
+const LAVA_BLOB = 'rgba(33, 72, 143, 0.5)'; // mid-saturated azure — settled 2026-05-10 between the original muted rgba(25, 48, 85, 0.5) and a fully-bumped rgba(40, 95, 200, 0.5); kept the blue hue family, more chroma than original without dominating the surface
 const LAVA_COLORS = [LAVA_BLOB, LAVA_BLOB, LAVA_BLOB];
 const INTENSITY = 80;
 const COUNT = 11;
@@ -82,47 +83,49 @@ function RootLayout() {
     // azure surface so it shows through faintly. Stack contentStyle is
     // transparent so route transitions don't paint over it.
     <View style={styles.root}>
-      <View style={StyleSheet.absoluteFillObject} pointerEvents='none'>
+      <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
         <LavaLamp
           count={COUNT}
           colors={LAVA_COLORS}
           bgColor={LAVA_BG}
           duration={DURATION}
           intensity={INTENSITY}
-          tint='dark'
+          tint="dark"
           paused={overlayOpen}
         />
       </View>
       <SafeAreaProvider>
-        {/* CallProvider hoists useCall() above the screen tree so the
-            audio session + WebSocket + transcript survive call.tsx
-            unmounting (e.g., user taps the in-call back button to visit
-            home while the call keeps running). */}
+        {/* Call + Chat providers hoist their respective session hooks
+            above the screen tree so the audio WebSocket / streaming chat
+            state survive screen unmounts (e.g., user taps the in-call
+            back button to visit home while the call keeps running). */}
         <CallProvider>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: "transparent" },
-            }}
-          >
-            <Stack.Screen name='(auth)' />
-            <Stack.Screen name='(app)' />
-          </Stack>
-          <StatusBar style='light' />
-          {/* Plugin overlays mount at app root so navigation away (e.g., to /call)
+          <ChatProvider>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: 'transparent' },
+              }}
+            >
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(app)" />
+            </Stack>
+            <StatusBar style="light" />
+            {/* Plugin overlays mount at app root so navigation away (e.g., to /call)
               doesn't tear them down. Each handles its own visibility via the
               plugin-overlay store. */}
-          <WikiOverlay />
-          <ResearchOverlay />
-          <AccountOverlay />
-          <TodosOverlay />
-          <AgentsOverlay />
-          <ChatHistoryOverlay />
-          <AutomationsOverlay />
-          <StorageOverlay />
-          {/* Launch animation — mounted last so it sits above all overlays. Plays
+            <WikiOverlay />
+            <ResearchOverlay />
+            <AccountOverlay />
+            <TodosOverlay />
+            <AgentsOverlay />
+            <ChatHistoryOverlay />
+            <AutomationsOverlay />
+            <StorageOverlay />
+            {/* Launch animation — mounted last so it sits above all overlays. Plays
               once per cold start, then unmounts itself. */}
-          <SplashAnimation />
+            <SplashAnimation />
+          </ChatProvider>
         </CallProvider>
       </SafeAreaProvider>
     </View>

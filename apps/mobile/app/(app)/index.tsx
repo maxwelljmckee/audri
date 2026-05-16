@@ -1,6 +1,7 @@
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { FontAwesome6, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import HexagonNodes from '@expo/vector-icons/FontAwesome6';
 import { Redirect, router, useFocusEffect } from 'expo-router';
-import { MessageCircle, NotebookTabs } from 'lucide-react-native';
+import { MessageCircle, NotebookText } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +11,7 @@ import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
 import { supabase } from '../../lib/supabase';
 import { useCallStore } from '../../lib/useCallStore';
 import { useCallRecoverySweep } from '../../lib/useCallSweep';
+import { useChatStore } from '../../lib/useChatStore';
 import { useMe } from '../../lib/useMe';
 import { usePluginOverlay } from '../../lib/usePluginOverlay';
 import { useSession } from '../../lib/useSession';
@@ -20,7 +22,7 @@ export default function HomeScreen() {
   const me = useMe(accessToken);
 
   const callStatus = useCallStore((s) => s.status);
-  const callModality = useCallStore((s) => s.modality);
+  const chatStatus = useChatStore((s) => s.status);
   const showOverlay = usePluginOverlay((s) => s.show);
 
   // Compute exact tile width so 4 fit per row across all device sizes.
@@ -33,29 +35,34 @@ export default function HomeScreen() {
   const tileWidth =
     (screenWidth - 2 * GRID_PADDING - (TILES_PER_ROW - 1) * GRID_GAP) / TILES_PER_ROW;
 
-  // True when a call is alive somewhere in the background. Idle = no
-  // active session. Anything else (connecting / connected / ending /
-  // dropped) means the FAB should rejoin instead of starting fresh.
+  // True when a voice call OR chat is alive somewhere in the background.
+  // Idle = no active session. Anything else (connecting / connected /
+  // ending / dropped) means the FAB should rejoin instead of starting
+  // fresh. The two stores are mutually exclusive in practice — long-press
+  // is disabled while either is active so the user can't start a second
+  // session — but treat them as independent here.
   const callActive = callStatus !== 'idle';
+  const chatActive = chatStatus !== 'idle';
+  const sessionActive = callActive || chatActive;
 
-  // The FAB visuals (icon + helper text) lag behind callActive on the
-  // call-START path so the stack-nav animation finishes before the icon
-  // swaps to PhoneForwarded — without this, returning to home from /call
-  // shows the new icon already painted during the slide-in.
-  // Call-END is synchronous: reset the moment callActive flips so the
-  // home FAB shows the default icon BEFORE the slide-in begins, instead
-  // of after it completes (which would read as a stale → fresh pop).
+  // The FAB visuals (icon + helper text) lag behind sessionActive on the
+  // start path so the stack-nav animation finishes before the icon swaps
+  // — without this, returning to home from /call or /chat shows the new
+  // icon already painted during the slide-in. End is synchronous: reset
+  // the moment sessionActive flips so the home FAB shows the default icon
+  // BEFORE the slide-in begins, instead of after it completes (which
+  // would read as a stale → fresh pop).
   const ICON_SWAP_DELAY = 350;
-  const [displayCallActive, setDisplayCallActive] = useState(callActive);
+  const [displaySessionActive, setDisplaySessionActive] = useState(sessionActive);
   useFocusEffect(
     useCallback(() => {
-      if (!callActive) {
-        setDisplayCallActive(false);
+      if (!sessionActive) {
+        setDisplaySessionActive(false);
         return;
       }
-      const t = setTimeout(() => setDisplayCallActive(true), ICON_SWAP_DELAY);
+      const t = setTimeout(() => setDisplaySessionActive(true), ICON_SWAP_DELAY);
       return () => clearTimeout(t);
-    }, [callActive]),
+    }, [sessionActive]),
   );
 
   // Boot RxDB sync on home so the wiki overlay has data ready when opened.
@@ -85,10 +92,12 @@ export default function HomeScreen() {
     router.push('/chat');
   }
   function rejoinActive() {
-    if (callModality === 'text') {
-      router.push('/chat');
-    } else {
+    // Voice takes precedence if both are somehow alive (defensive — UX
+    // prevents this in practice). Otherwise route to whichever is active.
+    if (callActive) {
       router.push('/call');
+    } else if (chatActive) {
+      router.push('/chat');
     }
   }
 
@@ -117,19 +126,19 @@ export default function HomeScreen() {
         <View style={styles.grid}>
           <PluginTile
             label="Agents"
-            icon={<MaterialCommunityIcons name="robot" size={36} color="#e8f1ff" />}
+            icon={<MaterialCommunityIcons name="robot-outline" size={36} color="#e8f1ff" />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay('agents', origin)}
           />
           <PluginTile
             label="Notes"
-            icon={<NotebookTabs size={36} color="#e8f1ff" strokeWidth={1.5} />}
+            icon={<NotebookText size={36} color="#e8f1ff" strokeWidth={1.5} />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
           />
           <PluginTile
-            label="Chat History"
-            icon={<MessageCircle size={36} color="#e8f1ff" strokeWidth={1.5} />}
+            label="Call History"
+            icon={<Ionicons name="call-outline" size={36} color="#e8f1ff" />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay('chatHistory', origin)}
           />
@@ -147,12 +156,12 @@ export default function HomeScreen() {
           />
           <PluginTile
             label="Automations"
-            icon={<Ionicons name="flash-outline" size={36} color="#e8f1ff" />}
+            icon={<Ionicons name="share-social" size={36} color="#e8f1ff" />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay('automations', origin)}
           />
           <PluginTile
-            label="Storage"
+            label="Uploads"
             icon={<Ionicons name="folder-outline" size={36} color="#e8f1ff" />}
             widthPx={tileWidth}
             onPressWithOrigin={(origin) => showOverlay('storage', origin)}
@@ -167,12 +176,12 @@ export default function HomeScreen() {
 
         <View style={styles.fabRow}>
           <CallFab
-            active={displayCallActive}
+            active={displaySessionActive}
             onStartCall={openCall}
             onStartIncognito={openIncognitoCall}
             onStartChat={openChat}
             onRejoin={rejoinActive}
-            helperLabel={callModality === 'text' ? 'Chat in progress' : undefined}
+            helperLabel={chatActive && !callActive ? 'Chat in progress' : undefined}
           />
         </View>
       </SafeAreaView>

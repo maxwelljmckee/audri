@@ -25,6 +25,10 @@ import { SupabaseAuthGuard } from '../auth/supabase-auth.guard.js';
 import { CurrentUser } from '../auth/user.decorator.js';
 import { ChatService, type ChatTurn } from './chat.service.js';
 
+interface ChatStartBody {
+  agent_slug?: string;
+}
+
 interface ChatTurnBody {
   session_id?: string;
   user_text?: string;
@@ -37,6 +41,40 @@ export class ChatController {
   private readonly logger = new Logger(ChatController.name);
 
   constructor(@Inject(ChatService) private readonly chat: ChatService) {}
+
+  // Lightweight session bootstrap. Spend-cap pre-flight + pre-creates
+  // the call_transcripts row so /chat/turn can validate the sessionId
+  // and /calls/:id/end can commit + ingest. Returns just the sessionId
+  // — chat doesn't need an ephemeral token (no client-side Gemini
+  // connection; everything routes through /chat/turn).
+  @Throttle({ short: { limit: 10, ttl: 60 * 60_000 }, long: { limit: 100, ttl: 24 * 60 * 60_000 } })
+  @Post('start')
+  async start(@CurrentUser() user: { id: string }, @Body() body: ChatStartBody) {
+    const agentSlug = body.agent_slug ?? 'assistant';
+    try {
+      return await this.chat.startChat({ userId: user.id, agentSlug });
+    } catch (err) {
+      if (err instanceof Error && err.message === 'SPEND_CAP_EXCEEDED') {
+        const cap = (
+          err as Error & {
+            spendCap?: { currentSpendCents: number; limitCents: number; monthStart: string };
+          }
+        ).spendCap;
+        throw new HttpException(
+          {
+            error: 'monthly_spend_cap_exceeded',
+            message:
+              'You have reached your monthly spending limit. Raise the limit in Account → Usage to continue.',
+            current_spend_cents: cap?.currentSpendCents,
+            limit_cents: cap?.limitCents,
+            month_start: cap?.monthStart,
+          },
+          HttpStatus.PAYMENT_REQUIRED,
+        );
+      }
+      throw err;
+    }
+  }
 
   // Per-user throttling. Chat turns are cheaper than live audio but still
   // hit the model; 30/min is generous for typing speed, hard ceiling on

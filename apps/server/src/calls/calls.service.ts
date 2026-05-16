@@ -3,136 +3,39 @@ import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
 import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
 import {
   EndSensitivity,
-  type FunctionDeclaration,
   Modality,
   StartSensitivity,
   ThinkingLevel,
   type Tool,
-  Type,
 } from '@google/genai';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { AGENT_FUNCTION_TOOLS } from '../agent-tools/declarations.js';
 import { loadGenericCallContext, renderPreloadBlock } from './preload.js';
 import { composeSystemPrompt } from './system-prompt.js';
 
-// Function declarations for live-agent tool calls. Backed by endpoints in
-// calls.controller.ts (tools/{search_wiki, fetch_page, search_transcripts,
-// fetch_transcript}). googleSearch grounding is a built-in Gemini tool —
-// model handles it internally, no client fulfillment needed. Wiki +
-// transcript tools cost roughly nothing on each call (SQL only); googleSearch
-// grounding bills per request, so the prompt steers the model toward
-// wiki-first / web-conservative.
-const SEARCH_WIKI_DECL: FunctionDeclaration = {
-  name: 'search_wiki',
-  description:
-    "Search the user's personal notes (wiki) for content related to a topic. Cheap; use freely whenever you suspect the user has notes on something. Returns up to 5 best-matching pages with a short snippet from each.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: {
-        type: Type.STRING,
-        description:
-          "Free-form natural-language search query — the topic or entity you're looking up. Example: 'consensus social technology' or 'Sarah relationship'.",
-      },
-    },
-    required: ['query'],
-  },
-};
-
-const FETCH_PAGE_DECL: FunctionDeclaration = {
-  name: 'fetch_page',
-  description:
-    "Fetch the full content of a single wiki page by its slug. Use after a search_wiki result if you need the page's full content, or to read a page the user references by name. Returns title + abstract + all sections.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      slug: {
-        type: Type.STRING,
-        description:
-          "The wiki page slug (e.g. 'projects/consensus', 'profile/goals', 'people/sarah'). Slugs come from search_wiki results or the preload's Notes-structure section.",
-      },
-    },
-    required: ['slug'],
-  },
-};
-
-const SEARCH_TRANSCRIPTS_DECL: FunctionDeclaration = {
-  name: 'search_transcripts',
-  description:
-    'Search the user\'s past call transcripts for content they discussed in earlier conversations. Cheap; use whenever the user references something they said before ("the books we discussed", "what I told you about my project last week"). Returns up to 5 matching transcripts with date + a snippet of the matching turn. Transcripts are the raw conversational record — distinct from the wiki, which holds distilled knowledge.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      query: {
-        type: Type.STRING,
-        description:
-          "Free-form natural-language search query over past call content. Example: 'books reading list' or 'Sarah co-founder'.",
-      },
-    },
-    required: ['query'],
-  },
-};
-
-const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
-  name: 'fetch_transcript',
-  description:
-    'Fetch the full turn-by-turn content of a single past call transcript by its id. Use after search_transcripts when you need to read the full conversation, not just the matching snippet. Returns ordered turns with role + text. Long transcripts truncate to the last 60 turns (a `truncated` flag indicates when this happens).',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      transcript_id: {
-        type: Type.STRING,
-        description: 'The transcript id returned by search_transcripts (a UUID string).',
-      },
-    },
-    required: ['transcript_id'],
-  },
-};
-
-const LIVE_FUNCTION_TOOLS: Tool[] = [
-  {
-    functionDeclarations: [
-      SEARCH_WIKI_DECL,
-      FETCH_PAGE_DECL,
-      SEARCH_TRANSCRIPTS_DECL,
-      FETCH_TRANSCRIPT_DECL,
-    ],
-  },
-];
-
-// Audio sessions get function declarations + Gemini-native grounded web
-// search. Model handles googleSearch internally; no client fulfillment.
-// Billed per request — prompt steers the model toward wiki-first.
-const LIVE_TOOLS_AUDIO: Tool[] = [...LIVE_FUNCTION_TOOLS, { googleSearch: {} }];
-
-// Text-modality sessions skip googleSearch — the Live API rejects
-// configs that mix googleSearch with TEXT response modality
-// ("internal error encountered" on connect). Function declarations
-// still work, so wiki/transcript tools stay available; web grounding
-// returns later if/when Google relaxes this.
-const LIVE_TOOLS_TEXT: Tool[] = LIVE_FUNCTION_TOOLS;
+// Live (audio) tool set: shared function declarations + Gemini's native
+// googleSearch grounding. Model handles googleSearch internally; no
+// client fulfillment needed. Billed per request — prompt steers the
+// model toward wiki-first / web-conservative.
+const LIVE_TOOLS_AUDIO: Tool[] = [...AGENT_FUNCTION_TOOLS, { googleSearch: {} }];
 
 export interface StartCallArgs {
   userId: string;
   agentSlug: string;
   callType: 'generic' | 'onboarding';
-  modality: 'audio' | 'text';
   incognito: boolean;
 }
 
 export interface StartCallResult {
   sessionId: string;
-  // Ephemeral token for direct Gemini Live WebSocket. Only set for
-  // audio-modality sessions; text mode talks to /chat/turn instead and
-  // doesn't need a client-side token.
-  ephemeralToken: string | null;
-  // Model name. For audio this is the Live preview the token is bound to.
-  // For text this is informational only — the actual model lives in
-  // chat.service.ts.
+  // Ephemeral token for direct Gemini Live WebSocket.
+  ephemeralToken: string;
+  // Model name the token was minted against — mobile passes this through
+  // to ai.live.connect().
   model: string;
   voice: string;
-  // Time after which the audio token will be rejected by Google. Null
-  // for text mode (no token).
-  expiresAt: string | null;
+  // Time after which the audio token will be rejected by Google.
+  expiresAt: string;
 }
 
 @Injectable()
@@ -143,7 +46,6 @@ export class CallsService {
     userId,
     agentSlug,
     callType,
-    modality,
     incognito,
   }: StartCallArgs): Promise<StartCallResult> {
     const [agent] = await db
@@ -167,43 +69,11 @@ export class CallsService {
       userPromptNotes: agent.userPromptNotes,
       callType,
       preloadBlock,
-      modality,
+      modality: 'audio',
     });
 
-    // Text-modality sessions don't open a Gemini WebSocket from the
-    // client. The mobile chat screen posts each turn to /chat/turn,
-    // which composes its own prompt + tool config server-side. So for
-    // text we skip the token mint entirely; only create the
-    // call_transcripts row so /chat/turn can validate the sessionId
-    // and /calls/:id/end can commit + ingest.
-    if (modality === 'text') {
-      if (!incognito) {
-        await db
-          .insert(callTranscripts)
-          .values({
-            userId,
-            agentId: agent.id,
-            sessionId,
-            callType,
-            startedAt: new Date(),
-          })
-          .onConflictDoNothing({ target: callTranscripts.sessionId });
-      }
-      this.logger.log(
-        { userId, agentSlug, sessionId, modality, incognito },
-        'chat session started (text — no token mint)',
-      );
-      return {
-        sessionId,
-        ephemeralToken: null,
-        model: 'gemini-2.5-flash',
-        voice: agent.voice,
-        expiresAt: null,
-      };
-    }
-
-    // Audio path — mint an ephemeral token bound to the Live config.
-    // Persona stays server-side; client only sees the opaque token.
+    // Mint an ephemeral token bound to the Live config. Persona stays
+    // server-side; client only sees the opaque token.
     const expireAt = new Date(Date.now() + 30 * 60 * 1000); // 30min
 
     const tokenResp = await getGeminiClient().authTokens.create({
@@ -267,7 +137,7 @@ export class CallsService {
         .onConflictDoNothing({ target: callTranscripts.sessionId });
     }
 
-    this.logger.log({ userId, agentSlug, sessionId, modality, incognito }, 'call started');
+    this.logger.log({ userId, agentSlug, sessionId, incognito }, 'call started');
     return {
       sessionId,
       ephemeralToken,
