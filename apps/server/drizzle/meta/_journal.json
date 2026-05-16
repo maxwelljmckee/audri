@@ -246,6 +246,13 @@
       "when": 1778865080688,
       "tag": "0034_flawless_mentor",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1778954629538,
+      "tag": "0035_worthless_blue_blade",
+      "breakpoints": true
     }
   ]
 }

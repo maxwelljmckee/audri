@@ -24,7 +24,8 @@ export type UsageEventKind =
   | 'tool_fetch_page'
   | 'tool_search_transcripts'
   | 'tool_fetch_transcript'
-  | 'web_search';
+  | 'web_search'
+  | 'chat_turn';
 
 export interface RecordInferenceOpts {
   userId: string;

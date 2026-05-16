@@ -6,7 +6,7 @@
 
 import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
-import { checkSpendCap } from '@audri/shared/usage';
+import { checkSpendCap, recordInferenceUsage } from '@audri/shared/usage';
 import {
   type Content,
   type FunctionCall,
@@ -299,10 +299,23 @@ export class ChatService {
       }
     }
 
-    // TODO(chat-usage): record per-turn inference cost. Blocked on adding
-    // a 'chat_turn' value to the usage_event_kind enum (migration needed).
-    // For now chat inference is untracked — voice + ingestion are still
-    // captured normally. Backlog before chat-mode ships to production.
+    // Per-turn usage tracking. The Live path writes call_live once at
+    // /end with the cumulative session snapshot; chat writes one row per
+    // turn since each turn is its own generateContent call. Best-effort:
+    // a failed usage write MUST NOT fail the turn — the user already got
+    // their response.
+    if (lastUsage) {
+      void recordInferenceUsage({
+        userId,
+        agentId: session.agentId,
+        callTranscriptId: session.id,
+        eventKind: 'chat_turn',
+        model: CHAT_MODEL,
+        usage: lastUsage,
+      }).catch((err) => {
+        this.logger.error({ err, sessionId }, 'chat_turn usage write threw');
+      });
+    }
 
     return { agentText, usage: lastUsage };
   }

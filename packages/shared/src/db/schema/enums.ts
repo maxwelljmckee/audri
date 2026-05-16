@@ -70,6 +70,10 @@ export const usageEventKindEnum = pgEnum('usage_event_kind', [
   'tool_search_transcripts',
   'tool_fetch_transcript',
   'web_search',
+  // Per-turn text-chat inference. Each /chat/turn call streams Gemini
+  // output server-side and writes one row tagged with the cumulative
+  // usage_metadata snapshot the SDK emits.
+  'chat_turn',
 ]);
 
 export const artifactKindEnum = pgEnum('artifact_kind', ['research']);

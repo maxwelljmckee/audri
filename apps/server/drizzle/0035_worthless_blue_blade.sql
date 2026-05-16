@@ -1,0 +1,1 @@
+ALTER TYPE "public"."usage_event_kind" ADD VALUE 'chat_turn';
