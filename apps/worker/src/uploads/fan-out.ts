@@ -21,6 +21,15 @@ import type { NewPage, ProUploadFanOutResult } from './types.js';
 const PRO_MODEL = process.env.UPLOAD_INGESTION_MODEL ?? 'gemini-3.1-pro-preview';
 export const PRO_UPLOAD_FAN_OUT_MODEL = PRO_MODEL;
 
+// Wall-clock budget for a single Pro fan-out call. SDK's `abortSignal`
+// support fires the cancellation client-side after this elapses (Google
+// still charges for tokens already produced — we just stop waiting). 5
+// minutes is generous for legitimate output but tight enough to catch
+// genuine runaways (the 2026-05-15 Plato hang ran >17min before manual
+// abort, with no native cap). Override via env if a future long-input
+// case legitimately needs more.
+const PRO_FANOUT_WALLCLOCK_MS = Number(process.env.UPLOAD_FANOUT_TIMEOUT_MS ?? 5 * 60_000);
+
 const SYSTEM_PROMPT = `You are Audri, a disciplined maintainer of the user's personal knowledge wiki. You read a document the user uploaded — PDF text, markdown, plain text, or DOCX content — alongside a candidate set of wiki pages that may need updating, and you produce a structured write plan.
 
 You do NOT retrieve candidates (a separate model already did that) and you do NOT write to the database (backend commits your output). You only decide WHAT to write.
@@ -299,6 +308,10 @@ export async function runUploadFanOut(input: ProUploadFanOutInput): Promise<RunU
     model: PRO_MODEL,
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
+      // Wall-clock cancellation budget. SDK aborts the request client-side
+      // when the signal fires; Google still bills any tokens produced
+      // before then. Caller's catch surfaces a clear error.
+      abortSignal: AbortSignal.timeout(PRO_FANOUT_WALLCLOCK_MS),
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       responseMimeType: 'application/json',
       responseSchema: {

@@ -77,8 +77,18 @@ export async function openSession(
         if (msg.data) {
           callbacks.onModelAudio?.(msg.data);
         }
+        // Voice mode: model audio is transcribed server-side and arrives
+        // in outputTranscription. Text mode: model output streams as
+        // text parts directly inside modelTurn.parts. Both route to
+        // onModelTextChunk so the caller doesn't need to know which.
         const out = msg.serverContent?.outputTranscription;
         if (out?.text) callbacks.onModelTextChunk?.(out.text);
+        const parts = msg.serverContent?.modelTurn?.parts;
+        if (parts) {
+          for (const part of parts) {
+            if (part.text) callbacks.onModelTextChunk?.(part.text);
+          }
+        }
         const inn = msg.serverContent?.inputTranscription;
         if (inn?.text) callbacks.onUserText?.(inn.text);
         if (msg.serverContent?.interrupted) callbacks.onInterrupted?.();

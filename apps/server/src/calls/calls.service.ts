@@ -106,6 +106,8 @@ export interface StartCallArgs {
   userId: string;
   agentSlug: string;
   callType: 'generic' | 'onboarding';
+  modality: 'audio' | 'text';
+  incognito: boolean;
 }
 
 export interface StartCallResult {
@@ -121,7 +123,13 @@ export interface StartCallResult {
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
 
-  async startCall({ userId, agentSlug, callType }: StartCallArgs): Promise<StartCallResult> {
+  async startCall({
+    userId,
+    agentSlug,
+    callType,
+    modality,
+    incognito,
+  }: StartCallArgs): Promise<StartCallResult> {
     const [agent] = await db
       .select()
       .from(agents)
@@ -147,18 +155,12 @@ export class CallsService {
 
     const expireAt = new Date(Date.now() + 30 * 60 * 1000); // 30min
 
-    // Mint an ephemeral token bound to the live config. Persona stays
-    // server-side; client only sees the opaque token.
-    const tokenResp = await getGeminiClient().authTokens.create({
-      config: {
-        uses: 1,
-        expireTime: expireAt.toISOString(),
-        liveConnectConstraints: {
-          model: LIVE_MODEL,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            // Stream both sides as text so we can build a turn-tagged
-            // transcript on the client + persist it for ingestion.
+    // Text-modality sessions skip the audio-only config: no audio
+    // transcription (input is text already), no speech voice config, no
+    // server-side VAD. responseModalities flips to TEXT.
+    const audioOnlyConfig =
+      modality === 'audio'
+        ? {
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             speechConfig: {
@@ -175,6 +177,20 @@ export class CallsService {
                 silenceDurationMs: 1500,
               },
             },
+          }
+        : {};
+
+    // Mint an ephemeral token bound to the live config. Persona stays
+    // server-side; client only sees the opaque token.
+    const tokenResp = await getGeminiClient().authTokens.create({
+      config: {
+        uses: 1,
+        expireTime: expireAt.toISOString(),
+        liveConnectConstraints: {
+          model: LIVE_MODEL,
+          config: {
+            responseModalities: [modality === 'text' ? Modality.TEXT : Modality.AUDIO],
+            ...audioOnlyConfig,
             // Bumped above the model's MINIMAL default so the agent gets a
             // small reasoning budget for tool-use decisions + multi-step
             // intent without paying for full reasoning latency on every turn.
@@ -195,18 +211,21 @@ export class CallsService {
 
     // Pre-create the call_transcripts row so we have something to attach to
     // at /end. Status = in-progress (started_at set, ended_at null).
-    await db
-      .insert(callTranscripts)
-      .values({
-        userId,
-        agentId: agent.id,
-        sessionId,
-        callType,
-        startedAt: new Date(),
-      })
-      .onConflictDoNothing({ target: callTranscripts.sessionId });
+    // Incognito sessions skip this — no row, no /end, no ingestion.
+    if (!incognito) {
+      await db
+        .insert(callTranscripts)
+        .values({
+          userId,
+          agentId: agent.id,
+          sessionId,
+          callType,
+          startedAt: new Date(),
+        })
+        .onConflictDoNothing({ target: callTranscripts.sessionId });
+    }
 
-    this.logger.log({ userId, agentSlug, sessionId }, 'call started');
+    this.logger.log({ userId, agentSlug, sessionId, modality, incognito }, 'call started');
     return {
       sessionId,
       ephemeralToken,

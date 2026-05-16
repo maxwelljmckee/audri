@@ -22,6 +22,11 @@ export interface TranscriptHandle {
   // as a turn entry.
   finalizeAgentTurn: () => void;
   getAll: () => TranscriptTurn[];
+  // Current in-progress agent buffer (text mode renders this as a live
+  // streaming bubble below the finalized turns). Empty string when the
+  // model isn't mid-turn. Voice mode ignores this — finalized turns
+  // arrive after the audio plays.
+  getStreamingAgentText: () => string;
   reset: () => void;
 }
 
@@ -51,6 +56,9 @@ export function createTranscript(): TranscriptHandle {
     },
     getAll() {
       return turns.slice();
+    },
+    getStreamingAgentText() {
+      return agentBuffer;
     },
     reset() {
       turns.length = 0;

@@ -944,6 +944,14 @@ interface AccumulatedProResponse {
 // unchanged. structuredOutput (responseSchema) works with streaming per
 // the @google/genai SDK contract — each chunk carries an incremental
 // portion of the final JSON string, finalized on the last chunk.
+// Wall-clock budget for a single Pro fan-out attempt (a fresh signal is
+// minted per retry so each attempt gets the full budget). 5 min covers
+// the legitimate long-context cases comfortably while killing runaway
+// streams. Override via env when chunking work lands and individual
+// chunks need a longer or shorter cap. See uploads/fan-out.ts for the
+// shared rationale (2026-05-15 Plato dogfood incident).
+const PRO_FANOUT_WALLCLOCK_MS = Number(process.env.INGESTION_FANOUT_TIMEOUT_MS ?? 5 * 60_000);
+
 async function callProWithRetry(
   // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai params shape
   params: any,
@@ -953,7 +961,19 @@ async function callProWithRetry(
     try {
       const startedAt = Date.now();
       let firstChunkAt: number | undefined;
-      const stream = await getGeminiClient().models.generateContentStream(params);
+      // Fresh AbortSignal per attempt — retries get a full budget, not
+      // a leftover sliver of the previous attempt's clock. SDK aborts the
+      // request client-side when the signal fires; Google still bills any
+      // tokens already produced (acceptable — we're aborting because the
+      // stream is unreasonably slow, not because we want to refuse the work).
+      const paramsWithTimeout = {
+        ...params,
+        config: {
+          ...params.config,
+          abortSignal: AbortSignal.timeout(PRO_FANOUT_WALLCLOCK_MS),
+        },
+      };
+      const stream = await getGeminiClient().models.generateContentStream(paramsWithTimeout);
 
       let accumulated = '';
       let lastUsage: UsageMetadata | undefined;

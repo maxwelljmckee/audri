@@ -25,6 +25,13 @@ import type { TranscriptTurn } from './transcript.types.js';
 interface StartCallBody {
   agent_slug?: string;
   call_type?: 'generic' | 'onboarding';
+  // Voice (default) vs text-chat. Drives the Gemini Live responseModalities
+  // + drops audio-only config (transcription, speech, VAD).
+  modality?: 'audio' | 'text';
+  // Incognito calls mint a token but write nothing to call_transcripts and
+  // never receive /end. The agent experience is identical; persistence is
+  // skipped.
+  incognito?: boolean;
 }
 
 interface EndCallBody {
@@ -70,7 +77,15 @@ export class CallsController {
     }
     const agentSlug = body.agent_slug ?? 'assistant';
     const callType = body.call_type ?? 'generic';
-    return this.calls.startCall({ userId: user.id, agentSlug, callType });
+    const modality = body.modality ?? 'audio';
+    const incognito = body.incognito ?? false;
+    return this.calls.startCall({
+      userId: user.id,
+      agentSlug,
+      callType,
+      modality,
+      incognito,
+    });
   }
 
   @Post(':sessionId/end')

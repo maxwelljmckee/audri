@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,6 +21,7 @@ function formatElapsed(s: number) {
 
 export default function CallScreen() {
   const status = useCallStore((s) => s.status);
+  const incognito = useCallStore((s) => s.incognito);
   const endCall = useCallStore((s) => s.endCall);
   const reset = useCallStore((s) => s.reset);
   const startCall = useCallStore((s) => s.startCall);
@@ -28,6 +29,13 @@ export default function CallScreen() {
   // from the store so the elapsed timer reads the SAME baseline across
   // mount/unmount (back button → home → rejoin).
   const startedAt = useCallStore((s) => s.startedAt);
+
+  // Incognito flag arrives as a query param from the home FAB. Read once
+  // at mount — same way useEffect below kicks start() only on idle. After
+  // start runs, useCallStore.incognito is the source of truth (mirrored
+  // by useCall.start) and we read that instead.
+  const params = useLocalSearchParams<{ incognito?: string }>();
+  const incognitoParam = params.incognito === '1';
 
   // Read from the hoisted CallProvider so the live session survives this
   // screen unmounting (in-call back button → home → re-enter call).
@@ -60,7 +68,7 @@ export default function CallScreen() {
   useEffect(() => {
     if (status !== 'idle') return;
     startCall(); // store: idle → connecting; useCall onOpen will mark connected
-    void start();
+    void start({ incognito: incognitoParam });
   }, []);
 
   // Elapsed timer while connected. Recompute each tick from the stored
@@ -103,7 +111,9 @@ export default function CallScreen() {
         onRetry={() => {
           setElapsed(0);
           startCall();
-          void start();
+          // Preserve the original session's incognito flag — store still
+          // holds it (reset() only runs on dismiss / clean end).
+          void start({ incognito });
         }}
         onDismiss={() => {
           reset();
@@ -136,9 +146,16 @@ export default function CallScreen() {
                 so the layout doesn't shift when the name lands. The space
                 placeholder keeps the Text's line height occupied; opacity
                 hides it until the real name is ready. */}
-            <Text style={[styles.agentName, { opacity: agentName ? 1 : 0 }]} numberOfLines={1}>
-              {agentName ?? ' '}
-            </Text>
+            <View style={styles.agentNameRow}>
+              {incognito && (
+                <View style={styles.incognitoAvatar}>
+                  <Ionicons name="glasses-outline" size={20} color="#e8f1ff" />
+                </View>
+              )}
+              <Text style={[styles.agentName, { opacity: agentName ? 1 : 0 }]} numberOfLines={1}>
+                {agentName ?? ' '}
+              </Text>
+            </View>
             <Text style={styles.timer}>
               {status === 'connecting' || status === 'idle'
                 ? 'Connecting…'
@@ -189,6 +206,15 @@ const styles = StyleSheet.create({
   // Tight stack: agent name on top (the emphasized line), timer beneath
   // (de-emphasized). Small gap so they read as a single status pair.
   statusBlock: { alignItems: 'center', gap: 4 },
+  agentNameRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  incognitoAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3f3f4a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   agentName: { color: '#e8f1ff', fontSize: 40, fontWeight: '600' },
   timer: { color: '#7aa3d4', fontSize: 32, fontWeight: '500' },
   errorText: {

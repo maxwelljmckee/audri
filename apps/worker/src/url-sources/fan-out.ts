@@ -15,6 +15,10 @@ import type { NewPage, ProUrlSourceFanOutResult } from './types.js';
 const PRO_MODEL = process.env.URL_INGESTION_MODEL ?? 'gemini-3.1-pro-preview';
 export const PRO_URL_SOURCE_FAN_OUT_MODEL = PRO_MODEL;
 
+// Wall-clock budget for a single Pro fan-out call. See uploads/fan-out.ts
+// for rationale (2026-05-15 Plato dogfood incident).
+const PRO_FANOUT_WALLCLOCK_MS = Number(process.env.URL_SOURCE_FANOUT_TIMEOUT_MS ?? 5 * 60_000);
+
 const SYSTEM_PROMPT = `You are Audri, a disciplined maintainer of the user's personal knowledge wiki. You read a web article the user collected (extracted main content + metadata) alongside a candidate set of wiki pages that may need updating, and you produce a structured write plan.
 
 You do NOT retrieve candidates and you do NOT write to the database. You only decide WHAT to write.
@@ -232,6 +236,8 @@ export async function runUrlSourceFanOut(
     model: PRO_MODEL,
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
+      // Wall-clock cancellation budget — see uploads/fan-out.ts.
+      abortSignal: AbortSignal.timeout(PRO_FANOUT_WALLCLOCK_MS),
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       responseMimeType: 'application/json',
       responseSchema: {
