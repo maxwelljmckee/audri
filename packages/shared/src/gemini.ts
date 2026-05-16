@@ -22,4 +22,8 @@ export const LIVE_MODEL = 'models/gemini-3.1-flash-live-preview';
 // Gemini's own guidance, native-audio models are "highly optimized for
 // voice processing" and reject pure-text modalities. The 2.5 Live
 // preview pre-dates the native-audio push and accepts text reliably.
-export const LIVE_MODEL_TEXT = 'models/gemini-live-2.5-flash-preview';
+//
+// Naming mirrors the 3.1 audio model's pattern (<gen>-flash-live-preview);
+// the SDK example's `gemini-live-<gen>-flash-preview` form returned 1008
+// "not found" on the live bidiGenerateContent endpoint.
+export const LIVE_MODEL_TEXT = 'models/gemini-2.5-flash-live-preview';
