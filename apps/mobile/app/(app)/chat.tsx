@@ -1,19 +1,18 @@
 // Text-modality chat screen. Parity with /call lifecycle (CallProvider at
 // root, mount-once start, leave-doesn't-end). Renders the conversation as
-// iMessage-style bubbles — user-side bubbles get a gradient fill via
-// MaskedView (lifted from the facebook-messenger-gradient scaffold).
+// iMessage-style bubbles — user bubbles get a per-bubble pink→purple→cyan
+// gradient via expo-linear-gradient.
 //
 // Audri streams in token-by-token; the in-progress bubble at the bottom
-// reads from useCall's streamingAgentText. On turnComplete the streaming
-// buffer empties and lands in the transcript as a finalized turn.
+// reads from useCall's streamingAgentText. On stream-end the streaming
+// buffer empties and the response lands in the transcript as a
+// finalized agent turn.
 
 import { Ionicons } from '@expo/vector-icons';
-import MaskedView from '@react-native-masked-view/masked-view';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Dimensions,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -23,11 +22,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, {
-  useAnimatedScrollHandler,
-  useAnimatedStyle,
-  useSharedValue,
-} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GlassButton } from '../../components/buttons';
 import { useCallContext } from '../../lib/CallContext';
@@ -36,8 +30,6 @@ import { useCallStore } from '../../lib/useCallStore';
 
 const ENDING_DELAY_MS = 400;
 const GRADIENT_COLORS = ['#FD84AA', '#A38CF9', '#09E0FF'] as const;
-const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 interface VisibleMessage {
   id: string;
@@ -72,12 +64,7 @@ export default function ChatScreen() {
   const { start, end, sendUserText, transcript, streamingAgentText, error } = useCallContext();
 
   const [draft, setDraft] = useState('');
-  const [contentHeight, setContentHeight] = useState(0);
-  const scrollRef = useRef<Animated.ScrollView>(null);
-  const scrollY = useSharedValue(0);
-  const onScroll = useAnimatedScrollHandler((e) => {
-    scrollY.value = e.contentOffset.y;
-  });
+  const scrollRef = useRef<ScrollView>(null);
 
   // Mount-once kick — text modality. Same idle-gate as /call so navigating
   // back into the screen mid-session rejoins without re-starting.
@@ -125,13 +112,6 @@ export default function ChatScreen() {
     sendUserText(text);
   }
 
-  // Translate the gradient by the scroll offset so it appears fixed in
-  // the viewport while bubbles scroll past — each user bubble lights up
-  // with its viewport-relative slice of the gradient (parallax).
-  const gradientStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: scrollY.value }],
-  }));
-
   return (
     <View style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
@@ -159,85 +139,42 @@ export default function ChatScreen() {
           style={styles.flex}
           keyboardVerticalOffset={0}
         >
-          <Animated.ScrollView
+          <ScrollView
             ref={scrollRef}
-            onScroll={onScroll}
-            scrollEventThrottle={16}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {/* Wrap mask + visible-text in the same container so both share
-                identical flex layout — the mask drives parent height, the
-                overlay sits on top via absolute fill. */}
-            <View onLayout={(e) => setContentHeight(e.nativeEvent.layout.height)}>
-              <MaskedView
-                style={styles.maskedHost}
-                maskElement={
-                  <View>
-                    {visibleMessages.map((m) => (
-                      <View
-                        key={`mask-${m.id}`}
-                        style={[
-                          styles.bubble,
-                          m.role === 'user' ? styles.bubbleMine : styles.bubbleAgent,
-                          {
-                            backgroundColor: m.role === 'user' ? '#fff' : 'transparent',
-                          },
-                        ]}
-                      >
-                        <Text style={styles.bubbleHiddenText}>{m.text}</Text>
-                      </View>
-                    ))}
-                  </View>
-                }
-              >
-                {/* Gradient sized to screen height + translated by scroll
-                    so it appears fixed in viewport. contentHeight here just
-                    ensures the masked region matches the bubble stack. */}
-                <View style={{ height: Math.max(contentHeight, SCREEN_HEIGHT) }}>
-                  <AnimatedLinearGradient
+            {visibleMessages.map((m) =>
+              m.role === 'user' ? (
+                <View
+                  key={m.id}
+                  style={[styles.bubble, styles.bubbleMine, styles.bubbleUserGradientHost]}
+                >
+                  {/* Per-bubble gradient. Each user bubble renders the
+                      full pink→purple→cyan ramp behind its text — close
+                      visual cousin of the iMessage gradient, simpler than
+                      the masked-view parallax. */}
+                  <LinearGradient
                     colors={GRADIENT_COLORS}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
-                    style={[styles.gradient, gradientStyle]}
+                    style={StyleSheet.absoluteFill}
                   />
+                  <Text style={[styles.bubbleText, styles.bubbleTextMine]}>{m.text}</Text>
                 </View>
-              </MaskedView>
-
-              {/* Visible-text overlay. Same flex layout as the mask, so
-                  bubble positions line up; absolute fill so it overlays
-                  the gradient. User bubbles render transparent (gradient
-                  shows through the mask beneath); agent bubbles paint a
-                  flat dark surface where the mask was transparent. */}
-              <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                {visibleMessages.map((m) => (
-                  <View
-                    key={`text-${m.id}`}
-                    style={[
-                      styles.bubble,
-                      m.role === 'user' ? styles.bubbleMine : styles.bubbleAgent,
-                      {
-                        backgroundColor: m.role === 'user' ? 'transparent' : '#1f2937',
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.bubbleText,
-                        m.role === 'user' ? styles.bubbleTextMine : styles.bubbleTextAgent,
-                      ]}
-                    >
-                      {m.text}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-
+              ) : (
+                <View
+                  key={m.id}
+                  style={[styles.bubble, styles.bubbleAgent, styles.bubbleAgentSolid]}
+                >
+                  <Text style={[styles.bubbleText, styles.bubbleTextAgent]}>{m.text}</Text>
+                </View>
+              ),
+            )}
             {status === 'connecting' && visibleMessages.length === 0 && (
               <Text style={styles.statusHint}>Connecting…</Text>
             )}
-          </Animated.ScrollView>
+          </ScrollView>
 
           <View style={styles.inputRow}>
             <TextInput
@@ -304,18 +241,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
-  maskedHost: {
-    flex: 1,
-  },
-  gradient: {
-    flex: 1,
-  },
   bubble: {
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginVertical: 4,
     borderRadius: 18,
     maxWidth: '78%',
+    overflow: 'hidden',
   },
   bubbleMine: {
     alignSelf: 'flex-end',
@@ -325,17 +257,19 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderBottomLeftRadius: 6,
   },
+  bubbleUserGradientHost: {
+    // The gradient is positioned absolutely inside the bubble; overflow
+    // hidden (above) clips it to the rounded corners.
+  },
+  bubbleAgentSolid: {
+    backgroundColor: '#1f2937',
+  },
   bubbleText: {
     fontSize: 16,
     lineHeight: 22,
   },
   bubbleTextMine: { color: '#ffffff' },
   bubbleTextAgent: { color: '#e8f1ff' },
-  // The mask-layer text is invisible — we only need its bounds so the
-  // bubble silhouette sizes match the visible-text layer above. Using
-  // transparent (rather than opacity:0) keeps the alpha mask itself
-  // opaque for the bubble silhouette.
-  bubbleHiddenText: { fontSize: 16, lineHeight: 22, color: 'transparent' },
   statusHint: {
     color: '#7aa3d4',
     fontSize: 14,

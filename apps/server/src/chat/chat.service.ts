@@ -11,6 +11,7 @@ import {
   type Content,
   type FunctionCall,
   type FunctionDeclaration,
+  type GenerateContentResponse,
   type Part,
   type Tool,
   Type,
@@ -88,6 +89,10 @@ const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
   },
 };
 
+// Function declarations only — googleSearch grounding is incompatible
+// with function declarations in the same tools array for some Gemini
+// model/SDK combos (returns a generic server-side error rather than a
+// clear validation message). Re-add as a separate phase if needed.
 const CHAT_TOOLS: Tool[] = [
   {
     functionDeclarations: [
@@ -97,7 +102,6 @@ const CHAT_TOOLS: Tool[] = [
       FETCH_TRANSCRIPT_DECL,
     ],
   },
-  { googleSearch: {} },
 ];
 
 export interface ChatTurn {
@@ -189,15 +193,40 @@ export class ChatService {
     let agentText = '';
     let lastUsage: UsageMetadata | undefined;
 
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-      const stream = await getGeminiClient().models.generateContentStream({
+    this.logger.log(
+      {
+        sessionId,
+        userId,
+        historyTurns: history.length,
+        userTextLength: userText.length,
         model: CHAT_MODEL,
-        contents,
-        config: {
-          systemInstruction: { parts: [{ text: systemInstruction }] },
-          tools: CHAT_TOOLS,
-        },
-      });
+      },
+      'chat turn starting',
+    );
+
+    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+      let stream: AsyncGenerator<GenerateContentResponse>;
+      try {
+        stream = await getGeminiClient().models.generateContentStream({
+          model: CHAT_MODEL,
+          contents,
+          config: {
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            tools: CHAT_TOOLS,
+          },
+        });
+      } catch (err) {
+        this.logger.error(
+          {
+            err,
+            sessionId,
+            iteration,
+            contentsCount: contents.length,
+          },
+          'chat generateContentStream rejected',
+        );
+        throw err;
+      }
 
       const pendingFunctionCalls: FunctionCall[] = [];
       // Buffer the model turn's full part list — text + function calls in
@@ -205,23 +234,43 @@ export class ChatService {
       // contents before sending function responses back.
       const modelTurnParts: Part[] = [];
 
-      for await (const chunk of stream) {
-        const parts = chunk.candidates?.[0]?.content?.parts ?? [];
-        for (const part of parts) {
-          if (part.text) {
-            onChunk(part.text);
-            agentText += part.text;
-            modelTurnParts.push({ text: part.text });
+      let chunkCount = 0;
+      try {
+        for await (const chunk of stream) {
+          chunkCount += 1;
+          const parts = chunk.candidates?.[0]?.content?.parts ?? [];
+          for (const part of parts) {
+            if (part.text) {
+              onChunk(part.text);
+              agentText += part.text;
+              modelTurnParts.push({ text: part.text });
+            }
+            if (part.functionCall) {
+              pendingFunctionCalls.push(part.functionCall);
+              modelTurnParts.push({ functionCall: part.functionCall });
+            }
           }
-          if (part.functionCall) {
-            pendingFunctionCalls.push(part.functionCall);
-            modelTurnParts.push({ functionCall: part.functionCall });
+          if (chunk.usageMetadata) {
+            lastUsage = chunk.usageMetadata;
           }
         }
-        if (chunk.usageMetadata) {
-          lastUsage = chunk.usageMetadata;
-        }
+      } catch (err) {
+        this.logger.error(
+          { err, sessionId, iteration, chunkCount, agentTextLen: agentText.length },
+          'chat stream iteration threw',
+        );
+        throw err;
       }
+      this.logger.log(
+        {
+          sessionId,
+          iteration,
+          chunkCount,
+          pendingFunctionCalls: pendingFunctionCalls.length,
+          agentTextLen: agentText.length,
+        },
+        'chat stream iteration complete',
+      );
 
       if (pendingFunctionCalls.length === 0) {
         // No more tool calls — model is done.
