@@ -99,9 +99,25 @@ export async function openSession(
         if (grounding) callbacks.onGroundingMetadata?.(grounding);
         if (msg.usageMetadata) callbacks.onUsageMetadata?.(msg.usageMetadata);
       },
-      onerror: (e: ErrorEvent) => callbacks.onError?.(new Error(e.message)),
+      onerror: (e: ErrorEvent) => {
+        // Surface the full event so Gemini's diagnostic fields make it
+        // out (e.message often elides what e.error / e.type carry).
+        // biome-ignore lint/suspicious/noConsole: surfacing live-session diagnostics
+        console.warn('[live] onerror', {
+          message: e.message,
+          type: e.type,
+          error: (e as ErrorEvent & { error?: unknown }).error,
+        });
+        callbacks.onError?.(new Error(e.message));
+      },
       onclose: (e: CloseEvent) => {
         closed = true;
+        // biome-ignore lint/suspicious/noConsole: surfacing live-session diagnostics
+        console.warn('[live] onclose', {
+          code: e.code,
+          reason: e.reason,
+          wasClean: e.wasClean,
+        });
         callbacks.onClose?.(e.reason ?? 'closed');
       },
     },

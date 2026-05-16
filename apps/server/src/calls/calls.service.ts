@@ -203,7 +203,12 @@ export class CallsService {
             // Bumped above the model's MINIMAL default so the agent gets a
             // small reasoning budget for tool-use decisions + multi-step
             // intent without paying for full reasoning latency on every turn.
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            // Skip in text modality — the preview Live model rejects the
+            // config combo ("internal error encountered" on connect) when
+            // thinkingConfig is paired with responseModalities=[TEXT].
+            ...(modality === 'audio'
+              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
+              : {}),
             systemInstruction: { parts: [{ text: systemInstruction }] },
             tools: modality === 'text' ? LIVE_TOOLS_TEXT : LIVE_TOOLS_AUDIO,
           },
