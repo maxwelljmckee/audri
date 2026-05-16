@@ -88,7 +88,7 @@ const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
   },
 };
 
-const LIVE_TOOLS: Tool[] = [
+const LIVE_FUNCTION_TOOLS: Tool[] = [
   {
     functionDeclarations: [
       SEARCH_WIKI_DECL,
@@ -97,10 +97,19 @@ const LIVE_TOOLS: Tool[] = [
       FETCH_TRANSCRIPT_DECL,
     ],
   },
-  // Gemini-native grounded web search. Model handles internally; no client
-  // fulfillment. Billed per request — use conservatively (steered by prompt).
-  { googleSearch: {} },
 ];
+
+// Audio sessions get function declarations + Gemini-native grounded web
+// search. Model handles googleSearch internally; no client fulfillment.
+// Billed per request — prompt steers the model toward wiki-first.
+const LIVE_TOOLS_AUDIO: Tool[] = [...LIVE_FUNCTION_TOOLS, { googleSearch: {} }];
+
+// Text-modality sessions skip googleSearch — the Live API rejects
+// configs that mix googleSearch with TEXT response modality
+// ("internal error encountered" on connect). Function declarations
+// still work, so wiki/transcript tools stay available; web grounding
+// returns later if/when Google relaxes this.
+const LIVE_TOOLS_TEXT: Tool[] = LIVE_FUNCTION_TOOLS;
 
 export interface StartCallArgs {
   userId: string;
@@ -196,7 +205,7 @@ export class CallsService {
             // intent without paying for full reasoning latency on every turn.
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            tools: LIVE_TOOLS,
+            tools: modality === 'text' ? LIVE_TOOLS_TEXT : LIVE_TOOLS_AUDIO,
           },
         },
         httpOptions: { apiVersion: 'v1alpha' },
