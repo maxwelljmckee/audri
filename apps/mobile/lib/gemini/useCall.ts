@@ -10,6 +10,7 @@
 // Incognito: skips snapshot persistence + the /end POST. Same agent
 // experience; zero server-side residue beyond the initial token mint.
 
+import { fetch as expoFetch } from 'expo/fetch';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { AudioManager } from 'react-native-audio-api';
@@ -28,10 +29,11 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
 interface StartCallResponse {
   sessionId: string;
-  ephemeralToken: string;
+  // null for text mode — no Gemini WebSocket on the client side.
+  ephemeralToken: string | null;
   model: string;
   voice: string;
-  expiresAt: string;
+  expiresAt: string | null;
 }
 
 export type CallType = 'generic' | 'onboarding';
@@ -209,6 +211,14 @@ export function useCall(): UseCallResult {
 
         if (gen !== generationRef.current) return; // stale
 
+        // Text mode: no Gemini WebSocket. sendUserText posts to
+        // /chat/turn per message and streams chunks back. Mark connected
+        // so the chat screen flips out of "Connecting…" and accepts input.
+        if (modality === 'text') {
+          useCallStore.getState().markConnected();
+          return;
+        }
+
         // 2. Audio init — voice modality only. Text mode skips iOS audio
         //    session config + mic/output + amplitude / barge-in.
         if (modality === 'voice') {
@@ -272,9 +282,11 @@ export function useCall(): UseCallResult {
           input.onError((e) => dropCall(e.message));
         }
 
-        // 3. Open Gemini Live session. Same callbacks work for both
-        //    modalities — audio chunks no-op in text mode (output is null),
-        //    text chunks land in the transcript either way.
+        // 3. Open Gemini Live session. Voice modality only now —
+        //    text mode early-returned above.
+        if (!ephemeralToken) {
+          throw new Error('audio session missing ephemeral token');
+        }
         const output = outputRef.current;
         const input = inputRef.current;
         const session = await openSession(
@@ -284,30 +296,15 @@ export function useCall(): UseCallResult {
             onModelAudio: (b64) => output?.enqueue(b64),
             onModelTextChunk: (chunk) => {
               transcriptRef.current.appendAgentTextChunk(chunk);
-              // Text-mode UI reads streaming agent turns from the
-              // transcript ref — refresh on every chunk so the bubble
-              // grows live. Voice mode finalizes the turn on
-              // playback-end instead (transcription lands after the
-              // audio plays, so per-chunk refresh would be redundant).
-              if (modalityRef.current === 'text') {
-                refreshTranscript();
-              }
             },
             onUserText: (text) => {
               transcriptRef.current.appendUserText(text);
               refreshTranscript();
             },
             onTurnComplete: () => {
-              // Voice: don't tear down playback — wait for the queue
-              // to drain via per-buffer onEnded.
-              // Text: finalize the agent turn now so the next user
-              // message starts a fresh bubble.
-              if (output) {
-                output.markTurnComplete();
-              } else {
-                transcriptRef.current.finalizeAgentTurn();
-                refreshTranscript();
-              }
+              // Don't tear down playback — wait for the queue to drain
+              // via per-buffer onEnded.
+              output?.markTurnComplete();
             },
             onInterrupted: () => {
               output?.flush();
@@ -358,43 +355,32 @@ export function useCall(): UseCallResult {
           return;
         }
 
-        // 4. Wire mic → session (voice mode only). Text mode users push
-        //    turns via sendUserText() instead.
-        if (modality === 'voice' && input) {
-          input.onFrame((b64) => session.sendAudio(b64));
-          await input.start();
+        // 4. Wire mic → session.
+        if (!input) throw new Error('audio input missing for voice session');
+        input.onFrame((b64) => session.sendAudio(b64));
+        await input.start();
 
-          // 5. Backgrounded calls KEEP RUNNING — Audri behaves like a regular
-          // phone call. iOS keeps our audio session + WebSocket alive via the
-          // `UIBackgroundModes: ["audio"]` entitlement in app.json. Only the
-          // user's explicit End-Call button (or a hard failure: force-quit,
-          // crash, network drop) terminates the session.
-          //
-          // The snapshot keeps getting refreshed via persistSnapshot() on every
-          // transcript change, so a hard failure mid-call still recovers via
-          // the launch sweep. Backgrounding alone doesn't trigger anything.
-          appStateSubRef.current = AppState.addEventListener('change', () => {
-            // Intentional no-op. Background-audio entitlement does the work.
-          });
-        }
+        // 5. Backgrounded calls KEEP RUNNING — Audri behaves like a regular
+        // phone call. iOS keeps our audio session + WebSocket alive via the
+        // `UIBackgroundModes: ["audio"]` entitlement in app.json. Only the
+        // user's explicit End-Call button (or a hard failure: force-quit,
+        // crash, network drop) terminates the session.
+        //
+        // The snapshot keeps getting refreshed via persistSnapshot() on every
+        // transcript change, so a hard failure mid-call still recovers via
+        // the launch sweep. Backgrounding alone doesn't trigger anything.
+        appStateSubRef.current = AppState.addEventListener('change', () => {
+          // Intentional no-op. Background-audio entitlement does the work.
+        });
 
         // 6. Kick the model off. The cue routes through the system prompt — for
         // onboarding it triggers the structured self-intro + opener; for generic
         // it's just a casual greeting.
-        //
-        // Voice mode: fire through sendRealtimeInput; VAD closes the turn and
-        // the model responds. Text mode: discrete client-content turn with
-        // explicit turnComplete — without it the server has no signal to
-        // start generating.
-        const kickoffText =
+        session.sendText(
           callType === 'onboarding'
             ? "Begin the onboarding call now. Open with your self-introduction, then ask the life-history opener as described in your scaffolding. Don't ask 'what brings you here' or 'what can I help you with' — those are explicitly out of scope for the opener."
-            : 'Greet me now.';
-        if (modality === 'text') {
-          session.sendClientText(kickoffText);
-        } else {
-          session.sendText(kickoffText);
-        }
+            : 'Greet me now.',
+        );
       } catch (e) {
         // Surface to Sentry — silent setError-only handling meant connection
         // failures were invisible. The dropped-call screen still shows the
@@ -490,18 +476,93 @@ export function useCall(): UseCallResult {
     }
   }, [refreshTranscript, teardown]);
 
-  // Text-mode user input: append to the local transcript + push the turn
-  // over the live session as a discrete client-content turn (the Live API
-  // requires explicit turnComplete for text input). Voice mode never calls
-  // this — server-side inputAudioTranscription handles user turns there.
+  // Text-mode user input. Posts to /chat/turn with the full history +
+  // user text; reads the streamed agent response back as chunks via
+  // expo/fetch (RN's stock fetch buffers entire response bodies — only
+  // expo/fetch exposes a streaming ReadableStream).
+  //
+  // Tools (search_wiki / fetch_page / search_transcripts / fetch_transcript
+  // / googleSearch) run server-side and are invisible to the client. The
+  // stream only carries the final agent text.
   const sendUserText = useCallback(
-    (text: string) => {
+    async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
-      if (!sessionRef.current?.isOpen()) return;
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+
       transcriptRef.current.appendUserText(trimmed);
       refreshTranscript();
-      sessionRef.current.sendClientText(trimmed);
+
+      // History = everything currently finalized in the transcript,
+      // EXCLUDING the user turn we just appended (it goes on the wire as
+      // `user_text`). The model's contents array gets rebuilt server-side
+      // each turn — no need to ship tool-call exchanges.
+      const turns = transcriptRef.current.getAll();
+      const historyTurns = turns.slice(0, -1).map((t) => ({ role: t.role, text: t.text }));
+
+      try {
+        const { data } = await supabase.auth.getSession();
+        const jwt = data.session?.access_token;
+        if (!jwt) throw new Error('not signed in');
+
+        const response = await expoFetch(`${API_URL}/chat/turn`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            user_text: trimmed,
+            history: historyTurns,
+          }),
+        });
+
+        if (!response.ok) {
+          // Spend-cap = 402. Match the voice-call error surfacing so the
+          // chat screen can render the same "limit reached" affordance.
+          if (response.status === 402) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`SPEND_CAP_EXCEEDED ${body}`);
+          }
+          const body = await response.text().catch(() => '');
+          throw new Error(`chat turn failed: ${response.status} ${body.slice(0, 200)}`);
+        }
+
+        const body = response.body;
+        if (!body) {
+          throw new Error('chat response has no body stream');
+        }
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            const chunk = decoder.decode(value, { stream: true });
+            if (chunk) {
+              transcriptRef.current.appendAgentTextChunk(chunk);
+              refreshTranscript();
+            }
+          }
+        }
+        const tail = decoder.decode();
+        if (tail) {
+          transcriptRef.current.appendAgentTextChunk(tail);
+        }
+        transcriptRef.current.finalizeAgentTurn();
+        refreshTranscript();
+      } catch (err) {
+        captureClientError('chat-turn-failed', err, { sessionId });
+        setError(err instanceof Error ? err.message : String(err));
+        // Don't tear down the whole session on a single turn failure —
+        // user can retry by sending another message. Finalize whatever
+        // partial agent text we've accumulated so the bubble isn't left
+        // mid-stream.
+        transcriptRef.current.finalizeAgentTurn();
+        refreshTranscript();
+      }
     },
     [refreshTranscript],
   );

@@ -15,15 +15,3 @@ export function getGeminiClient(): GoogleGenAI {
 
 // Locked-in for slice 3. Bumps live in code as Google releases new versions.
 export const LIVE_MODEL = 'models/gemini-3.1-flash-live-preview';
-
-// 2.5-generation Live preview for text-modality sessions. The 3.1
-// "native audio" model returns WebSocket 1011 ("internal error
-// encountered") when configured with responseModalities=[TEXT] — per
-// Gemini's own guidance, native-audio models are "highly optimized for
-// voice processing" and reject pure-text modalities. The 2.5 Live
-// preview pre-dates the native-audio push and accepts text reliably.
-//
-// Naming mirrors the 3.1 audio model's pattern (<gen>-flash-live-preview);
-// the SDK example's `gemini-live-<gen>-flash-preview` form returned 1008
-// "not found" on the live bidiGenerateContent endpoint.
-export const LIVE_MODEL_TEXT = 'models/gemini-2.5-flash-live-preview';

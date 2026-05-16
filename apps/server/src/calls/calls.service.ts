@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
-import { LIVE_MODEL, LIVE_MODEL_TEXT, getGeminiClient } from '@audri/shared/gemini';
+import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
 import {
   EndSensitivity,
   type FunctionDeclaration,
@@ -121,11 +121,18 @@ export interface StartCallArgs {
 
 export interface StartCallResult {
   sessionId: string;
-  ephemeralToken: string;
+  // Ephemeral token for direct Gemini Live WebSocket. Only set for
+  // audio-modality sessions; text mode talks to /chat/turn instead and
+  // doesn't need a client-side token.
+  ephemeralToken: string | null;
+  // Model name. For audio this is the Live preview the token is bound to.
+  // For text this is informational only — the actual model lives in
+  // chat.service.ts.
   model: string;
   voice: string;
-  // Time after which the token will be rejected by Google.
-  expiresAt: string;
+  // Time after which the audio token will be rejected by Google. Null
+  // for text mode (no token).
+  expiresAt: string | null;
 }
 
 @Injectable()
@@ -160,31 +167,63 @@ export class CallsService {
       userPromptNotes: agent.userPromptNotes,
       callType,
       preloadBlock,
+      modality,
     });
 
+    // Text-modality sessions don't open a Gemini WebSocket from the
+    // client. The mobile chat screen posts each turn to /chat/turn,
+    // which composes its own prompt + tool config server-side. So for
+    // text we skip the token mint entirely; only create the
+    // call_transcripts row so /chat/turn can validate the sessionId
+    // and /calls/:id/end can commit + ingest.
+    if (modality === 'text') {
+      if (!incognito) {
+        await db
+          .insert(callTranscripts)
+          .values({
+            userId,
+            agentId: agent.id,
+            sessionId,
+            callType,
+            startedAt: new Date(),
+          })
+          .onConflictDoNothing({ target: callTranscripts.sessionId });
+      }
+      this.logger.log(
+        { userId, agentSlug, sessionId, modality, incognito },
+        'chat session started (text — no token mint)',
+      );
+      return {
+        sessionId,
+        ephemeralToken: null,
+        model: 'gemini-2.5-flash',
+        voice: agent.voice,
+        expiresAt: null,
+      };
+    }
+
+    // Audio path — mint an ephemeral token bound to the Live config.
+    // Persona stays server-side; client only sees the opaque token.
     const expireAt = new Date(Date.now() + 30 * 60 * 1000); // 30min
 
-    // Pick the live model per modality. Audio uses the 3.1 native-audio
-    // preview; text routes to the older 2.5 Live preview because 3.1
-    // rejects TEXT modality with WebSocket 1011 (the native-audio family
-    // is "highly optimized for voice processing" per Google's own
-    // guidance, and unsupported-config errors are how they surface that).
-    const liveModel = modality === 'text' ? LIVE_MODEL_TEXT : LIVE_MODEL;
-
-    // Text-modality sessions skip the audio-only config: no audio
-    // transcription (input is text already), no speech voice config, no
-    // server-side VAD. responseModalities flips to TEXT.
-    const audioOnlyConfig =
-      modality === 'audio'
-        ? {
+    const tokenResp = await getGeminiClient().authTokens.create({
+      config: {
+        uses: 1,
+        expireTime: expireAt.toISOString(),
+        liveConnectConstraints: {
+          model: LIVE_MODEL,
+          config: {
+            responseModalities: [Modality.AUDIO],
+            // Stream both sides as text so we can build a turn-tagged
+            // transcript on the client + persist it for ingestion.
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             speechConfig: {
               voiceConfig: { prebuiltVoiceConfig: { voiceName: agent.voice } },
             },
-            // Server-side VAD. Tuned per sandbox: low start sensitivity (don't
-            // false-trigger on noise), high end sensitivity + long silence
-            // window so natural pauses don't end turns prematurely.
+            // Server-side VAD. Tuned per sandbox: low start sensitivity
+            // (don't false-trigger on noise), high end sensitivity + long
+            // silence window so natural pauses don't end turns prematurely.
             realtimeInputConfig: {
               automaticActivityDetection: {
                 startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
@@ -193,31 +232,13 @@ export class CallsService {
                 silenceDurationMs: 1500,
               },
             },
-          }
-        : {};
-
-    // Mint an ephemeral token bound to the live config. Persona stays
-    // server-side; client only sees the opaque token.
-    const tokenResp = await getGeminiClient().authTokens.create({
-      config: {
-        uses: 1,
-        expireTime: expireAt.toISOString(),
-        liveConnectConstraints: {
-          model: liveModel,
-          config: {
-            responseModalities: [modality === 'text' ? Modality.TEXT : Modality.AUDIO],
-            ...audioOnlyConfig,
-            // Bumped above the model's MINIMAL default so the agent gets a
-            // small reasoning budget for tool-use decisions + multi-step
-            // intent without paying for full reasoning latency on every turn.
-            ...(modality === 'audio'
-              ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-              : {}),
+            // Bumped above the model's MINIMAL default so the agent gets
+            // a small reasoning budget for tool-use decisions + multi-
+            // step intent without paying for full reasoning latency on
+            // every turn.
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            // Text-modality starts with no tools / thinking until the 2.5
-            // Live preview is confirmed to accept the base text config.
-            // Once connection is verified, layer them back one at a time.
-            ...(modality === 'audio' ? { tools: LIVE_TOOLS_AUDIO } : {}),
+            tools: LIVE_TOOLS_AUDIO,
           },
         },
         httpOptions: { apiVersion: 'v1alpha' },
@@ -246,17 +267,11 @@ export class CallsService {
         .onConflictDoNothing({ target: callTranscripts.sessionId });
     }
 
-    this.logger.log(
-      { userId, agentSlug, sessionId, modality, incognito, liveModel },
-      'call started',
-    );
+    this.logger.log({ userId, agentSlug, sessionId, modality, incognito }, 'call started');
     return {
       sessionId,
       ephemeralToken,
-      // Return the model the token was minted against — text uses the 2.5
-      // Live preview, audio uses 3.1. Mobile passes this through to
-      // ai.live.connect().
-      model: liveModel,
+      model: LIVE_MODEL,
       voice: agent.voice,
       expiresAt: expireAt.toISOString(),
     };

@@ -5,14 +5,15 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { AutomationsModule } from './automations/automations.module.js';
 import { CallsModule } from './calls/calls.module.js';
-import { StorageModule } from './storage/storage.module.js';
-import { UrlsModule } from './urls/urls.module.js';
+import { ChatModule } from './chat/chat.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MeModule } from './me/me.module.js';
 import { SeedModule } from './seed/seed.module.js';
+import { StorageModule } from './storage/storage.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 import { UserThrottlerGuard } from './throttler/user-throttler.guard.js';
 import { TodosModule } from './todos/todos.module.js';
+import { UrlsModule } from './urls/urls.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
 
 @Module({
@@ -80,6 +81,7 @@ import { WebhooksModule } from './webhooks/webhooks.module.js';
     WebhooksModule,
     MeModule,
     CallsModule,
+    ChatModule,
     TasksModule,
     TodosModule,
     AutomationsModule,

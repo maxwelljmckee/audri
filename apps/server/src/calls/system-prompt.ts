@@ -11,6 +11,11 @@ interface ComposeArgs {
   // pages). Only set for generic calls; onboarding intentionally starts cold
   // since the user hasn't given the model anything yet.
   preloadBlock?: string;
+  // Audio (default — voice call) or text-chat. The scaffolding is voice-
+  // first; for text we prepend an override block that relaxes the voice-
+  // pacing constraints while preserving the tone / brevity-bias / tool-
+  // use guidance.
+  modality?: 'audio' | 'text';
 }
 
 export function composeSystemPrompt(args: ComposeArgs): string {
@@ -19,7 +24,24 @@ export function composeSystemPrompt(args: ComposeArgs): string {
       ? composeOnboardingScaffolding(args.agentName)
       : composeGenericScaffolding(args.agentName);
 
+  // Text-mode override: the generic scaffold below assumes voice. Prepend
+  // a short override so the model treats this as a typed chat — markdown
+  // OK, slightly longer responses OK — without rewriting the whole
+  // scaffold (the rest of the guidance still applies).
+  const modalityOverride =
+    args.modality === 'text'
+      ? [
+          '# Modality override',
+          '',
+          `You are talking to the user via a text-chat interface, not a live voice call. The scaffolding below was written for voice; treat its "voice", "audio", "narrate" framing as references to conversational pacing rather than literal audio. Markdown formatting (bullet lists, bold, code blocks) is fine and often clarifying. Responses can run a little longer than they would in voice when the moment warrants — but keep the brevity bias, the grounded register, and the tool-use guidance described below.`,
+          '',
+          '---',
+          '',
+        ].join('\n')
+      : '';
+
   return [
+    modalityOverride,
     scaffolding,
     '',
     args.personaPrompt,
