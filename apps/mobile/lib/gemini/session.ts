@@ -47,7 +47,13 @@ export interface SessionCallbacks {
 
 export interface SessionHandle {
   sendAudio: (base64Pcm: string) => void;
+  // Realtime text — fires through sendRealtimeInput. Use for audio-mode
+  // kick-off messages where VAD will close the turn.
   sendText: (text: string) => void;
+  // Discrete text turn with explicit turn-complete signal. The Live API
+  // requires this path for text-modality input — without turnComplete the
+  // server doesn't know when to respond.
+  sendClientText: (text: string) => void;
   sendToolResponse: (responses: FunctionResponse[]) => void;
   close: () => void;
   isOpen: () => boolean;
@@ -133,6 +139,13 @@ export async function openSession(
     sendText: (text) => {
       if (closed) return;
       session.sendRealtimeInput({ text });
+    },
+    sendClientText: (text) => {
+      if (closed) return;
+      session.sendClientContent({
+        turns: [{ role: 'user', parts: [{ text }] }],
+        turnComplete: true,
+      });
     },
     sendToolResponse: (responses) => {
       if (closed) return;

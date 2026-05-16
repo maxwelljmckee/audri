@@ -381,11 +381,20 @@ export function useCall(): UseCallResult {
         // 6. Kick the model off. The cue routes through the system prompt — for
         // onboarding it triggers the structured self-intro + opener; for generic
         // it's just a casual greeting.
-        session.sendText(
+        //
+        // Voice mode: fire through sendRealtimeInput; VAD closes the turn and
+        // the model responds. Text mode: discrete client-content turn with
+        // explicit turnComplete — without it the server has no signal to
+        // start generating.
+        const kickoffText =
           callType === 'onboarding'
             ? "Begin the onboarding call now. Open with your self-introduction, then ask the life-history opener as described in your scaffolding. Don't ask 'what brings you here' or 'what can I help you with' — those are explicitly out of scope for the opener."
-            : 'Greet me now.',
-        );
+            : 'Greet me now.';
+        if (modality === 'text') {
+          session.sendClientText(kickoffText);
+        } else {
+          session.sendText(kickoffText);
+        }
       } catch (e) {
         // Surface to Sentry — silent setError-only handling meant connection
         // failures were invisible. The dropped-call screen still shows the
@@ -482,8 +491,9 @@ export function useCall(): UseCallResult {
   }, [refreshTranscript, teardown]);
 
   // Text-mode user input: append to the local transcript + push the turn
-  // over the live session. Voice mode never calls this — server-side
-  // inputAudioTranscription handles user turns there.
+  // over the live session as a discrete client-content turn (the Live API
+  // requires explicit turnComplete for text input). Voice mode never calls
+  // this — server-side inputAudioTranscription handles user turns there.
   const sendUserText = useCallback(
     (text: string) => {
       const trimmed = text.trim();
@@ -491,7 +501,7 @@ export function useCall(): UseCallResult {
       if (!sessionRef.current?.isOpen()) return;
       transcriptRef.current.appendUserText(trimmed);
       refreshTranscript();
-      sessionRef.current.sendText(trimmed);
+      sessionRef.current.sendClientText(trimmed);
     },
     [refreshTranscript],
   );

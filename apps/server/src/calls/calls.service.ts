@@ -203,14 +203,16 @@ export class CallsService {
             // Bumped above the model's MINIMAL default so the agent gets a
             // small reasoning budget for tool-use decisions + multi-step
             // intent without paying for full reasoning latency on every turn.
-            // Skip in text modality — the preview Live model rejects the
-            // config combo ("internal error encountered" on connect) when
-            // thinkingConfig is paired with responseModalities=[TEXT].
             ...(modality === 'audio'
               ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
               : {}),
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            tools: modality === 'text' ? LIVE_TOOLS_TEXT : LIVE_TOOLS_AUDIO,
+            // Text-modality minimal config: no tools, no thinking. The Live
+            // preview model returns WebSocket 1011 ("internal error
+            // encountered") for non-trivial text-mode configs; isolating
+            // the failing field. If this connects, layer tools / thinking
+            // back one at a time.
+            ...(modality === 'audio' ? { tools: LIVE_TOOLS_AUDIO } : {}),
           },
         },
         httpOptions: { apiVersion: 'v1alpha' },
