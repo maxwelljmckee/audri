@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { agents, and, callTranscripts, db, eq } from '@audri/shared/db';
-import { LIVE_MODEL, getGeminiClient } from '@audri/shared/gemini';
+import { LIVE_MODEL, LIVE_MODEL_TEXT, getGeminiClient } from '@audri/shared/gemini';
 import {
   EndSensitivity,
   type FunctionDeclaration,
@@ -164,6 +164,13 @@ export class CallsService {
 
     const expireAt = new Date(Date.now() + 30 * 60 * 1000); // 30min
 
+    // Pick the live model per modality. Audio uses the 3.1 native-audio
+    // preview; text routes to the older 2.5 Live preview because 3.1
+    // rejects TEXT modality with WebSocket 1011 (the native-audio family
+    // is "highly optimized for voice processing" per Google's own
+    // guidance, and unsupported-config errors are how they surface that).
+    const liveModel = modality === 'text' ? LIVE_MODEL_TEXT : LIVE_MODEL;
+
     // Text-modality sessions skip the audio-only config: no audio
     // transcription (input is text already), no speech voice config, no
     // server-side VAD. responseModalities flips to TEXT.
@@ -196,7 +203,7 @@ export class CallsService {
         uses: 1,
         expireTime: expireAt.toISOString(),
         liveConnectConstraints: {
-          model: LIVE_MODEL,
+          model: liveModel,
           config: {
             responseModalities: [modality === 'text' ? Modality.TEXT : Modality.AUDIO],
             ...audioOnlyConfig,
@@ -207,11 +214,9 @@ export class CallsService {
               ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
               : {}),
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            // Text-modality minimal config: no tools, no thinking. The Live
-            // preview model returns WebSocket 1011 ("internal error
-            // encountered") for non-trivial text-mode configs; isolating
-            // the failing field. If this connects, layer tools / thinking
-            // back one at a time.
+            // Text-modality starts with no tools / thinking until the 2.5
+            // Live preview is confirmed to accept the base text config.
+            // Once connection is verified, layer them back one at a time.
             ...(modality === 'audio' ? { tools: LIVE_TOOLS_AUDIO } : {}),
           },
         },
@@ -241,11 +246,17 @@ export class CallsService {
         .onConflictDoNothing({ target: callTranscripts.sessionId });
     }
 
-    this.logger.log({ userId, agentSlug, sessionId, modality, incognito }, 'call started');
+    this.logger.log(
+      { userId, agentSlug, sessionId, modality, incognito, liveModel },
+      'call started',
+    );
     return {
       sessionId,
       ephemeralToken,
-      model: LIVE_MODEL,
+      // Return the model the token was minted against — text uses the 2.5
+      // Live preview, audio uses 3.1. Mobile passes this through to
+      // ai.live.connect().
+      model: liveModel,
       voice: agent.voice,
       expiresAt: expireAt.toISOString(),
     };
