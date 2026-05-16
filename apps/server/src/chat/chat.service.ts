@@ -89,10 +89,30 @@ const FETCH_TRANSCRIPT_DECL: FunctionDeclaration = {
   },
 };
 
-// Function declarations only — googleSearch grounding is incompatible
-// with function declarations in the same tools array for some Gemini
-// model/SDK combos (returns a generic server-side error rather than a
-// clear validation message). Re-add as a separate phase if needed.
+// googleSearch grounding wrapped as a function. Gemini rejects configs
+// that mix the built-in googleSearch tool with function declarations in
+// the same request ("Built-in tools ... and Function Calling cannot be
+// combined"), so we expose web_search as a function the model can call;
+// the handler then makes a separate internal generateContent with
+// googleSearch alone and returns the grounded answer + sources.
+// Expensive — prompt guidance steers conservative usage.
+const WEB_SEARCH_DECL: FunctionDeclaration = {
+  name: 'web_search',
+  description:
+    "Search the public web for current information using Google grounding. EXPENSIVE — use sparingly. Reach for this only when (a) the user explicitly asks for current / outside information, (b) the answer is clearly outside training-knowledge confidence and not in the user's notes, or (c) the user is doing real-time research and a lookup would land. Default to search_wiki first. Returns a grounded answer with source URLs.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: {
+        type: Type.STRING,
+        description:
+          'The web-search query — phrase it as a search engine query, not a question. Example: "site:nytimes.com israel ceasefire 2026" or "donella meadows thinking in systems book review".',
+      },
+    },
+    required: ['query'],
+  },
+};
+
 const CHAT_TOOLS: Tool[] = [
   {
     functionDeclarations: [
@@ -100,6 +120,7 @@ const CHAT_TOOLS: Tool[] = [
       FETCH_PAGE_DECL,
       SEARCH_TRANSCRIPTS_DECL,
       FETCH_TRANSCRIPT_DECL,
+      WEB_SEARCH_DECL,
     ],
   },
 ];
@@ -283,7 +304,13 @@ export class ChatService {
 
       const functionResponseParts: Part[] = [];
       for (const call of pendingFunctionCalls) {
-        const result = await this.executeFunctionCall(userId, call);
+        const result = await this.executeFunctionCall({
+          userId,
+          sessionId,
+          callTranscriptId: session.id,
+          agentId: session.agentId,
+          call,
+        });
         functionResponseParts.push({
           functionResponse: { name: call.name ?? 'unknown', response: result },
         });
@@ -320,37 +347,48 @@ export class ChatService {
     return { agentText, usage: lastUsage };
   }
 
-  // Tool fulfillment. Same handlers the live-agent endpoints in
-  // calls.controller.ts use — single source of truth for what each tool
-  // returns.
-  private async executeFunctionCall(
-    userId: string,
-    call: FunctionCall,
-  ): Promise<Record<string, unknown>> {
+  // Tool fulfillment. The Postgres-backed handlers share implementations
+  // with the live-agent endpoints in calls.controller.ts; web_search is
+  // chat-specific (wraps a googleSearch grounding call we can't ship in
+  // the same request as function declarations).
+  private async executeFunctionCall(args: {
+    userId: string;
+    sessionId: string;
+    callTranscriptId: string;
+    agentId: string;
+    call: FunctionCall;
+  }): Promise<Record<string, unknown>> {
+    const { userId, sessionId, callTranscriptId, agentId, call } = args;
     const name = call.name ?? '';
-    const args = (call.args ?? {}) as Record<string, unknown>;
+    const callArgs = (call.args ?? {}) as Record<string, unknown>;
     try {
       switch (name) {
         case 'search_wiki': {
-          const query = typeof args.query === 'string' ? args.query : '';
+          const query = typeof callArgs.query === 'string' ? callArgs.query : '';
           const results = await searchWiki(userId, query);
           return { results };
         }
         case 'fetch_page': {
-          const slug = typeof args.slug === 'string' ? args.slug : '';
+          const slug = typeof callArgs.slug === 'string' ? callArgs.slug : '';
           const page = await fetchPage(userId, slug);
           return page ? { page } : { page: null, error: 'page not found' };
         }
         case 'search_transcripts': {
-          const query = typeof args.query === 'string' ? args.query : '';
+          const query = typeof callArgs.query === 'string' ? callArgs.query : '';
           // Cap at 5 — same as live-agent tool — to keep tool-loop context tight.
           const results = await searchTranscripts(userId, query, 5);
           return { results };
         }
         case 'fetch_transcript': {
-          const transcriptId = typeof args.transcript_id === 'string' ? args.transcript_id : '';
+          const transcriptId =
+            typeof callArgs.transcript_id === 'string' ? callArgs.transcript_id : '';
           const transcript = await fetchTranscript(userId, transcriptId);
           return transcript ? { transcript } : { transcript: null, error: 'transcript not found' };
+        }
+        case 'web_search': {
+          const query = typeof callArgs.query === 'string' ? callArgs.query : '';
+          if (!query.trim()) return { error: 'query required' };
+          return this.runWebSearch({ userId, sessionId, callTranscriptId, agentId, query });
         }
         default:
           return { error: `unknown tool: ${name}` };
@@ -358,6 +396,69 @@ export class ChatService {
     } catch (err) {
       this.logger.error({ err, name }, 'chat tool fulfillment threw');
       return { error: err instanceof Error ? err.message : 'tool failed' };
+    }
+  }
+
+  // Internal Gemini call that runs googleSearch grounding in isolation
+  // (i.e. without our function declarations alongside, since the model
+  // server rejects that combination). Returns the grounded text + any
+  // source URLs the API surfaces so the calling agent can cite them.
+  private async runWebSearch(opts: {
+    userId: string;
+    sessionId: string;
+    callTranscriptId: string;
+    agentId: string;
+    query: string;
+  }): Promise<Record<string, unknown>> {
+    const { userId, sessionId, callTranscriptId, agentId, query } = opts;
+    try {
+      const resp = await getGeminiClient().models.generateContent({
+        model: CHAT_MODEL,
+        contents: [{ role: 'user', parts: [{ text: query }] }],
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const text =
+        resp.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text ?? '')
+          .filter(Boolean)
+          .join('') ?? '';
+
+      // Extract grounding source URLs when present (varies by API version
+      // — handle defensively). Each chunk typically has { web: { uri, title } }.
+      const grounding = resp.candidates?.[0]?.groundingMetadata;
+      const chunks = grounding?.groundingChunks ?? [];
+      const sources = chunks
+        .map((c) => {
+          const web = (c as { web?: { uri?: string; title?: string } }).web;
+          if (!web?.uri) return null;
+          return { uri: web.uri, title: web.title ?? null };
+        })
+        .filter((s): s is { uri: string; title: string | null } => s !== null);
+
+      // Best-effort usage record. web_search billing is per-request +
+      // tokens; we record the token side here so the Usage dashboard
+      // surfaces it alongside other inference. The per-request grounding
+      // fee isn't modelled in our pricing config yet (backlog).
+      if (resp.usageMetadata) {
+        void recordInferenceUsage({
+          userId,
+          agentId,
+          callTranscriptId,
+          eventKind: 'web_search',
+          model: CHAT_MODEL,
+          usage: resp.usageMetadata,
+        }).catch((err) => {
+          this.logger.error({ err, sessionId }, 'web_search usage write threw');
+        });
+      }
+
+      return { text, sources };
+    } catch (err) {
+      this.logger.error({ err, sessionId, query }, 'web_search inner call threw');
+      return { error: err instanceof Error ? err.message : 'web search failed' };
     }
   }
 }
