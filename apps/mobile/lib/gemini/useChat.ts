@@ -158,22 +158,42 @@ export function useChat(): UseChatResult {
         if (!body) {
           throw new Error('chat response has no body stream');
         }
+        // SSE parse: server writes one frame per text chunk in the form
+        //   data: <text>\n\n
+        // (with multi-line payloads having `data: ` on every line).
+        // Frames are separated by blank lines (\n\n). Comment lines
+        // start with `:` and are ignored. We accumulate bytes into a
+        // text buffer, split off complete frames, and dispatch each
+        // frame's joined `data:` content to the transcript.
         const reader = body.getReader();
         const decoder = new TextDecoder();
+        let sseBuffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value) {
-            const chunk = decoder.decode(value, { stream: true });
-            if (chunk) {
-              transcriptRef.current.appendAgentTextChunk(chunk);
+          if (!value) continue;
+          sseBuffer += decoder.decode(value, { stream: true });
+          let frameEnd: number;
+          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE-frame consume loop
+          while ((frameEnd = sseBuffer.indexOf('\n\n')) !== -1) {
+            const frame = sseBuffer.slice(0, frameEnd);
+            sseBuffer = sseBuffer.slice(frameEnd + 2);
+            const dataLines: string[] = [];
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('data: ')) {
+                dataLines.push(line.slice(6));
+              }
+              // `event:` lines (e.g. done / error) + `:` comments are
+              // ignored — the stream end signal comes from reader.read()
+              // returning done=true when the server closes the socket.
+            }
+            if (dataLines.length === 0) continue;
+            const text = dataLines.join('\n');
+            if (text) {
+              transcriptRef.current.appendAgentTextChunk(text);
               refreshTranscript();
             }
           }
-        }
-        const tail = decoder.decode();
-        if (tail) {
-          transcriptRef.current.appendAgentTextChunk(tail);
         }
         transcriptRef.current.finalizeAgentTurn();
         refreshTranscript();

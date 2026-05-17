@@ -92,14 +92,21 @@ export class ChatController {
     if (!sessionId) throw new BadRequestException('session_id required');
     if (!userText) throw new BadRequestException('user_text required');
 
-    // Chunked text response. Set headers BEFORE any res.write — Express
-    // locks the status + headers on the first body write. text/plain
-    // gives the simplest reader on the mobile side; we don't need SSE
-    // framing since tool calls are invisible to the client.
+    // Server-Sent Events response. SSE bypasses iOS URLSession's
+    // buffering threshold for small chunked responses (the previous
+    // text/plain path delivered tokens in one big chunk on RN clients),
+    // and the well-known content-type is what most CDNs / proxies
+    // recognize as "don't buffer this".
     res.status(HttpStatus.OK);
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('X-Accel-Buffering', 'no'); // disable any upstream buffering (Render/CF)
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // disable nginx-style upstream buffering
+    res.flushHeaders();
+    // Prime the stream with a comment frame (`:` lines are SSE comments,
+    // ignored by clients) so any intermediate proxy that holds the
+    // response open until first byte gets unblocked immediately.
+    res.write(': stream open\n\n');
 
     try {
       await this.chat.runTurn({
@@ -108,9 +115,18 @@ export class ChatController {
         history,
         userText,
         onChunk: (chunk) => {
-          res.write(chunk);
+          // SSE frame format: each data line starts with `data: `;
+          // multi-line payloads need `data: ` on each line. End with
+          // blank line (\n\n) to mark the frame boundary.
+          const payload = chunk.replace(/\n/g, '\ndata: ');
+          res.write(`data: ${payload}\n\n`);
         },
       });
+      // Final "done" frame — distinct event so the client can tell the
+      // difference between "stream ended cleanly" and "socket closed
+      // mid-flight". Not strictly necessary (`done=true` from
+      // reader.read() also signals end), but cheap insurance.
+      res.write('event: done\ndata: \n\n');
       res.end();
     } catch (err) {
       // If we've already started streaming, we can't change the status —
@@ -118,7 +134,7 @@ export class ChatController {
       // surface the proper status code.
       if (res.headersSent) {
         this.logger.error({ err, sessionId }, 'chat stream errored mid-flight');
-        res.write('\n[error: stream failed]');
+        res.write('event: error\ndata: stream failed\n\n');
         res.end();
         return;
       }

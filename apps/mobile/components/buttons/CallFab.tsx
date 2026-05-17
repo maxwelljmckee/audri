@@ -1,44 +1,73 @@
 // Home-screen primary FAB. Tap = start a voice call. Long-press = reveal
 // two satellite options (Incognito + Chat) in an arc above the button.
 //
-// While a call is active, long-press is disabled and tapping returns to the
-// in-progress session — matches the existing "rejoin" affordance.
+// Satellite arc + animation come straight from the AnimateReactNative
+// FabMenu component (see components/animations/fabicon-multi-colored-
+// react-native-moti). We just provide the menu items + control the
+// `isOpen` flag externally so:
+//   - long-press on the CallButton opens it
+//   - tapping the backdrop / satellite closes it
+//   - the close animation has time to play before the Modal unmounts
 //
-// Satellites + backdrop render inside a transparent Modal so they sit on top
-// of the home grid + helper text. Tapping the backdrop closes the menu;
-// tapping a satellite closes + routes.
+// While a call/chat is active, long-press is disabled and tapping
+// returns to the in-progress session.
 
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { MessageCircle } from 'lucide-react-native';
+import { MotiView } from 'moti';
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Animated, {
-  Easing,
-  interpolate,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FabMenu, type FabMenuItem } from '../animations/fabicon-multi-colored-react-native-moti';
 import { CallButton } from './CallButton';
 import { GlassButton } from './GlassButton';
 
 const BUTTON_SIZE = 80;
-const SATELLITE_SIZE = 60;
-const SATELLITE_RADIUS = 110;
-// Vertical anchor: same y as the call button's center on the home screen.
-// Mirrors home/_layout's fabRow: paddingBottom: 16 + helper-text line (~18)
-// + gap (8) + button half-height (40). Used in Modal coords where the
-// SafeAreaView's bottom inset still applies (we pull that from the hook).
+const SATELLITE_SIZE = 64;
+// Resting distance from the FAB center to each satellite center when
+// the menu is open. Larger than FabMenu's default `size * 1.3` so the
+// satellites clear the bigger CallButton with room to breathe.
+const SATELLITE_RADIUS = 120;
+// Angular spread between adjacent satellites. With 2 items, the
+// reflectedIndex math (centered on 0) puts them at ±offsetAngle/2 —
+// so π/2 = 90° total spread = ±45° from vertical. Symmetric arc, both
+// satellites clearly above the horizon line of the center.
+const SATELLITE_OFFSET_ANGLE = Math.PI / 3;
+// Satellites peek out of the center button when closed so there's a
+// visible hint that more options live behind it (matches the scaffold's
+// default 4px).
+const SATELLITE_CLOSED_OFFSET = 6;
+// Vertical anchor: same y as the call button's center on the home
+// screen. Mirrors home/_layout's fabRow: paddingBottom: 16 + helper-text
+// line (~18) + gap (8) + button half-height (40). Used in Modal coords
+// where the SafeAreaView's bottom inset still applies (pulled from the
+// hook below).
 const BUTTON_CENTER_FROM_FABROW_BOTTOM = 16 + 18 + 8 + BUTTON_SIZE / 2;
 
-const SATELLITE_TINTS = {
-  incognito: '#3f3f4a',
-  chat: '#3b82f6',
-} as const;
+const INCOGNITO_TINT = '#3f3f4a';
+const CHAT_TINT = '#10b981'; // emerald-500 — matches CallButton 'start'
 
-const ACTIVE_TINT = '#10b981'; // emerald-500 — matches CallButton 'start'
+const ACTIVE_TINT = '#10b981';
 const OPEN_TINT = '#1f1f24'; // dim the center while satellites are foregrounded
+
+const MENU_ITEMS: FabMenuItem[] = [
+  {
+    key: 'incognito',
+    color: INCOGNITO_TINT,
+    label: 'Incognito',
+    accessibilityLabel: 'Start incognito call — nothing is saved',
+    renderIcon: (size, color) => (
+      <MaterialCommunityIcons name="incognito" size={size} color={color} />
+    ),
+  },
+  {
+    key: 'chat',
+    color: CHAT_TINT,
+    label: 'Chat',
+    accessibilityLabel: 'Start text chat',
+    renderIcon: (size, color) => <MessageCircle size={size} color={color} strokeWidth={2} />,
+  },
+];
 
 export interface CallFabProps {
   /** True when a call/chat session is alive in the background (rejoin
@@ -62,21 +91,27 @@ export function CallFab({
 }: CallFabProps) {
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
-  const open = useSharedValue(0);
 
-  // React-side open flag — drives Modal visibility. The shared value
-  // `open` is the animation driver; this state controls mount/unmount of
-  // the Modal so satellites can't steal touches while invisible.
-  const [menuOpen, setMenuOpen] = useState(false);
+  // isOpen drives FabMenu's `animate` — flipping it kicks the spring
+  // transition in either direction. menuMounted controls Modal
+  // visibility separately so the close animation has time to play
+  // before the Modal unmounts (Modal unmount = instant cut otherwise).
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuMounted, setMenuMounted] = useState(false);
 
   function openMenu() {
     if (active) return;
-    setMenuOpen(true);
-    open.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) });
+    setMenuMounted(true);
+    // Defer the open flag one tick so satellites have a chance to mount
+    // at their closed-state positions; otherwise they appear already
+    // mid-animation and the spring lands without an entry feel.
+    requestAnimationFrame(() => setIsOpen(true));
   }
   function closeMenu() {
-    open.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.cubic) });
-    setMenuOpen(false);
+    setIsOpen(false);
+    // Keep the Modal mounted for the spring settle time so the close
+    // animation plays. ~400ms covers a default moti spring comfortably.
+    setTimeout(() => setMenuMounted(false), 400);
   }
 
   function handleCenterPress() {
@@ -84,43 +119,22 @@ export function CallFab({
       onRejoin();
       return;
     }
-    if (menuOpen) {
+    if (menuMounted) {
       closeMenu();
       return;
     }
     onStartCall();
   }
 
-  function handleSatellite(action: 'incognito' | 'chat') {
+  function handleSelect(item: FabMenuItem) {
     closeMenu();
-    if (action === 'incognito') onStartIncognito();
-    else onStartChat();
+    if (item.key === 'incognito') onStartIncognito();
+    else if (item.key === 'chat') onStartChat();
   }
 
-  // Animated styles for the two satellites. Both fade + scale in from the
-  // center button; translate outward to their resting position at ±45° above
-  // vertical.
-  const angleLeft = -Math.PI / 4; // upper-left
-  const angleRight = Math.PI / 4; // upper-right
-
-  const incognitoStyle = useAnimatedStyle(() => ({
-    opacity: open.value,
-    transform: [
-      { translateX: Math.sin(angleLeft) * SATELLITE_RADIUS * open.value },
-      { translateY: -Math.cos(angleLeft) * SATELLITE_RADIUS * open.value },
-      { scale: interpolate(open.value, [0, 1], [0.4, 1]) },
-    ],
-  }));
-  const chatStyle = useAnimatedStyle(() => ({
-    opacity: open.value,
-    transform: [
-      { translateX: Math.sin(angleRight) * SATELLITE_RADIUS * open.value },
-      { translateY: -Math.cos(angleRight) * SATELLITE_RADIUS * open.value },
-      { scale: interpolate(open.value, [0, 1], [0.4, 1]) },
-    ],
-  }));
-
-  // Bottom anchor matches the call button's center y in the home screen.
+  // Anchor position for the satellite container (Modal coords =
+  // screen coords). Wraps a single-satellite-sized box at the FAB
+  // center; FabMenu translates its satellites outward from there.
   const anchorBottom = insets.bottom + BUTTON_CENTER_FROM_FABROW_BOTTOM;
   const anchorLeft = screenWidth / 2;
 
@@ -131,74 +145,130 @@ export function CallFab({
           mode="start"
           onPress={handleCenterPress}
           onLongPress={openMenu}
-          tintColor={menuOpen ? OPEN_TINT : ACTIVE_TINT}
+          // CallButton stays on its natural emerald tint; the
+          // open-state darkening is driven by an animated MotiView
+          // overlay below so the color transition is springy instead
+          // of an instant tint swap.
+          tintColor={ACTIVE_TINT}
           accessibilityLabel={
             active
               ? 'Return to call in progress'
-              : menuOpen
+              : menuMounted
                 ? 'Close menu'
                 : 'Start call. Hold for more options.'
           }
         >
+          {/* Animated dark tint overlay — fully covers the emerald glass
+              when the menu opens (opacity → 1) so the close-state matches
+              the original pure-dark close button look, then fades back
+              out on close. Matches the icon crossfade + satellite arc
+              spring so the entire open/close motion reads as one
+              coordinated transition. */}
+          <MotiView
+            animate={{ opacity: isOpen ? 1 : 0 }}
+            transition={{ type: 'spring', damping: 14, mass: 0.5, stiffness: 220 }}
+            style={styles.centerTintOverlay}
+            pointerEvents="none"
+          />
           {active ? (
             <Ionicons name="arrow-forward" size={28} color="#ffffff" />
-          ) : menuOpen ? (
-            <Ionicons name="close" size={32} color="#ffffff" />
-          ) : undefined}
+          ) : (
+            <CenterIconCrossfade menuOpen={isOpen} />
+          )}
         </CallButton>
-        {/* Helper text always rendered (with a single-space fallback when
-            the menu is open) so the FAB's y position is stable across
-            state changes. */}
-        <Text style={styles.helper} numberOfLines={1}>
-          {active ? (helperLabel ?? 'Call in progress') : menuOpen ? ' ' : 'Hold for More'}
-        </Text>
+        {/* Helper text fades out when the menu opens — the satellite
+            labels carry the user-facing hint at that point. Always
+            reserves its layout space (opacity-only) so the FAB doesn't
+            shift vertically when the menu toggles. */}
+        <MotiView
+          animate={{ opacity: isOpen ? 0 : 1 }}
+          transition={{ type: 'timing', duration: 220 }}
+        >
+          <Text style={styles.helper} numberOfLines={1}>
+            {active ? (helperLabel ?? 'Call in progress') : 'Hold for More'}
+          </Text>
+        </MotiView>
       </View>
 
       <Modal
-        visible={menuOpen}
+        visible={menuMounted}
         transparent
         animationType="none"
         onRequestClose={closeMenu}
         statusBarTranslucent
       >
-        <Pressable style={styles.backdrop} onPress={closeMenu}>
-          {/* Anchor positioned at the FAB's center. Satellites translate
-              outward from this point. */}
-          <View
-            pointerEvents="box-none"
-            style={[
-              styles.anchor,
-              { bottom: anchorBottom - SATELLITE_SIZE / 2, left: anchorLeft - SATELLITE_SIZE / 2 },
-            ]}
-          >
-            <Animated.View style={[styles.satelliteWrap, incognitoStyle]}>
-              <GlassButton
-                onPress={() => handleSatellite('incognito')}
-                tintColor={SATELLITE_TINTS.incognito}
-                accessibilityLabel="Start incognito call — nothing is saved"
-                accessibilityRole="button"
-                style={styles.satellite}
-              >
-                <Ionicons name="glasses-outline" size={26} color="#ffffff" />
-              </GlassButton>
-              <Text style={styles.satelliteLabel}>Incognito</Text>
-            </Animated.View>
-            <Animated.View style={[styles.satelliteWrap, chatStyle]}>
-              <GlassButton
-                onPress={() => handleSatellite('chat')}
-                tintColor={SATELLITE_TINTS.chat}
-                accessibilityLabel="Start text chat"
-                accessibilityRole="button"
-                style={styles.satellite}
-              >
-                <MessageCircle size={26} color="#ffffff" strokeWidth={2} />
-              </GlassButton>
-              <Text style={styles.satelliteLabel}>Chat</Text>
-            </Animated.View>
-          </View>
-        </Pressable>
+        {/* Backdrop fade: MotiView drives opacity from 0 → 1 on open,
+            1 → 0 on close. The Modal stays mounted during the close
+            spring (handled by the menuMounted setTimeout) so the
+            backdrop has time to fade out before unmount. */}
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: isOpen ? 1 : 0 }}
+          transition={{ type: 'timing', duration: 220 }}
+          style={StyleSheet.absoluteFill}
+        >
+          <Pressable style={styles.backdrop} onPress={closeMenu}>
+            <FabMenu
+              menu={MENU_ITEMS}
+              size={SATELLITE_SIZE}
+              radius={SATELLITE_RADIUS}
+              offsetAngle={SATELLITE_OFFSET_ANGLE}
+              closedOffset={SATELLITE_CLOSED_OFFSET}
+              isOpen={isOpen}
+              onSelect={handleSelect}
+              style={[
+                styles.anchor,
+                {
+                  bottom: anchorBottom - SATELLITE_SIZE / 2,
+                  left: anchorLeft - SATELLITE_SIZE / 2,
+                },
+              ]}
+              // GlassButton satellites match the center FAB's surface
+              // language — Liquid Glass on iOS 26+, BlurView elsewhere.
+              // Per-item `color` flows through as the tint so each
+              // satellite still reads as its menu role (Incognito dim,
+              // Chat emerald) while sharing the glass treatment.
+              renderButton={({ item, size, icon, onPress }) => (
+                <GlassButton
+                  onPress={onPress}
+                  tintColor={item.color}
+                  accessibilityLabel={item.accessibilityLabel ?? item.label}
+                  style={{ width: size, height: size, borderRadius: size / 2 }}
+                >
+                  {icon}
+                </GlassButton>
+              )}
+            />
+          </Pressable>
+        </MotiView>
       </Modal>
     </>
+  );
+}
+
+// Cross-fade between the phone (closed) and X (open) icons. Both are
+// rendered at the center; opposite opacities + a small scale dip on the
+// outgoing icon makes the swap feel like a transition rather than a
+// hard cut. Spring transition matches the satellite arc for a unified
+// feel across the entire open/close motion.
+function CenterIconCrossfade({ menuOpen }: { menuOpen: boolean }) {
+  return (
+    <View style={styles.centerIconHost}>
+      <MotiView
+        animate={{ opacity: menuOpen ? 0 : 1, scale: menuOpen ? 0.6 : 1 }}
+        transition={{ type: 'spring', damping: 14, mass: 0.5, stiffness: 220 }}
+        style={styles.centerIconLayer}
+      >
+        <Ionicons name="call" size={32} color="#ffffff" />
+      </MotiView>
+      <MotiView
+        animate={{ opacity: menuOpen ? 1 : 0, scale: menuOpen ? 1 : 0.6 }}
+        transition={{ type: 'spring', damping: 14, mass: 0.5, stiffness: 220 }}
+        style={styles.centerIconLayer}
+      >
+        <Ionicons name="close" size={32} color="#ffffff" />
+      </MotiView>
+    </View>
   );
 }
 
@@ -206,6 +276,29 @@ const styles = StyleSheet.create({
   root: {
     alignItems: 'center',
     gap: 8,
+  },
+  centerIconHost: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Animated dark overlay layered inside CallButton — borderRadius
+  // matches the button's circle so the tint doesn't leak past the
+  // glass surface's bounds.
+  centerTintOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: OPEN_TINT,
+    borderRadius: BUTTON_SIZE / 2,
+  },
+  centerIconLayer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   helper: {
     color: '#7aa3d4',
@@ -220,24 +313,5 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: SATELLITE_SIZE,
     height: SATELLITE_SIZE,
-  },
-  satelliteWrap: {
-    position: 'absolute',
-    width: SATELLITE_SIZE,
-    height: SATELLITE_SIZE,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  satellite: {
-    width: SATELLITE_SIZE,
-    height: SATELLITE_SIZE,
-    borderRadius: SATELLITE_SIZE / 2,
-  },
-  satelliteLabel: {
-    position: 'absolute',
-    top: SATELLITE_SIZE + 6,
-    color: '#e8f1ff',
-    fontSize: 12,
-    letterSpacing: 0.5,
   },
 });

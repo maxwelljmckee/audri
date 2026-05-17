@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -149,7 +149,7 @@ export default function CallScreen() {
             <View style={styles.agentNameRow}>
               {incognito && (
                 <View style={styles.incognitoAvatar}>
-                  <Ionicons name="glasses-outline" size={20} color="#e8f1ff" />
+                  <MaterialCommunityIcons name="incognito" size={22} color="#e8f1ff" />
                 </View>
               )}
               <Text style={[styles.agentName, { opacity: agentName ? 1 : 0 }]} numberOfLines={1}>

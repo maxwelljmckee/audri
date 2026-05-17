@@ -43,6 +43,7 @@ import { useMe } from '../../lib/useMe';
 import { useSession } from '../../lib/useSession';
 import { PluginBackRow, pluginStackScreenOptions } from '../PluginStack';
 import { ResyncControl } from '../ResyncControl';
+import { TranscriptBubble, transcriptBubbleStyles } from '../TranscriptBubble';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
@@ -453,10 +454,17 @@ function DetailScreen({
           {turns.length === 0 ? (
             <Text style={styles.subtle}>No transcript turns recorded.</Text>
           ) : (
-            <View style={styles.turnsList}>
-              {turns.map((turn, i) => (
-                <TurnBubble key={`${i}-${String(turn.role ?? 'turn')}`} turn={turn} />
-              ))}
+            <View style={transcriptBubbleStyles.list}>
+              {turns.map((turn, i) => {
+                const normalized = normalizeTurn(turn);
+                return (
+                  <TranscriptBubble
+                    key={`${i}-${normalized.role}`}
+                    role={normalized.role}
+                    text={normalized.text}
+                  />
+                );
+              })}
             </View>
           )}
         </View>
@@ -465,24 +473,16 @@ function DetailScreen({
   );
 }
 
-function TurnBubble({ turn }: { turn: ChatTurn }) {
-  // Turn shape is permissive to accommodate evolving content schemas.
-  // Treat anything keyed `role`/`from` as the speaker, `text`/`content`/
-  // `transcript` as the body. Falls back to JSON-stringify if the shape
-  // is unrecognized so debugging is possible.
-  const role = String(turn.role ?? turn.from ?? 'agent');
-  const isUser = role === 'user' || role === 'human';
+// Normalize one persisted ChatTurn into {role, text} for the shared
+// TranscriptBubble. ChatTurn is permissive to accommodate evolving
+// content schemas — we check role/from for the speaker and
+// text/content/transcript for the body, falling back to a JSON dump if
+// the shape is unrecognized (debugging aid).
+function normalizeTurn(turn: ChatTurn): { role: 'user' | 'agent'; text: string } {
+  const rawRole = String(turn.role ?? turn.from ?? 'agent');
+  const role: 'user' | 'agent' = rawRole === 'user' || rawRole === 'human' ? 'user' : 'agent';
   const text = String(turn.text ?? turn.content ?? turn.transcript ?? JSON.stringify(turn));
-
-  return (
-    <View style={[styles.turnRow, isUser ? styles.turnRowRight : styles.turnRowLeft]}>
-      <View style={[styles.turnBubble, isUser ? styles.turnBubbleUser : styles.turnBubbleAgent]}>
-        <Text style={[styles.turnText, isUser ? styles.turnTextUser : styles.turnTextAgent]}>
-          {text}
-        </Text>
-      </View>
-    </View>
-  );
+  return { role, text };
 }
 
 function IngestionStatus({

@@ -18,7 +18,7 @@ import { useSplashAnimation } from "../lib/useSplashAnimation";
 // → fade → complete. Pre-roll is a static beat at rest before any motion
 // starts, so the wordmark registers before it begins to move.
 const PRE_ROLL_MS = 200;
-const HOLD_MS = 1000;
+const HOLD_MS = 800;
 const COLLAPSE_MS = 200;
 const SETTLE_MS = 500;
 const FADE_MS = 300;

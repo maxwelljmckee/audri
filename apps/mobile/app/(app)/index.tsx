@@ -1,24 +1,34 @@
-import { FontAwesome6, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import HexagonNodes from '@expo/vector-icons/FontAwesome6';
-import { Redirect, router, useFocusEffect } from 'expo-router';
-import { MessageCircle, NotebookText } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { PluginTile } from '../../components/PluginTile';
-import { CallFab } from '../../components/buttons';
-import { useRxdbReady } from '../../lib/rxdb/useRxdbReady';
-import { supabase } from '../../lib/supabase';
-import { useCallStore } from '../../lib/useCallStore';
-import { useCallRecoverySweep } from '../../lib/useCallSweep';
-import { useChatStore } from '../../lib/useChatStore';
-import { useMe } from '../../lib/useMe';
-import { usePluginOverlay } from '../../lib/usePluginOverlay';
-import { useSession } from '../../lib/useSession';
+import {
+  FontAwesome6,
+  Ionicons,
+  MaterialCommunityIcons,
+} from "@expo/vector-icons";
+import { Redirect, router, useFocusEffect } from "expo-router";
+import { NotebookText, Bot } from "lucide-react-native";
+import { useCallback, useState } from "react";
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { PluginTile } from "../../components/PluginTile";
+import { CallFab } from "../../components/buttons";
+import { useRxdbReady } from "../../lib/rxdb/useRxdbReady";
+import { supabase } from "../../lib/supabase";
+import { useCallStore } from "../../lib/useCallStore";
+import { useCallRecoverySweep } from "../../lib/useCallSweep";
+import { useChatStore } from "../../lib/useChatStore";
+import { useMe } from "../../lib/useMe";
+import { usePluginOverlay } from "../../lib/usePluginOverlay";
+import { useSession } from "../../lib/useSession";
 
 export default function HomeScreen() {
   const session = useSession();
-  const accessToken = session.status === 'signed-in' ? session.session.access_token : null;
+  const accessToken =
+    session.status === "signed-in" ? session.session.access_token : null;
   const me = useMe(accessToken);
 
   const callStatus = useCallStore((s) => s.status);
@@ -33,7 +43,8 @@ export default function HomeScreen() {
   const GRID_GAP = 20;
   const TILES_PER_ROW = 4;
   const tileWidth =
-    (screenWidth - 2 * GRID_PADDING - (TILES_PER_ROW - 1) * GRID_GAP) / TILES_PER_ROW;
+    (screenWidth - 2 * GRID_PADDING - (TILES_PER_ROW - 1) * GRID_GAP) /
+    TILES_PER_ROW;
 
   // True when a voice call OR chat is alive somewhere in the background.
   // Idle = no active session. Anything else (connecting / connected /
@@ -41,8 +52,8 @@ export default function HomeScreen() {
   // fresh. The two stores are mutually exclusive in practice — long-press
   // is disabled while either is active so the user can't start a second
   // session — but treat them as independent here.
-  const callActive = callStatus !== 'idle';
-  const chatActive = chatStatus !== 'idle';
+  const callActive = callStatus !== "idle";
+  const chatActive = chatStatus !== "idle";
   const sessionActive = callActive || chatActive;
 
   // The FAB visuals (icon + helper text) lag behind sessionActive on the
@@ -53,14 +64,18 @@ export default function HomeScreen() {
   // BEFORE the slide-in begins, instead of after it completes (which
   // would read as a stale → fresh pop).
   const ICON_SWAP_DELAY = 350;
-  const [displaySessionActive, setDisplaySessionActive] = useState(sessionActive);
+  const [displaySessionActive, setDisplaySessionActive] =
+    useState(sessionActive);
   useFocusEffect(
     useCallback(() => {
       if (!sessionActive) {
         setDisplaySessionActive(false);
         return;
       }
-      const t = setTimeout(() => setDisplaySessionActive(true), ICON_SWAP_DELAY);
+      const t = setTimeout(
+        () => setDisplaySessionActive(true),
+        ICON_SWAP_DELAY,
+      );
       return () => clearTimeout(t);
     }, [sessionActive]),
   );
@@ -83,21 +98,21 @@ export default function HomeScreen() {
   // "Call in progress" during the route transition AND short-circuit the
   // screen's idle gate so the new session never gets opened.
   function openCall() {
-    router.push('/call');
+    router.push("/call");
   }
   function openIncognitoCall() {
-    router.push({ pathname: '/call', params: { incognito: '1' } });
+    router.push({ pathname: "/call", params: { incognito: "1" } });
   }
   function openChat() {
-    router.push('/chat');
+    router.push("/chat");
   }
   function rejoinActive() {
     // Voice takes precedence if both are somehow alive (defensive — UX
     // prevents this in practice). Otherwise route to whichever is active.
     if (callActive) {
-      router.push('/call');
+      router.push("/call");
     } else if (chatActive) {
-      router.push('/chat');
+      router.push("/chat");
     }
   }
 
@@ -108,69 +123,83 @@ export default function HomeScreen() {
   // first-time users. Once /me is ready and onboarding is incomplete, redirect
   // synchronously via the Redirect component so home never paints. Errors
   // fall through to the home render so the user isn't stuck on a blank screen.
-  if (me.status === 'loading') return null;
-  if (me.status === 'ready' && me.data.userSettings && !me.data.userSettings.onboardingComplete) {
-    return <Redirect href="/(app)/onboarding" />;
+  if (me.status === "loading") return null;
+  if (
+    me.status === "ready" &&
+    me.data.userSettings &&
+    !me.data.userSettings.onboardingComplete
+  ) {
+    return <Redirect href='/(app)/onboarding' />;
   }
 
   return (
     <View style={styles.root}>
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
+      <SafeAreaView edges={["top", "bottom"]} style={styles.safe}>
         <View style={styles.header}>
           <Text style={styles.wordmark}>Audri</Text>
           <Pressable onPress={signOut} style={styles.avatar}>
-            <Ionicons name="person-outline" size={20} color="#e8f1ff" />
+            <Ionicons name='person-outline' size={20} color='#e8f1ff' />
           </Pressable>
         </View>
 
         <View style={styles.grid}>
           <PluginTile
-            label="Agents"
-            icon={<MaterialCommunityIcons name="robot-outline" size={36} color="#e8f1ff" />}
+            label='Agents'
+            icon={<Bot size={36} color='#e8f1ff' />}
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('agents', origin)}
+            onPressWithOrigin={(origin) => showOverlay("agents", origin)}
           />
           <PluginTile
-            label="Notes"
-            icon={<NotebookText size={36} color="#e8f1ff" strokeWidth={1.5} />}
+            label='Notes'
+            icon={<NotebookText size={36} color='#e8f1ff' strokeWidth={1.5} />}
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('wiki', origin)}
+            onPressWithOrigin={(origin) => showOverlay("wiki", origin)}
           />
           <PluginTile
-            label="Call History"
-            icon={<Ionicons name="call-outline" size={36} color="#e8f1ff" />}
+            label='Call History'
+            icon={<Ionicons name='call-outline' size={36} color='#e8f1ff' />}
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('chatHistory', origin)}
+            onPressWithOrigin={(origin) => showOverlay("chatHistory", origin)}
           />
           <PluginTile
-            label="Todos"
-            icon={<Ionicons name="checkbox-outline" size={36} color="#e8f1ff" />}
+            label='Todos'
+            icon={
+              <Ionicons name='checkbox-outline' size={36} color='#e8f1ff' />
+            }
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('todos', origin)}
+            onPressWithOrigin={(origin) => showOverlay("todos", origin)}
           />
           <PluginTile
-            label="Research"
-            icon={<Ionicons name="search-outline" size={36} color="#e8f1ff" />}
+            label='Research'
+            icon={<Ionicons name='search-outline' size={36} color='#e8f1ff' />}
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('research', origin)}
+            onPressWithOrigin={(origin) => showOverlay("research", origin)}
           />
           <PluginTile
-            label="Automations"
-            icon={<Ionicons name="share-social" size={36} color="#e8f1ff" />}
+            label='Automations'
+            icon={
+              <Ionicons name='share-social-outline' size={36} color='#e8f1ff' />
+            }
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('automations', origin)}
+            onPressWithOrigin={(origin) => showOverlay("automations", origin)}
           />
           <PluginTile
-            label="Uploads"
-            icon={<Ionicons name="folder-outline" size={36} color="#e8f1ff" />}
+            label='Uploads'
+            icon={<Ionicons name='folder-outline' size={36} color='#e8f1ff' />}
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('storage', origin)}
+            onPressWithOrigin={(origin) => showOverlay("storage", origin)}
           />
           <PluginTile
-            label="Account"
-            icon={<Ionicons name="person-circle-outline" size={36} color="#e8f1ff" />}
+            label='Account'
+            icon={
+              <Ionicons
+                name='person-circle-outline'
+                size={36}
+                color='#e8f1ff'
+              />
+            }
             widthPx={tileWidth}
-            onPressWithOrigin={(origin) => showOverlay('account', origin)}
+            onPressWithOrigin={(origin) => showOverlay("account", origin)}
           />
         </View>
 
@@ -181,7 +210,9 @@ export default function HomeScreen() {
             onStartIncognito={openIncognitoCall}
             onStartChat={openChat}
             onRejoin={rejoinActive}
-            helperLabel={chatActive && !callActive ? 'Chat in progress' : undefined}
+            helperLabel={
+              chatActive && !callActive ? "Chat in progress" : undefined
+            }
           />
         </View>
       </SafeAreaView>
@@ -193,34 +224,34 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 24,
     paddingTop: 8,
   },
   wordmark: {
-    color: '#e8f1ff',
+    color: "#e8f1ff",
     fontSize: 24,
-    fontFamily: 'Comfortaa_400Regular',
+    fontFamily: "Comfortaa_400Regular",
   },
   avatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#11203a',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#11203a",
+    alignItems: "center",
+    justifyContent: "center",
   },
   greetingBlock: { marginTop: 48, paddingHorizontal: 24, gap: 8 },
-  greeting: { color: '#e8f1ff', fontSize: 28, fontWeight: '500' },
-  subtext: { color: '#7aa3d4', fontSize: 14 },
-  errorText: { color: '#f87171', fontSize: 12 },
+  greeting: { color: "#e8f1ff", fontSize: 28, fontWeight: "500" },
+  subtext: { color: "#7aa3d4", fontSize: 14 },
+  errorText: { color: "#f87171", fontSize: 12 },
   grid: {
     marginTop: 40,
     paddingHorizontal: 24,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     // Tile widths are computed in JS from `useWindowDimensions` to ensure
     // 4-per-row exactly across devices; this stylesheet only owns the
     // surrounding gaps. Keep `rowGap` and `columnGap` in sync with the
@@ -230,13 +261,13 @@ const styles = StyleSheet.create({
   },
   fabRow: {
     flex: 1,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
+    justifyContent: "flex-end",
+    alignItems: "center",
     paddingBottom: 16,
     gap: 8,
   },
   fabSubtext: {
-    color: '#7aa3d4',
+    color: "#7aa3d4",
     fontSize: 13,
     letterSpacing: 1,
   },
