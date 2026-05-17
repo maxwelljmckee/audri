@@ -278,7 +278,11 @@ async function applyResearchDelta(
       .from(wikiSections)
       .where(eq(wikiSections.pageId, pageId));
     let nextOrder = (maxOrderRow?.maxOrder ?? -1) + 1;
-    for (const section of create.sections) {
+    // Defensive: `sections` is optional in the research fan-out schema
+    // for parity with the main ingestion pipeline (see commit.ts:320
+    // and the 2026-05-17 todo-only-create crash). `?? []` keeps the
+    // loop a no-op when the model emits a stub.
+    for (const section of create.sections ?? []) {
       await tx.insert(wikiSections).values({
         pageId,
         title: section.title,

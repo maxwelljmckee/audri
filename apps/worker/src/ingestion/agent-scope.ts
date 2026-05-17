@@ -34,8 +34,8 @@ import {
 } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
 import { Type, type UsageMetadata } from '@google/genai';
-import { recordInferenceUsage } from '../usage/record-inference.js';
 import { logger } from '../logger.js';
+import { recordInferenceUsage } from '../usage/record-inference.js';
 import type { IngestionTranscriptTurn } from './flash-candidate-retrieval.js';
 import { parseGeminiJson } from './parse-gemini-json.js';
 
@@ -639,8 +639,12 @@ async function commitAgentScope(opts: {
       if (!pageRow) continue;
       counts.pagesCreated++;
 
-      for (let i = 0; i < create.sections.length; i++) {
-        const section = create.sections[i];
+      // Defensive: agent-scope creates can land without a `sections`
+      // array when Flash dumps the call for low substance or the model
+      // emits a stub. Same guard as user-scope commit.ts:320.
+      const agentCreateSections = create.sections ?? [];
+      for (let i = 0; i < agentCreateSections.length; i++) {
+        const section = agentCreateSections[i];
         if (!section || !section.content) continue;
         const [sectionRow] = await tx
           .insert(wikiSections)

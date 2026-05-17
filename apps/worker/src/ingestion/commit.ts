@@ -317,8 +317,17 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
         nextAppendSortOrder = (maxRow?.max ?? -1) + 1;
       }
 
-      for (let i = 0; i < create.sections.length; i++) {
-        const section = create.sections[i];
+      // `create.sections` is optional in the Gemini responseSchema
+      // (the prompt allows empty-bucket stub pages — "create a page
+      // for X, I'll fill it in later"), so the parsed value may be
+      // undefined or []. Either way: no sections to insert, skip the
+      // loop instead of dereferencing .length on undefined.
+      // Burned by this 2026-05-17: a chat Pro fan-out emitted a `todo`
+      // create with no sections and the commit phase TypeError-crashed,
+      // landing the transcript in `partial` status.
+      const createSections = create.sections ?? [];
+      for (let i = 0; i < createSections.length; i++) {
+        const section = createSections[i];
         if (!section) continue;
 
         // Sanitize title up front — malformed titles (newlines / markdown

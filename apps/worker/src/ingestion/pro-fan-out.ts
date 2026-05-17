@@ -59,7 +59,12 @@ export interface PageCreate {
   parent_slug?: string;
   agent_abstract: string;
   abstract?: string;
-  sections: NewSectionWrite[];
+  // Optional: the Gemini responseSchema makes `sections` optional on
+  // creates so the model can emit empty-bucket stub pages when the
+  // user explicitly directs it ("create a page for X — I'll fill it
+  // in later"). Match the runtime shape so consumers handle both
+  // undefined and []. See commit.ts:320 for the loop guard.
+  sections?: NewSectionWrite[];
   // Only meaningful when type === 'todo'. Optional slug of the wiki page
   // this todo is associated with (project, goal sub-page, person, concept,
   // etc.) — surfaces as the todo's swimlane in the Todos plugin UX. Default
