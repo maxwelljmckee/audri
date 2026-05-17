@@ -62,7 +62,8 @@ export default function ChatScreen() {
   const reset = useChatStore((s) => s.reset);
   const startChat = useChatStore((s) => s.startChat);
 
-  const { start, end, sendUserText, transcript, streamingAgentText, error } = useChatContext();
+  const { start, end, sendUserText, transcript, streamingAgentText, pendingAgentResponse, error } =
+    useChatContext();
 
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
@@ -104,7 +105,7 @@ export default function ChatScreen() {
       scrollRef.current?.scrollToEnd({ animated: true });
     }, 16);
     return () => clearTimeout(t);
-  }, [transcript.length, streamingAgentText, draftHasContent]);
+  }, [transcript.length, streamingAgentText, draftHasContent, pendingAgentResponse]);
 
   const displayTurns = buildDisplayTurns(transcript, streamingAgentText);
 
@@ -150,6 +151,13 @@ export default function ChatScreen() {
             {displayTurns.map((t) => (
               <TranscriptBubble key={t.id} role={t.role} text={t.text} />
             ))}
+            {/* Agent-side typing indicator while we're waiting for the
+                model's first text chunk. iOS URLSession coalesces our
+                SSE stream into a single waterfall delivery (often after
+                a tool-call detour), so without this the user sees a
+                blank chat for several seconds after sending. Cleared
+                the moment the streaming bubble starts rendering. */}
+            {pendingAgentResponse && <TypingIndicator side="agent" />}
             {/* Right-aligned typing indicator while the user has draft
                 text in the input — visual cue that the next bubble is
                 being composed. Hides as soon as input is empty (clears

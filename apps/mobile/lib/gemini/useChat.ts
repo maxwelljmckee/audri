@@ -20,6 +20,36 @@ import { type TranscriptTurn, createTranscript } from './transcript';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
 
+// Belt-and-suspenders cleanup for the streamed chat body. Today (RN
+// 0.81 + expo/fetch + iOS 26) URLSession strips SSE framing from
+// text/event-stream responses before JS sees them — so we just append
+// the decoded chunks as plain text. But if a future platform update
+// stops stripping, raw `data: ` / `event: …` / `:` comment lines could
+// leak through. This filter handles both cases: when framing is absent
+// (the common case), the chunk passes through unchanged; when it's
+// present, the wrapper lines are stripped and only the inner data
+// payload survives.
+function stripStraySseFraming(chunk: string): string {
+  if (!chunk) return '';
+  // Fast path: no SSE markers anywhere in the chunk — return as-is.
+  if (!chunk.includes('data:') && !chunk.startsWith(':') && !chunk.includes('event:')) {
+    return chunk;
+  }
+  const out: string[] = [];
+  for (const line of chunk.split('\n')) {
+    if (line.startsWith(':')) continue; // SSE comment
+    if (line.startsWith('event:')) continue; // event-name line (we don't act on event types client-side)
+    if (line.startsWith('data: ')) {
+      out.push(line.slice(6));
+    } else if (line.startsWith('data:')) {
+      out.push(line.slice(5));
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
 interface StartChatResponse {
   sessionId: string;
 }
@@ -37,6 +67,13 @@ export interface UseChatResult {
   // In-progress agent text (renders as the live bubble below the
   // finalized turns). Empty between turns.
   streamingAgentText: string;
+  // True from the moment a chat-turn request is dispatched until the
+  // first agent text chunk arrives (or the turn fails / aborts). The
+  // chat screen uses this to render an agent-side typing indicator
+  // during the wait — iOS URLSession coalesces our SSE chunks so the
+  // model's response usually lands as a single waterfall delivery
+  // after a few seconds of silence, and the indicator covers that gap.
+  pendingAgentResponse: boolean;
   error: string | null;
 }
 
@@ -52,6 +89,7 @@ export function useChat(): UseChatResult {
 
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [streamingAgentText, setStreamingAgentText] = useState('');
+  const [pendingAgentResponse, setPendingAgentResponse] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshTranscript = useCallback(() => {
@@ -71,6 +109,7 @@ export function useChat(): UseChatResult {
     transcriptRef.current.reset();
     setTranscript([]);
     setStreamingAgentText('');
+    setPendingAgentResponse(false);
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -125,6 +164,11 @@ export function useChat(): UseChatResult {
       chatAbortRef.current?.abort();
       const controller = new AbortController();
       chatAbortRef.current = controller;
+      // Agent-side typing indicator stays visible until the first text
+      // chunk lands. iOS coalesces our SSE stream into a single
+      // waterfall delivery, so without this the user sees a blank
+      // screen for several seconds after sending.
+      setPendingAgentResponse(true);
 
       try {
         const { data } = await supabase.auth.getSession();
@@ -158,42 +202,40 @@ export function useChat(): UseChatResult {
         if (!body) {
           throw new Error('chat response has no body stream');
         }
-        // SSE parse: server writes one frame per text chunk in the form
-        //   data: <text>\n\n
-        // (with multi-line payloads having `data: ` on every line).
-        // Frames are separated by blank lines (\n\n). Comment lines
-        // start with `:` and are ignored. We accumulate bytes into a
-        // text buffer, split off complete frames, and dispatch each
-        // frame's joined `data:` content to the transcript.
+        // Read the streamed body and append decoded chunks straight to
+        // the transcript. The server emits proper SSE frames
+        // (`data: <text>\n\n` per chunk + a final `event: done`), but
+        // empirically iOS URLSession / expo/fetch strips the SSE
+        // framing when Content-Type=text/event-stream — by the time JS
+        // sees the body, only the inner data payload reaches us
+        // (verified 2026-05-17). Parsing for `data: ` prefixes that
+        // don't exist anymore dropped every chunk and produced
+        // "talking to myself" empty-response bugs. Trusting the decoded
+        // chunks as plain text restores the working pre-SSE behaviour
+        // while keeping the server-side SSE chrome (Content-Type +
+        // X-Accel-Buffering) that prevents intermediate proxy
+        // buffering. If a future RN/iOS update stops stripping framing,
+        // the small filter below drops any SSE comment / event lines
+        // that leak through so we don't display them.
         const reader = body.getReader();
         const decoder = new TextDecoder();
-        let sseBuffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           if (!value) continue;
-          sseBuffer += decoder.decode(value, { stream: true });
-          let frameEnd: number;
-          // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic SSE-frame consume loop
-          while ((frameEnd = sseBuffer.indexOf('\n\n')) !== -1) {
-            const frame = sseBuffer.slice(0, frameEnd);
-            sseBuffer = sseBuffer.slice(frameEnd + 2);
-            const dataLines: string[] = [];
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('data: ')) {
-                dataLines.push(line.slice(6));
-              }
-              // `event:` lines (e.g. done / error) + `:` comments are
-              // ignored — the stream end signal comes from reader.read()
-              // returning done=true when the server closes the socket.
-            }
-            if (dataLines.length === 0) continue;
-            const text = dataLines.join('\n');
-            if (text) {
-              transcriptRef.current.appendAgentTextChunk(text);
-              refreshTranscript();
-            }
+          const chunk = decoder.decode(value, { stream: true });
+          const text = stripStraySseFraming(chunk);
+          if (text) {
+            // First real text — hide the typing indicator; the streaming
+            // bubble takes over from here.
+            setPendingAgentResponse(false);
+            transcriptRef.current.appendAgentTextChunk(text);
+            refreshTranscript();
           }
+        }
+        const tail = stripStraySseFraming(decoder.decode());
+        if (tail) {
+          transcriptRef.current.appendAgentTextChunk(tail);
         }
         transcriptRef.current.finalizeAgentTurn();
         refreshTranscript();
@@ -209,6 +251,13 @@ export function useChat(): UseChatResult {
         setError(err instanceof Error ? err.message : String(err));
         transcriptRef.current.finalizeAgentTurn();
         refreshTranscript();
+      } finally {
+        // Defensive: clear the indicator on every exit path. The
+        // happy path already clears it on first chunk; this catches
+        // the cases where the stream completed with zero text, the
+        // request errored before any chunk landed, or the user
+        // aborted mid-wait.
+        setPendingAgentResponse(false);
       }
     },
     [refreshTranscript],
@@ -271,5 +320,13 @@ export function useChat(): UseChatResult {
     }
   }, [refreshTranscript, teardown]);
 
-  return { start, end, sendUserText, transcript, streamingAgentText, error };
+  return {
+    start,
+    end,
+    sendUserText,
+    transcript,
+    streamingAgentText,
+    pendingAgentResponse,
+    error,
+  };
 }

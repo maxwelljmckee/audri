@@ -283,6 +283,88 @@ Skipping is for irrelevance, restatement, or already-covered content. It is NOT 
 
 When the user explicitly directs a write to a target ("make a note in X", "add this to Y", "put this under Z"), Pro must always write — creating a new section if needed. New section titles should be specific and informative ("Backlog", "Decisions log", "Open questions about X", "Risks", "Next steps") — not generic labels like "Notes" or "Other".
 
+#### Section update operations — explicit per-operation contract
+
+Each entry in an update's `sections` array is a FULL state declaration for that section after the update lands. There are four operations — pick the shape that matches your intent. **If you pick the wrong shape, the wrong thing happens silently** (the commit phase doesn't validate semantics against the transcript). The **2026-05-17 "add to reading list" regression** was exactly this failure mode: Pro emitted KEEP-AS-IS shapes thinking they were updates, and the user's directive was dropped.
+
+**1. KEEP-AS-IS** — preserve a section unchanged. Title stays, content stays, snippets stay.
+```json
+{ "id": "<existing-uuid>" }
+```
+ONLY use this when you want literally zero change. **It is NOT how you add a bullet, change a heading, or note that a section was "touched" by a claim.** Reach for it only to prevent tombstoning when you're updating sibling sections.
+
+**2. UPDATE EXISTING — full content rewrite.** This is the shape for adding, changing, OR removing content from an existing section:
+```json
+{ "id": "<existing-uuid>", "content": "<FULL new section content>", "snippets": [...] }
+```
+The `content` field is the ENTIRE new section body — markdown, prose, lists, everything that should be in the section after the update. The commit phase REPLACES `content` wholesale; it does not append, patch, or diff.
+
+- **Adding a bullet** to a 12-bullet list section → re-emit all 13 bullets (12 originals + 1 new) in `content`.
+- **Editing a sentence** → re-emit the section with the edited sentence in place, all unchanged prose preserved verbatim.
+- **Deleting a bullet / paragraph** → re-emit without the deleted text; everything else preserved.
+- **Reordering** → re-emit in the new order.
+
+Optional `title` to rename the heading (re-emit the new title). Optional `cited_urls` for new grounding citations. Always include `snippets` tying the change to transcript turn_ids.
+
+**3. CREATE NEW SECTION ON THE PAGE** — add a new section to an existing page:
+```json
+{ "title": "<heading>", "content": "<markdown>", "snippets": [...] }
+```
+No `id` — the backend assigns one. Title strongly encouraged (see §"Section content depth"). Used when the routed claim doesn't fit any existing section.
+
+**4. REMOVE A SECTION** — there is no remove shape. To remove, OMIT the section from the `sections` array. The commit phase tombstones any existing section absent from the list. **Corollary: list every section to keep — `{id}` for sections with no change.**
+
+---
+
+**Worked example — adding a book to a reading list:**
+
+Current `reading-list` state in `touched_pages`:
+
+```
+sections:
+  - id: 681a4f88-..., title: null,            content: "..."
+  - id: e6a937cf-..., title: "Books to Read", content: "- Good Services by Lou Downe\n- Sapiens by Yuval Noah Harari\n- Thinking, Fast and Slow"
+```
+
+User says: "Add The Art of Gathering by Priya Parker to my reading list."
+
+✅ CORRECT:
+
+```json
+{
+  "slug": "reading-list",
+  "agent_abstract": "A reading list of books to read or currently reading.",
+  "sections": [
+    { "id": "681a4f88-..." },
+    {
+      "id": "e6a937cf-...",
+      "title": "Books to Read",
+      "content": "- Good Services by Lou Downe\n- Sapiens by Yuval Noah Harari\n- Thinking, Fast and Slow\n- The Art of Gathering by Priya Parker",
+      "snippets": [{ "turn_id": "turn-1", "text": "add The Art of Gathering by Priya Parker to my reading list" }]
+    }
+  ]
+}
+```
+
+The first section is kept-as-is via `{id}`. The "Books to Read" section is fully re-emitted with all original bullets plus the new one. Snippets tie the change to the transcript turn that licensed it.
+
+❌ WRONG (the 2026-05-17 regression shape):
+
+```json
+{
+  "slug": "reading-list",
+  "agent_abstract": "...",
+  "sections": [
+    { "id": "681a4f88-..." },
+    { "id": "e6a937cf-...", "title": "Books to Read" }
+  ]
+}
+```
+
+Both shapes are KEEP-AS-IS. Nothing changes. The directive is silently dropped, often paired with a misleading `skipped: ["Captured as bullet on reading-list per existing page pattern"]` — claiming work that didn't happen, which is the worst failure mode.
+
+**Rule of thumb:** if you intend ANY change to a section's content, you MUST include `content` with the FULL new body. `{id}` alone means "this section is unchanged and I'm only listing it to prevent tombstoning."
+
 #### Multi-target phrasing
 
 When a claim touches multiple targets (rule 1), each target's section content reflects the claim from that target's perspective:
