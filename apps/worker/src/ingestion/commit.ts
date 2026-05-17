@@ -67,6 +67,79 @@ function isMalformedTitle(title: string): boolean {
   return /[\n\r]/.test(title) || /^\s*[-*]\s/.test(title);
 }
 
+// Verbs that indicate Pro claimed to capture / write something. If one
+// of these shows up in a `skipped` reason, Pro contradicted itself —
+// `skipped` means NOT written, so language asserting the opposite means
+// the model thinks it wrote but actually emitted nothing. See
+// detectLyingSkippedFailure below for the full diagnosis.
+const LYING_VERB_PATTERN =
+  /\b(captur(?:e|ed|ing)|add(?:ed|ing)|appen(?:ded|ding)|not(?:ed|ing)|record(?:ed|ing)|sav(?:ed|ing)|track(?:ed|ing)|wr(?:ote|itten))\b/i;
+
+// Returns true when a section ref carries no content payload — either a
+// pure keep-as-is ({id}) or a title-only update ({id, title}). Both are
+// no-content shapes that produce no section_history write. Used by the
+// pre-flight check to detect updates that emitted nothing actionable.
+function sectionRefHasContent(section: { content?: string | null }): boolean {
+  return typeof section.content === 'string' && section.content.length > 0;
+}
+
+// Pre-flight contradiction check. Throws when Pro's output exhibits the
+// "lying skipped" failure mode: a `skipped` reason that claims a write
+// happened ("captured as bullet on reading-list") while every `updates`
+// entry's `sections` array consists entirely of no-content keep-as-is
+// refs. That combination is internally inconsistent — the model THINKS
+// it captured something but the schema-level write is missing.
+//
+// Without this guard the failure was completely silent: commit ran to
+// completion, transcript status went to `succeeded`, but zero rows
+// landed. The user reported "I can't get a reading list entry to land"
+// for hours before we caught it. Loud failure here gives the retry
+// banner something to show.
+//
+// We require BOTH signals (lying language AND all-keep updates) before
+// firing to avoid false positives on legitimate edge cases (e.g. a
+// hierarchy-move update that's correctly metadata-only, paired with an
+// unrelated "captured" skipped reason that DID get written via creates).
+function detectLyingSkippedFailure(fanOut: ProFanOutResult): void {
+  // Signal 1: skipped reasons containing capture-verb language.
+  const lyingSkippedClaims: string[] = [];
+  for (const s of fanOut.skipped) {
+    if (s.reason && LYING_VERB_PATTERN.test(s.reason)) {
+      lyingSkippedClaims.push(`"${s.reason.slice(0, 120)}"`);
+    }
+  }
+  if (lyingSkippedClaims.length === 0) return;
+
+  // Signal 2: at least one update whose `sections` array is entirely
+  // no-content refs (so the update did nothing of substance). An update
+  // with no `sections` field at all is a legitimate hierarchy move and
+  // doesn't count.
+  const emptyUpdateSlugs: string[] = [];
+  for (const u of fanOut.updates) {
+    if (!u.sections || u.sections.length === 0) continue;
+    const everyRefEmpty = u.sections.every((s) => !sectionRefHasContent(s));
+    if (everyRefEmpty) {
+      emptyUpdateSlugs.push(u.slug);
+    }
+  }
+  if (emptyUpdateSlugs.length === 0) return;
+
+  const lyingPreview = lyingSkippedClaims.slice(0, 3).join(', ');
+  const updatesPreview = emptyUpdateSlugs.slice(0, 3).join(', ');
+  const msg = `Pro emitted a contradictory fan-out: skipped reasons claim capture (${lyingPreview}) while updates carry no content (${updatesPreview}). The model referenced sections by id without including the new content. Retry to give Pro another pass.`;
+  logger.error(
+    {
+      lyingSkippedClaims,
+      emptyUpdateSlugs,
+      skippedCount: fanOut.skipped.length,
+      updatesCount: fanOut.updates.length,
+      createsCount: fanOut.creates.length,
+    },
+    'commit: aborting — lying-skipped failure detected (Pro claims capture but emitted no content)',
+  );
+  throw new Error(`PRO_LYING_SKIPPED: ${msg}`);
+}
+
 export interface CommitResult {
   pagesCreated: number;
   pagesUpdated: number;
@@ -125,6 +198,20 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     },
     'commit: pro fan-out output',
   );
+
+  // Pre-flight: detect the "lying skipped" failure mode where Pro claims
+  // it captured a directive (skipped reason: "captured as bullet on X")
+  // but the corresponding update emits only KEEP-AS-IS section refs
+  // ({id} / {id, title}, no content). Observed repeatedly 2026-05-17 on
+  // reading-list "add X to my Y" requests — the model's mental model
+  // assumes the backend will merge a bullet from the skipped reason +
+  // updated agent_abstract, but the commit phase REPLACES section
+  // content from `content` only and ignores everything else. Result:
+  // silent zero-write, user thinks ingestion succeeded but nothing
+  // landed. The system prompt is supposed to prevent this; this guard
+  // is the safety net that converts the silent failure into a noisy
+  // one so the user can retry instead of being quietly lied to.
+  detectLyingSkippedFailure(fanOut);
 
   // Validation set for page types — must match the page_type pgEnum in
   // packages/shared/src/db/schema/enums.ts.

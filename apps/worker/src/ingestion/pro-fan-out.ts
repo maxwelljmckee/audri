@@ -245,6 +245,71 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
   ]
 }
 
+## ⚠️ Section update mechanics — READ BEFORE WRITING ANYTHING
+
+This is the most-failed rule. Take an extra moment here.
+
+**Each entry in an update's \`sections\` array is a REPLACE operation on that section's state**, not a touch / reference / acknowledgement. The commit phase REPLACES section content with whatever you emit — it does NOT append, diff, or patch.
+
+Concrete shapes:
+
+- \`{"id": "<uuid>"}\` (no content) → **KEEP-AS-IS, no change at all.** Use only to prevent tombstoning while editing siblings.
+- \`{"id": "<uuid>", "content": "<FULL new content>", "snippets": [...]}\` → **UPDATE.** The \`content\` field is the entire new section body. To add a bullet, copy the existing content from \`touched_pages\` and append the bullet. To change a sentence, re-emit the whole section with the edit in place.
+- \`{"title": "<heading>", "content": "<markdown>", "snippets": [...]}\` (no id) → **CREATE NEW section** on the page.
+
+### Worked example — the failure mode this guards against
+
+Current state Pro sees in \`touched_pages\` for slug \`reading-list\`:
+\`\`\`
+sections:
+  - id: 681a4f88..., title: null,            content: "..."
+  - id: e6a937cf..., title: "Books to Read", content: "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow"
+\`\`\`
+
+User says: "Add The Art of Gathering by Priya Parker to my reading list."
+
+✅ **CORRECT** — re-emit the "Books to Read" section with the new bullet appended; preserve the untitled section:
+\`\`\`json
+{
+  "slug": "reading-list",
+  "agent_abstract": "A reading list of books to read or currently reading.",
+  "sections": [
+    {"id": "681a4f88..."},
+    {
+      "id": "e6a937cf...",
+      "title": "Books to Read",
+      "content": "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow\\n- The Art of Gathering by Priya Parker",
+      "snippets": [{"turn_id": "turn-1", "text": "add The Art of Gathering by Priya Parker to my reading list"}]
+    }
+  ]
+}
+\`\`\`
+
+❌ **WRONG — this is the silently-failing pattern observed 2026-05-17, on both voice and text:**
+\`\`\`json
+{
+  "slug": "reading-list",
+  "agent_abstract": "...including The Art of Gathering.",
+  "sections": [
+    {"id": "681a4f88..."},
+    {"id": "e6a937cf...", "title": "Books to Read"}
+  ]
+}
+\`\`\`
+Both section entries are KEEP-AS-IS. The agent_abstract was updated, but the actual book never got added to any section. The user's directive is silently dropped. Updating the abstract or noting "captured as bullet" in \`skipped\` does NOT produce a write — only \`content\` in a section entry does.
+
+### Anti-self-deception check (run this before submitting)
+
+Before you return your JSON, scan your \`skipped\` array. If ANY \`reason\` contains language like:
+
+> "captured as bullet" · "added to X" · "noted in Y" · "saved to Z" · "appended" · "recorded on" · "tracked"
+
+…that is a **contradiction**. \`skipped\` means NOT written. If you intended to capture, the capture MUST appear in \`creates\` or \`updates\` with concrete \`content\`. Move it. The commit phase doesn't read \`skipped\` reasons — it only writes what you put in \`creates\`/\`updates\`.
+
+Likewise, scan your \`updates\`. If you emitted any update whose \`sections\` array contains ONLY \`{id}\` (or \`{id, title}\`) entries — meaning every section reference is KEEP-AS-IS — then **that update did literally nothing**. Either the update doesn't belong (drop it and move the claim to \`skipped\` with an honest reason like "no fitting section"), or you forgot to attach \`content\` to the section you intended to change.
+
+The commit phase now hard-fails this combination (a "lying skipped" + no-content updates pair) and aborts ingestion. Match your output to your intent.
+
 ## Hard rules
 
 - agent_abstract REQUIRED on every create + update.
@@ -258,7 +323,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
 - The \`sections\` field is OPTIONAL on updates. When you OMIT it (move-only metadata updates), the page's existing sections are left untouched. When you INCLUDE it, the array is the full new section state — any existing section not listed gets tombstoned. NEVER emit \`sections: []\` to mean "no change" — that would tombstone every section on the page. Omit the field entirely.
 - Sections present on the page but absent from your \`sections\` array (when you DO include the array) will be tombstoned — list every section you want kept (use { id } for keep-as-is).
-- **Per-section shapes (see §"Section update operations" for the full contract):** \`{id}\` = keep-as-is, NO CHANGE. \`{id, content, snippets}\` = update existing — content is the FULL new section body (replaces, never patches). \`{title, content, snippets}\` (no id) = new section on the page. **Adding a bullet to an existing section means re-emitting the entire section content with the new bullet included — \`{id}\` alone is a no-op and will silently drop the user's directive.**
+- **Per-section shapes:** see §"Section update mechanics" at the top of this prompt. Quick reference: \`{id}\` = keep-as-is no-op; \`{id, content, snippets}\` = update (FULL new body, replaces); \`{title, content, snippets}\` no id = new section.
 - Timeline section (title="Timeline"), when present, MUST appear first in the sections list.
 - Never invent turn_ids — every snippet turn_id must appear verbatim in the input transcript.
 - Never emit user_id, page_id, section_id, scope, parent_page_id, or timestamps. Backend concerns.
@@ -534,81 +599,6 @@ When the user EXPLICITLY tells Audri to write something somewhere ("make a note 
 - "Add this to my goals" → if no fitting section exists on profile/goals, create one with a specific title that captures the goal area.
 
 New section titles should be specific and informative — "Backlog", "Decisions log", "Open questions about X", "Risks", "Next steps" — not generic labels like "Notes" or "Other".
-
-### Section update operations — explicit per-operation contract
-
-Each entry in an update's \`sections\` array is a FULL state declaration for that section after the update lands. There are four operations — pick the shape that matches your intent. **If you pick the wrong shape the wrong thing happens silently** (the commit phase doesn't validate semantics against the transcript). The 2026-05-17 "add to reading list" regression was exactly this failure mode: Pro emitted KEEP-AS-IS shapes thinking they were updates, and the user's directive was silently dropped.
-
-**1. KEEP-AS-IS** — preserve a section unchanged. Use ONLY when you want literally zero change.
-\`\`\`json
-{ "id": "<existing-uuid>" }
-\`\`\`
-Title stays, content stays, snippets stay. **This is NOT how you add a bullet, edit a heading, or note that a section was "touched" by a claim. \`{id}\` alone is a no-op.** Reach for it only to prevent tombstoning when you're updating sibling sections on the same page.
-
-**2. UPDATE EXISTING — full content rewrite.** This is how you add, change, OR remove content from a section that already exists:
-\`\`\`json
-{ "id": "<existing-uuid>", "content": "<FULL new section content>", "snippets": [...] }
-\`\`\`
-The \`content\` field is the ENTIRE new section body — markdown, prose, lists, everything that should be in the section after the update. The commit phase REPLACES \`content\` wholesale; it does not append, patch, or diff.
-
-- **Adding a bullet** to a 12-bullet list section: re-emit all 13 bullets (the original 12 + the new one) in \`content\`.
-- **Editing a sentence**: re-emit the section with the edited sentence in place, all unchanged prose preserved verbatim around it.
-- **Deleting a bullet / paragraph**: re-emit the section WITHOUT the deleted text; everything else stays.
-- **Reordering**: re-emit the section in the new order.
-
-Optional \`title\` if you're also renaming the heading (re-emit the new title; omitting means "keep current title"). Optional \`cited_urls\` for new grounding citations. Always include \`snippets\` tying the change to transcript turn_ids.
-
-**3. CREATE NEW SECTION ON THE PAGE** — add a new section to an existing page (no id assigned yet):
-\`\`\`json
-{ "title": "<heading>", "content": "<markdown>", "snippets": [...] }
-\`\`\`
-No \`id\` field — the backend assigns one. Title strongly encouraged (see §"Section content depth"). Used when the routed claim doesn't fit any existing section — see §"Section creation on updates" above.
-
-**4. REMOVE A SECTION** — there is no remove shape. To remove a section, OMIT it from the \`sections\` array entirely. The commit phase tombstones any section that exists on the page but is absent from your list. **Corollary: list every section you want kept, using KEEP-AS-IS (\`{id}\`) for sections with no content change.**
-
----
-
-**Worked example — adding a book to a reading list with existing bullets.**
-
-Suppose \`reading-list\` already exists with these sections (this is what you'd see in \`touched_pages\`):
-
-\`\`\`
-sections:
-  - id: 681a4f88-..., title: null,             content: "..."
-  - id: e6a937cf-..., title: "Books to Read", content: "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow"
-\`\`\`
-
-User says: "Add The Art of Gathering by Priya Parker to my reading list."
-
-✅ CORRECT — re-emit the "Books to Read" section with the new bullet appended, keep the untitled section as-is:
-\`\`\`json
-{
-  "slug": "reading-list",
-  "agent_abstract": "A reading list of books to read or currently reading.",
-  "sections": [
-    { "id": "681a4f88-..." },
-    {
-      "id": "e6a937cf-...",
-      "title": "Books to Read",
-      "content": "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow\\n- The Art of Gathering by Priya Parker",
-      "snippets": [{ "turn_id": "turn-1", "text": "add The Art of Gathering by Priya Parker to my reading list" }]
-    }
-  ]
-}
-\`\`\`
-
-❌ WRONG (the regression) — both shapes are KEEP-AS-IS, so the directive is silently dropped:
-\`\`\`json
-{
-  "slug": "reading-list",
-  "agent_abstract": "...",
-  "sections": [
-    { "id": "681a4f88-..." },
-    { "id": "e6a937cf-...", "title": "Books to Read" }
-  ]
-}
-\`\`\`
-This commits as zero writes. If you then add a \`skipped\` entry like "Captured as bullet on reading-list" you are *claiming work that didn't happen* — the worst failure mode. When in doubt: if you intend ANY change, you MUST include \`content\` with the FULL new body.
 
 ### Multi-target writes — duplication with cross-links is the canonical pattern
 

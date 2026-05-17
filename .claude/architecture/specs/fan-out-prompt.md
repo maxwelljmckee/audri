@@ -365,6 +365,10 @@ Both shapes are KEEP-AS-IS. Nothing changes. The directive is silently dropped, 
 
 **Rule of thumb:** if you intend ANY change to a section's content, you MUST include `content` with the FULL new body. `{id}` alone means "this section is unchanged and I'm only listing it to prevent tombstoning."
 
+**Anti-self-deception check (added 2026-05-17 after recurrence on both voice + text paths).** Before submitting the JSON, Pro must scan its own `skipped` array. If any `reason` contains verbs that assert capture — "captured as bullet", "added to", "noted in", "saved to", "appended", "recorded on", "tracked" — that's a **contradiction** with the schema: `skipped` means NOT written. Either the claim was actually written (in which case it belongs in `creates` or `updates` with concrete `content`, NOT `skipped`) or it wasn't (in which case the reason should reflect that honestly, e.g. "no fitting section without restructuring"). The commit phase doesn't read `skipped` reasons — it only writes what's in `creates` and `updates`.
+
+The system prompt embeds this check at the top (§"Section update mechanics") so the model sees it before routing decisions. The commit phase (`apps/worker/src/ingestion/commit.ts` → `detectLyingSkippedFailure`) also hard-fails when it sees the lying-skipped pattern paired with no-content updates — converts the silent zero-write into a `partial` ingestion that surfaces the retry banner. Both layers exist because the prose-only rule kept getting overridden by the model's prior; needed structural enforcement to back it up.
+
 #### Multi-target phrasing
 
 When a claim touches multiple targets (rule 1), each target's section content reflects the claim from that target's perspective:
