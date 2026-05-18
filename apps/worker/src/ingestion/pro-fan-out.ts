@@ -219,7 +219,8 @@ You receive:
 1. **Transcript** — turn-tagged conversation. User turns are the primary source; assistant turns are a secondary source (see §"Agent turns capturable when user intent is clear"). **The assistant has no write tools** — only search/lookup. When the transcript shows the assistant saying "I'll add X" / "Done, I added X" / "I've noted that" / "Got it, saved" / etc., those are **assignments to you**, not evidence of completed work. The wiki state at end-of-call is exactly what existed at start-of-call; nothing has been written yet. Whether the assistant verbally confirmed the action or not, your output is the only path to actually executing it.
 2. **Candidate touched_pages** — fully-joined JSON for each existing page that may need updating. Includes metadata + all sections.
 3. **Candidate new_pages** — proposed creates from Flash with { proposed_slug, proposed_title, type, proposed_parent_slug }. You decide which to actually create. Flash's proposed_parent_slug is a HINT — default to it; you may silently override (just like proposed_type) when transcript content makes a different choice clearer.
-4. **(Optional) grounding_sources** — web URLs the live agent cited via googleSearch during the call. Two roles depending on context: (a) **citation** — attribute section content via \`cited_urls\` (default behavior); (b) **content enrichment** — when the target page's \`agent_notes\` explicitly directs lookup-and-include (e.g. "look up author and year, include on the page"), Pro USES grounding snippet content to populate new section content. The Live Agent does the lookup silently per its prompt; the looked-up info reaches Pro only via grounding_sources, so Pro must pull from it. See §"Source citations" + §"Enrichment from grounding (agent_notes-directed)."
+4. **(Optional) grounding_sources** — web URLs the live agent cited via googleSearch during the call. Use for \`cited_urls\` attribution on sections whose content was grounded in the agent's spoken lookup. See §"Source citations."
+5. **(Optional) enrichment_lookups** — structured pre-computed lookups the worker fired before invoking you, keyed by new-page slug. Present when a target page's \`agent_notes\` directs lookup-and-include behavior and a new entity in this transcript triggered that rule. Each entry carries \`{rule_excerpt, query, fields: {<name>: <value>}, sources: [...]}\`. Compose the \`fields\` values into the new page's section content per the page's existing structure; emit \`cited_urls\` from the \`sources\` array. See §"Enrichment from \`enrichment_lookups\` (agent_notes-directed)."
 5. **(Optional) manual_retry block** — when present at the top of the user message, the user manually re-triggered ingestion because they believe a prior run missed something extractable. Re-read aggressively; treat marginal calls as captures, not skips; lean harder on agent-turn capture.
 
 **You have NO tools.** All search and lookup happens during the live call (the agent has search_wiki / search_transcripts / fetch_page / fetch_transcript / googleSearch). Anything not in the transcript or grounding_sources doesn't exist for you. Don't reach for what isn't there; capture what is.
@@ -744,26 +745,44 @@ The input may include a \`grounding_sources\` block — web URLs (with titles + 
 
 The \`url\` strings in \`cited_urls\` MUST match URIs that appear in the input \`grounding_sources\` list verbatim. Don't invent URLs.
 
-### Enrichment from grounding (agent_notes-directed)
+### Enrichment from \`enrichment_lookups\` (agent_notes-directed)
 
-When a target page's \`agent_notes\` explicitly directs lookup-and-include behavior (e.g. "look up author and year, include on the page"; "fetch year published and a one-line premise"; "always add author + biographical context"), grounding_sources is no longer just a citation surface — it is the **primary content source for the enrichment fields the rule names**.
+When a target page's \`agent_notes\` explicitly directs lookup-and-include behavior (e.g. "look up author and year, include on the page"; "fetch year published and a one-line premise"; "always add author + biographical context"), the **worker fires a structured lookup BEFORE you run** and passes the result in via the \`enrichment_lookups\` input field. You do NOT do the lookup yourself; you USE the result.
+
+**Input shape.** \`enrichment_lookups\` is keyed by the target new-page's proposed slug:
+
+\`\`\`json
+{
+  "<new-page-slug>": {
+    "rule_excerpt": "<the agent_notes excerpt that triggered this lookup>",
+    "query": "<query the worker sent>",
+    "fields": { "author": "Robert Caro", "year_published": "1974", "premise": "Biography of Robert Moses." },
+    "sources": [ { "uri": "https://...", "title": "...", "domain": "wikipedia.org" } ]
+  }
+}
+\`\`\`
 
 **Mechanics:**
 
-- The Live Agent silently invokes \`googleSearch\` per the rule; matched URLs (with title + snippet excerpts + domain) land in \`grounding_sources\`. The Live Agent does NOT recite the lookup aloud (per its prompt) — so the transcript won't carry the details. **You read them from \`grounding_sources\` instead.**
-- Extract the specific fields the \`agent_notes\` rule names (author, year, premise, etc.) from the grounding snippets. Compose them into the new page's section content per the page's existing structure.
-- DO emit \`cited_urls\` on any section whose content was sourced from grounding_sources — citation discipline still applies (the user can tap through to verify).
+- Compose \`fields\` values into the new page's section content per the page's existing structure (a "Books to Read" list might land as "- *Title* by *author*, *year*. *premise*"; a per-book sub-page might land with sections like "About", "Why it matters", etc.). Match what the page already does.
+- Emit \`cited_urls\` on any section whose content was sourced from the \`sources\` array — citation discipline applies (the user can tap through to verify).
+- If \`enrichment_lookups\` is absent or doesn't carry an entry for a given new-page slug, just write what you have from the transcript. Don't block on missing enrichment.
+- If a particular field is missing from \`fields\` (e.g. \`premise\` is null because the lookup didn't find a clear one), omit it from the section content rather than fabricating. The worker won't pass keys it couldn't fill.
+- If \`agent_notes\` does NOT direct lookup-and-include, \`enrichment_lookups\` will be empty/absent — there's nothing to use.
 
-**Match the rule's specificity:**
+**Field selection notes** (the worker already filters these per the rule; you're consuming, not re-deciding):
 
-- **Closed rules** ("look up author and year" / "include title + publication year + ISBN") — pull EXACTLY those fields. Do not add genre, premise, publisher, etc. The user enumerated; respect the enumeration.
-- **Open rules with named anchors + an open clause** ("look up author, year, premise, and any other relevant info" / "fetch publication details and anything that seems important") — pull the named fields PLUS use judgment to include other clearly-relevant context (a one-line summary, a notable author detail, a relevant award, the publisher if it's a known imprint). Stay within reason: a few additional items, not a research dump. If unsure whether something is "relevant", lean against — terser writes are easier to revise than bloated ones.
-- **Fully open rules** ("look up background info" with no field enumeration) — exercise judgment over what fits the page's existing shape. Mirror the level of detail other entries on the page carry (if existing books are 2-line entries with author/year/premise, match that; if they're paragraph-length deep dives, lean richer).
-- Keep the enrichment terse — match the rule's specified detail level. A one-line-premise rule yields one line, not a synopsis paragraph.
-- If grounding_sources is empty or doesn't carry the field the rule names, DO write the page with what you have (don't block on missing enrichment); add a note like "_Author lookup unavailable_" in the relevant section. Better to capture the user's directive than to skip.
-- If \`agent_notes\` does NOT direct lookup-and-include, treat grounding_sources as citation-only per the rules above.
+- Closed rules → only the enumerated fields appear.
+- Open rules ("any relevant info") → the worker uses judgment and includes named anchors + a few sensible extras.
+- Whatever shows up in \`fields\` is what the rule authorized; trust the worker's filtering.
 
-**Worked example:** \`reading-list/agent_notes\` says "Look up author, year, and a one-sentence premise when adding a book." User says "Add *The Power Broker* to my reading list." Live Agent does \`googleSearch\`, says "Adding *The Power Broker* by Robert Caro, 1974." (one short sentence, terse-spoken). \`grounding_sources\` carries the Wikipedia entry. Pro creates \`reading-list/the-power-broker\` with a section whose content is \`"By Robert Caro, 1974. A biography of Robert Moses and his transformation of New York City."\` plus \`cited_urls\` referencing the Wikipedia URL.
+**Worked example:** \`reading-list\` has \`agent_notes\`: "Each book = sub-page. Look up author, year, and a one-sentence premise." User says "Add *The Power Broker* to my reading list." Live Agent says "Adding *The Power Broker*." (terse). Worker fires lookup, gets \`{ author: "Robert Caro", year_published: "1974", premise: "Biography of Robert Moses and his transformation of New York City." }\` plus a Wikipedia source URL. Pro creates \`reading-list/the-power-broker\` with sections like:
+
+\`\`\`
+About: A 1974 biography of Robert Moses by Robert Caro, examining his transformation of New York City.
+\`\`\`
+
+…with \`cited_urls: ["https://en.wikipedia.org/wiki/The_Power_Broker"]\` on the About section.
 
 ## 4. Contradiction handling
 
@@ -894,6 +913,17 @@ export interface GroundingSource {
   domain?: string;
 }
 
+// Structured pre-computed enrichment lookup result for a single new-page
+// candidate. Worker fires one of these per new_page whose proposed parent
+// has an enrichment-directing `agent_notes` rule. Pro reads `fields` into
+// the new page's section content and `sources` into `cited_urls`.
+export interface EnrichmentLookup {
+  rule_excerpt: string;
+  query: string;
+  fields: Record<string, string | null>;
+  sources: Array<{ uri: string; title?: string; domain?: string }>;
+}
+
 export interface ProFanOutInput {
   transcript: IngestionTranscriptTurn[] & { id?: string }[];
   newPages: NewPage[];
@@ -903,6 +933,12 @@ export interface ProFanOutInput {
   // (or undefined) for calls with no grounding activity. Pro reads this
   // to decide which sections deserve `cited_urls` attribution.
   groundingSources?: GroundingSource[];
+  // Pre-computed enrichment lookups, keyed by new-page slug. Populated by
+  // the worker when a touched_page's `agent_notes` directs lookup-and-
+  // include behavior for a new entity in this transcript. Pro consumes
+  // these as structured content for the new page (see prompt §"Enrichment
+  // from enrichment_lookups"). Empty/undefined when no rules fire.
+  enrichmentLookups?: Record<string, EnrichmentLookup>;
   // True when this run was triggered by a manual retry from the transcript
   // UI — the user re-ran ingestion because they believe content was missed
   // on a prior attempt. Surfaces as a header in the user message so Pro
@@ -929,6 +965,11 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
       ? `# grounding_sources (web URLs Audri cited via googleSearch during the call — use for cited_urls attribution)\n${JSON.stringify(input.groundingSources, null, 2)}\n\n`
       : '';
 
+  const enrichmentBlock =
+    input.enrichmentLookups && Object.keys(input.enrichmentLookups).length > 0
+      ? `# enrichment_lookups (pre-computed structured lookups, keyed by new-page slug — consume \`fields\` into section content, \`sources\` into cited_urls; see prompt §"Enrichment from enrichment_lookups")\n${JSON.stringify(input.enrichmentLookups, null, 2)}\n\n`
+      : '';
+
   // Manual-retry hint. When the user manually re-triggered ingestion from
   // the transcript UI, it means a prior attempt either failed to capture
   // something they expected OR was an obvious zero-claim no-op. Bias toward
@@ -943,7 +984,7 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
     ? '# manual_retry\nThe user manually re-triggered ingestion for this transcript — they believe something extractable was missed on the prior run. Re-read aggressively. Treat user directives as overriding the worthiness filter. Agent-enumerated content (where the user accepted or directed action on it) IS capturable; bias toward writing rather than skipping. Do not invent content beyond what the transcript supports.\n\n'
     : '';
 
-  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${manualRetryBlock}${groundingBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
+  const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${manualRetryBlock}${groundingBlock}${enrichmentBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
 
   const resp = await callProWithRetry({
     model: PRO_MODEL,

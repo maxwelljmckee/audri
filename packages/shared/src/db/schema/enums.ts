@@ -69,6 +69,13 @@ export const usageEventKindEnum = pgEnum('usage_event_kind', [
   // with the wiki retrieval tools.
   'tool_search_transcripts',
   'tool_fetch_transcript',
+  // Server-side lookup tool — invokes Gemini Flash with googleSearch
+  // grounding to fetch structured enrichment data named by an agent_notes
+  // rule (e.g. "author + year + premise" for a book). Distinct from
+  // `web_search` (which counts the live agent's native googleSearch
+  // queries); this row covers the Flash inference + grounding cost on
+  // the server-side handler. See apps/server/src/calls/tools.ts → lookup.
+  'tool_lookup',
   'web_search',
   // Per-turn text-chat inference. Each /chat/turn call streams Gemini
   // output server-side and writes one row tagged with the cumulative

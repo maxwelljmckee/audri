@@ -24,6 +24,11 @@ import { checkSpendCap } from '@audri/shared/usage';
 import type { Task } from 'graphile-worker';
 import { runAgentScopeIngestion } from '../ingestion/agent-scope.js';
 import { fetchCandidatePages } from '../ingestion/candidate-pages.js';
+import {
+  agentNotesDirectsEnrichment,
+  type EnrichmentLookupResult,
+  lookupEnrichment,
+} from '../ingestion/enrichment-lookup.js';
 import { commitFanOut } from '../ingestion/commit.js';
 import {
   FLASH_CANDIDATE_RETRIEVAL_MODEL,
@@ -317,12 +322,53 @@ async function runUserScopePipeline(
   const candidatePages = await fetchCandidatePages(p.userId, touchedSlugs);
   log(`fetched ${candidatePages.length}/${touchedSlugs.length} candidate pages`);
 
+  // Pre-Pro enrichment lookups. For each new_page proposed by Flash whose
+  // proposed parent has an agent_notes rule directing lookup-and-include
+  // behavior, fire a single bounded Gemini Flash call with googleSearch
+  // grounding to fetch the named fields. Results are passed into Pro as
+  // structured input under `enrichmentLookups`, keyed by new-page slug.
+  // Triggers are deterministic (rule presence + Flash's structural decision);
+  // no LLM-in-the-loop deciding what to look up. See enrichment-lookup.ts
+  // header + v0.3.0 dogfood pass that motivated this addition.
+  const candidateBySlug = new Map(candidatePages.map((cp) => [cp.slug, cp]));
+  const enrichmentLookups: Record<string, EnrichmentLookupResult> = {};
+  const lookupTasks: Array<Promise<void>> = [];
+  for (const np of candidates.new_pages) {
+    const parentSlug = np.proposed_parent_slug;
+    if (!parentSlug) continue;
+    const parent = candidateBySlug.get(parentSlug);
+    if (!parent || !agentNotesDirectsEnrichment(parent.agent_notes)) continue;
+    const ruleExcerpt = parent.agent_notes ?? '';
+    const query = `${np.proposed_title}`.trim();
+    if (!query) continue;
+    lookupTasks.push(
+      (async () => {
+        const result = await lookupEnrichment({
+          query,
+          fields: [], // open-ended; the rule excerpt carries the field guidance
+          ruleExcerpt,
+          userId: p.userId,
+          agentId: p.agentId,
+          callTranscriptId: p.transcriptId,
+        });
+        if (result) enrichmentLookups[np.proposed_slug] = result;
+      })(),
+    );
+  }
+  if (lookupTasks.length > 0) {
+    log(`enrichment lookups firing: ${lookupTasks.length}`);
+    await Promise.all(lookupTasks);
+    log(`enrichment lookups complete: ${Object.keys(enrichmentLookups).length} succeeded`);
+  }
+
   const fanOutReturn = await runFanOut({
     transcript,
     newPages: candidates.new_pages,
     touchedPages: candidatePages,
     callTimestamp,
     groundingSources,
+    enrichmentLookups:
+      Object.keys(enrichmentLookups).length > 0 ? enrichmentLookups : undefined,
     manualRetry: p.manualRetry === true,
   });
   const fanOut = fanOutReturn.result;

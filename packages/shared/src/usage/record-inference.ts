@@ -24,6 +24,7 @@ export type UsageEventKind =
   | 'tool_fetch_page'
   | 'tool_search_transcripts'
   | 'tool_fetch_transcript'
+  | 'tool_lookup'
   | 'web_search'
   | 'chat_turn';
 

@@ -260,6 +260,13 @@
       "when": 1779126726333,
       "tag": "0036_silly_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1779140529634,
+      "tag": "0037_tidy_puppet_master",
+      "breakpoints": true
     }
   ]
 }
