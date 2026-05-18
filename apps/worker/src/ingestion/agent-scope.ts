@@ -41,6 +41,17 @@ import { parseGeminiJson } from './parse-gemini-json.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';
 
+// Wall-clock budget for the agent-scope Flash call. Without an explicit
+// abort the SDK falls back to undici's headers-timeout default (5 min);
+// a hung Flash inference can wedge the entire ingestion job since
+// agent-scope runs in parallel with user-scope via Promise.allSettled
+// and the wrapping task waits for both. Observed 2026-05-18: user-scope
+// completed cleanly in ~20s while agent-scope hung silently for 6+ min.
+// Override via env when needed.
+const AGENT_SCOPE_FLASH_TIMEOUT_MS = Number(
+  process.env.AGENT_SCOPE_FLASH_TIMEOUT_MS ?? 90_000,
+);
+
 interface AgentWikiPage {
   id: string;
   slug: string;
@@ -321,6 +332,7 @@ async function runAgentScopeFlash(input: AgentScopeInput): Promise<RunAgentScope
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      abortSignal: AbortSignal.timeout(AGENT_SCOPE_FLASH_TIMEOUT_MS),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,

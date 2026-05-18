@@ -16,6 +16,15 @@ import type { WikiIndexEntry } from './wiki-index.js';
 
 const FLASH_MODEL = 'gemini-2.5-flash';
 
+// Wall-clock budget for the candidate-retrieval Flash call. Same
+// rationale as agent-scope.ts's AGENT_SCOPE_FLASH_TIMEOUT_MS — without
+// an abort the SDK relies on undici's 5-min headers-timeout default,
+// which can wedge the ingestion task end-to-end on a stuck Flash
+// inference. Override via env when needed.
+const FLASH_CANDIDATE_TIMEOUT_MS = Number(
+  process.env.FLASH_CANDIDATE_TIMEOUT_MS ?? 90_000,
+);
+
 // Re-exported so callers can attribute usage_events writes to the same
 // model string the request actually used.
 export const FLASH_CANDIDATE_RETRIEVAL_MODEL = FLASH_MODEL;
@@ -312,6 +321,7 @@ export async function retrieveCandidates(
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      abortSignal: AbortSignal.timeout(FLASH_CANDIDATE_TIMEOUT_MS),
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,

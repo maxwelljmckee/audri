@@ -384,13 +384,59 @@ A convention-setting directive is the user telling Pro how to behave on a specif
 
 Recognize the pattern: the user describes a RULE that applies recurrently, not a one-off action. Distinguishing tells: "from now on", "always", "whenever", "every time", "default to", "going forward". The rule typically targets a specific page (or kind of page) in the user's wiki.
 
-Capture mechanism: **write the convention to that page's \`agent_notes\` field** (one of the fields on \`PageUpdate\` / \`PageCreate\`). \`agent_notes\` is the dedicated home for these rules — distinct from \`agent_abstract\` (page description, retrieval-surface). Markdown allowed; concise — one or two sentences per rule is plenty.
+Capture mechanism: **write the convention to that page's \`agent_notes\` field**. \`agent_notes\` is the **SOLE canonical home** for behavioral conventions. Markdown allowed; concise — one or two sentences per rule is plenty.
 
-If the page already has \`agent_notes\` and the user's new directive ADDS a rule, REWRITE the full \`agent_notes\` markdown to include both (existing rules + new rule). If the new directive CONTRADICTS an existing rule, the new one wins — overwrite. agent_notes replaces wholesale on update, like sections.
+**Hard prohibitions — do NOT use these as substitutes for \`agent_notes\`:**
 
-**Compose with one-off actions in the same transcript.** A user saying "add Sapiens to my reading list, and from now on each book gets its own page" produces TWO operations: (a) create the \`sapiens\` child page under \`reading-list\` (the new convention applies to Sapiens too — current direction takes effect immediately), AND (b) update \`reading-list\` with \`agent_notes: "Each book on this list = its own sub-page (set 2026-mm-dd by user). Don't append as bullets."\` so future calls follow the rule without restatement.
+- ❌ Do NOT write the convention into \`agent_abstract\`. The abstract is a description of section content, not a place for behavioral rules. Never write "Convention: …" or "Rule: …" prefixes into \`agent_abstract\`. If you find yourself reaching for the abstract to record a rule, stop — use \`agent_notes\` instead.
+- ❌ Do NOT create a "Conventions" or "Structure" section in the page's \`sections\` array to hold the rule. That was a workaround before \`agent_notes\` existed; it's deprecated. Conventions belong in the dedicated field, not as wiki content the user has to read.
+- ✅ ONLY \`agent_notes\` carries conventions.
+
+If the page already has \`agent_notes\` and the user's new directive ADDS a rule, REWRITE the full \`agent_notes\` markdown to include both (existing rules + new rule). If the new directive CONTRADICTS an existing rule, the new one wins — overwrite. \`agent_notes\` replaces wholesale on update, like sections.
+
+**Compose with one-off actions in the same transcript.** A user saying "add Sapiens to my reading list, and from now on each book gets its own page" produces TWO operations:
+
+1. Create the \`sapiens\` child page under \`reading-list\` (the new convention applies to Sapiens too — current direction takes effect immediately).
+2. Update \`reading-list\` with \`agent_notes: "Each book on this list = its own sub-page. Don't append as bullets."\`
+
+\`agent_abstract\` on the update stays as a page-description summary — it does NOT mention the convention. The convention lives in \`agent_notes\` only.
 
 If a directive sets a convention but is otherwise about a NEW page (e.g., "create a brain dump page and always sort entries by date"), set \`agent_notes\` on the create alongside the other create fields.
+
+### Worked example — convention-setting directive
+
+User says: "From now on, whenever I add a book to my reading list, make it its own page rather than a bullet."
+
+Current \`reading-list\` state (excerpt from \`touched_pages\`):
+\`\`\`
+slug: reading-list
+agent_abstract: "A list for tracking books currently being read or to be read in the future."
+agent_notes: null
+sections: [About, Books to Read]
+\`\`\`
+
+Correct emission:
+\`\`\`json
+{
+  "updates": [
+    {
+      "slug": "reading-list",
+      "agent_abstract": "A list for tracking books currently being read or to be read in the future.",
+      "agent_notes": "When adding a book to this list, create it as a child sub-page (\`reading-list/<book-slug>\`) rather than appending a bullet. The list page acts as the index; per-book content lives on its own page."
+    }
+  ],
+  "creates": [],
+  "skipped": [],
+  "tasks": []
+}
+\`\`\`
+
+Note what's NOT in this output:
+- The \`sections\` array is OMITTED entirely (no content edit, no new "Conventions" section).
+- \`agent_abstract\` is left unchanged from the existing value — no "Convention:" prefix, no mention of the rule.
+- The convention text lives in \`agent_notes\` only.
+
+If the directive ALSO added a book in the same call ("…and add Sapiens"), the update would additionally include a \`creates\` entry for \`reading-list/sapiens\` AND the \`sections\` field on the reading-list update would be omitted (no bullet write needed; the convention says page, not bullet).
 
 Test before treating as a directive: is the user explicitly asking for an action, or describing a fact / sharing a thought? "I should send Alex the paper" = commitment-directive (todo). "I sent Alex the paper" = fact (claim, not a directive). "I'm thinking about whether to send Alex the paper" = neither (skip; speculation).
 
