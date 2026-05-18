@@ -96,6 +96,11 @@ export interface FetchPageResult {
   page_title: string;
   page_type: string;
   abstract: string | null;
+  // Page-level behavioral conventions for the Live Agent — read these and
+  // RESPECT them when the user issues a directive targeting this page.
+  // Null when no conventions set. See system-prompt §"Page-level agent
+  // notes" for delivery rules.
+  agent_notes: string | null;
   sections: Array<{
     title: string | null;
     content: string;
@@ -116,6 +121,7 @@ export async function fetchPage(userId: string, slug: string): Promise<FetchPage
       title: wikiPages.title,
       type: wikiPages.type,
       abstract: wikiPages.abstract,
+      agentNotes: wikiPages.agentNotes,
     })
     .from(wikiPages)
     .where(
@@ -150,6 +156,7 @@ export async function fetchPage(userId: string, slug: string): Promise<FetchPage
     page_title: page.title,
     page_type: page.type,
     abstract: page.abstract,
+    agent_notes: page.agentNotes,
     sections: sections.map((s) => ({
       title: s.title,
       content: truncate(s.content, FETCH_MAX_SECTION_CHARS),

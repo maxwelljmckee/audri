@@ -49,6 +49,10 @@ interface PageWithSections {
   title: string;
   agentAbstract: string;
   abstract: string | null;
+  // Per-page behavioral rules for the Live Agent — see wiki_pages.agent_notes
+  // schema comment. Rendered inline with the page so the agent can read
+  // and respect the rules at call time. Null when no conventions set.
+  agentNotes: string | null;
   sections: Array<{ title: string | null; content: string }>;
 }
 
@@ -58,6 +62,7 @@ interface RecentPage {
   scope: 'user' | 'agent';
   updatedAt: Date;
   agentAbstract: string;
+  agentNotes: string | null;
 }
 
 interface IncompleteCall {
@@ -106,13 +111,23 @@ interface WikiStructureNode {
   title: string;
   type: string;
   agentAbstract: string;
-  children: Array<{ slug: string; title: string; type: string; agentAbstract: string }>;
+  agentNotes: string | null;
+  children: Array<{
+    slug: string;
+    title: string;
+    type: string;
+    agentAbstract: string;
+    agentNotes: string | null;
+  }>;
   childrenTruncated: boolean;
 }
 
 interface PreloadData {
   profile: PageWithSections[];
-  agentNotes: PageWithSections[];
+  // Agent-scope private wiki (scope='agent') — renamed 2026-05-18 from
+  // `agentNotes` to avoid collision with the new per-page `agentNotes` field
+  // on individual pages.
+  agentScopePages: PageWithSections[];
   recentPages: RecentPage[];
   wikiStructure: WikiStructureNode[];
   incompleteCall: IncompleteCall | null;
@@ -126,7 +141,7 @@ export async function loadGenericCallContext(
 ): Promise<PreloadData> {
   const [
     profile,
-    agentNotes,
+    agentScopePages,
     recentPages,
     wikiStructure,
     incompleteCall,
@@ -144,7 +159,7 @@ export async function loadGenericCallContext(
 
   return {
     profile,
-    agentNotes,
+    agentScopePages,
     recentPages,
     wikiStructure,
     incompleteCall,
@@ -166,6 +181,7 @@ async function fetchPagesByPrefix(
       title: wikiPages.title,
       agentAbstract: wikiPages.agentAbstract,
       abstract: wikiPages.abstract,
+      agentNotes: wikiPages.agentNotes,
     })
     .from(wikiPages)
     .where(
@@ -230,6 +246,7 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: wikiPages.title,
       type: wikiPages.type,
       agentAbstract: wikiPages.agentAbstract,
+      agentNotes: wikiPages.agentNotes,
     })
     .from(wikiPages)
     .where(
@@ -252,6 +269,7 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: wikiPages.title,
       type: wikiPages.type,
       agentAbstract: wikiPages.agentAbstract,
+      agentNotes: wikiPages.agentNotes,
       parentPageId: wikiPages.parentPageId,
     })
     .from(wikiPages)
@@ -269,12 +287,24 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
 
   const childrenByParent = new Map<
     string,
-    Array<{ slug: string; title: string; type: string; agentAbstract: string }>
+    Array<{
+      slug: string;
+      title: string;
+      type: string;
+      agentAbstract: string;
+      agentNotes: string | null;
+    }>
   >();
   for (const c of childRows) {
     if (!c.parentPageId) continue;
     const list = childrenByParent.get(c.parentPageId) ?? [];
-    list.push({ slug: c.slug, title: c.title, type: c.type, agentAbstract: c.agentAbstract });
+    list.push({
+      slug: c.slug,
+      title: c.title,
+      type: c.type,
+      agentAbstract: c.agentAbstract,
+      agentNotes: c.agentNotes,
+    });
     childrenByParent.set(c.parentPageId, list);
   }
 
@@ -286,6 +316,7 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: t.title,
       type: t.type,
       agentAbstract: t.agentAbstract,
+      agentNotes: t.agentNotes,
       children: truncated ? all.slice(0, STRUCTURE_CHILDREN_PER_PARENT_LIMIT) : all,
       childrenTruncated: truncated,
     };
@@ -300,6 +331,7 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
       scope: wikiPages.scope,
       updatedAt: wikiPages.updatedAt,
       agentAbstract: wikiPages.agentAbstract,
+      agentNotes: wikiPages.agentNotes,
     })
     .from(wikiPages)
     .where(
@@ -466,7 +498,7 @@ function truncate(s: string, n: number): string {
 export function renderPreloadBlock(data: PreloadData): string {
   if (
     data.profile.length === 0 &&
-    data.agentNotes.length === 0 &&
+    data.agentScopePages.length === 0 &&
     data.recentPages.length === 0 &&
     data.wikiStructure.length === 0 &&
     data.openItems.length === 0 &&
@@ -486,12 +518,12 @@ export function renderPreloadBlock(data: PreloadData): string {
     parts.push('', '## Profile', renderPages(data.profile));
   }
 
-  if (data.agentNotes.length > 0) {
+  if (data.agentScopePages.length > 0) {
     parts.push(
       '',
       '## Your private notes (agent-scope)',
       'These are observations you’ve recorded across past conversations. The user does not see them directly.',
-      renderPages(data.agentNotes),
+      renderPages(data.agentScopePages),
     );
   }
 
@@ -561,17 +593,23 @@ function renderPages(pages: PageWithSections[]): string {
     .map((p) => {
       const header = `### ${p.title} (\`${p.slug}\`)`;
       const abstract = p.abstract ?? p.agentAbstract;
+      const notesBlock = p.agentNotes
+        ? `_Agent notes (page-level conventions — respect these):_ ${p.agentNotes}`
+        : '';
       const sectionText = p.sections
         .map((s) => (s.title ? `**${s.title}**\n${s.content}` : s.content))
         .join('\n\n');
-      return [header, abstract, '', sectionText].filter(Boolean).join('\n');
+      return [header, abstract, notesBlock, '', sectionText].filter(Boolean).join('\n');
     })
     .join('\n\n');
 }
 
 function renderRecentPages(pages: RecentPage[]): string {
   return pages
-    .map((p) => `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`)
+    .map((p) => {
+      const base = `- \`${p.slug}\` (${p.scope}, ${formatRelative(p.updatedAt)}) — ${p.agentAbstract}`;
+      return p.agentNotes ? `${base}\n    _conventions:_ ${p.agentNotes}` : base;
+    })
     .join('\n');
 }
 
@@ -671,12 +709,14 @@ function renderWikiStructure(nodes: WikiStructureNode[]): string {
   return nodes
     .map((n) => {
       const head = `- **${n.title}** \`${n.slug}\` (\`${n.type}\`) — ${n.agentAbstract}`;
-      if (n.children.length === 0) return head;
-      const childLines = n.children.map(
-        (c) => `  - ${c.title} \`${c.slug}\` (\`${c.type}\`) — ${c.agentAbstract}`,
-      );
+      const headNotes = n.agentNotes ? `\n  _conventions:_ ${n.agentNotes}` : '';
+      if (n.children.length === 0) return `${head}${headNotes}`;
+      const childLines = n.children.map((c) => {
+        const row = `  - ${c.title} \`${c.slug}\` (\`${c.type}\`) — ${c.agentAbstract}`;
+        return c.agentNotes ? `${row}\n    _conventions:_ ${c.agentNotes}` : row;
+      });
       const more = n.childrenTruncated ? `  - …and more under \`${n.slug}\` (truncated)` : null;
-      return [head, ...childLines, ...(more ? [more] : [])].join('\n');
+      return [`${head}${headNotes}`, ...childLines, ...(more ? [more] : [])].join('\n');
     })
     .join('\n');
 }
