@@ -253,6 +253,13 @@
       "when": 1778954629538,
       "tag": "0035_worthless_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1779126726333,
+      "tag": "0036_silly_inertia",
+      "breakpoints": true
     }
   ]
 }

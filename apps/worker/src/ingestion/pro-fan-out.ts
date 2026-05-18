@@ -59,6 +59,12 @@ export interface PageCreate {
   parent_slug?: string;
   agent_abstract: string;
   abstract?: string;
+  // Optional page-level behavioral conventions for future Pro runs.
+  // Set only when the user states a convention-setting directive in this
+  // transcript ("from now on, books on this list = pages"). See
+  // §"Convention-setting directives" in the prompt + Rule 2 in
+  // §"Page vs. section/bullet" routing.
+  agent_notes?: string;
   // Optional: the Gemini responseSchema makes `sections` optional on
   // creates so the model can emit empty-bucket stub pages when the
   // user explicitly directs it ("create a page for X — I'll fill it
@@ -85,6 +91,12 @@ export interface PageUpdate {
   slug: string;
   agent_abstract: string;
   abstract?: string;
+  // Optional page-level behavioral conventions update. Set when the
+  // transcript carries a convention-setting directive targeted at this
+  // page ("from now on, X = Y on my reading list"). Replaces the existing
+  // agent_notes verbatim (full rewrite, not append). Omit when no
+  // convention update is intended.
+  agent_notes?: string;
   // Sections is OPTIONAL. When absent → no change to the page's existing
   // sections (used for move-only metadata updates). When present → the array
   // represents the full new section state; any existing sections not in the
@@ -136,6 +148,7 @@ You operate strictly on user-scope pages. Agent-scope (the assistant's private n
 - A section has { id (uuid), title, content (markdown), sort_order }.
 - Sections are h2-granular. Subheadings + lists belong inside section content as markdown.
 - agent_abstract: required on every create + update, ~1 sentence, machine-consumed (used in indexes + preloads). It is a **derived summary OF section content** — describes what is in the page's sections *after* your writes, never a substitute for writing content. **Hard constraint:** every entity, claim, or fact named in agent_abstract MUST appear verbatim in at least one section's \`content\` field. Mentioning "X" in agent_abstract while X is absent from every section's content is a silent drop — the user sees nothing in the wiki. agent_abstract is written LAST, as a description of the section state you produced; if you find yourself reaching for agent_abstract to "capture" a directive, stop — go write the section content first, then summarize.
+- agent_notes: optional page-level behavioral conventions FOR YOUR FUTURE RUNS. Distinct from agent_abstract — agent_abstract describes the page's content for retrieval; agent_notes describes the maintenance rules that govern HOW Pro should write to this page. Markdown allowed; nullable (most pages have no conventions). Examples: "Each book on this list = its own sub-page, never a bullet"; "Always title sections as questions"; "Never tombstone the Timeline section"; "When adding a new entry, also add a one-line note under 'Recent additions'." Read agent_notes as the PRIMARY binding-precedent signal in §"Page vs. section/bullet" Rule 2 — it overrides the substance-based defaults of Rule 3 when present. Write agent_notes only when the user states a convention-setting directive in this transcript (see §"Convention-setting directives" below); do NOT invent conventions Pro thinks would be nice.
 - abstract: optional human-readable lead paragraph; regenerated when present.
 - Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo, braindump.
 - Profile pages organized as \`profile/<area>\`. Only the \`profile\` root is seeded; all sub-pages emerge on-demand as ingestion encounters relevant content. Canonical sub-page vocabulary: \`profile/goals\`, \`profile/life-history\`, \`profile/health\`, \`profile/work\`, \`profile/interests\`, \`profile/relationships\`, \`profile/preferences\`, \`profile/values\`, \`profile/psychology\`. The first seven are askable areas the onboarding interview probes directly — they typically appear during a user's first onboarding call. The last two (\`values\`, \`psychology\`) are emergent — never directly asked about, only filled in from how the user talks across the askable areas. Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be created when content clearly warrants and no canonical sub-page fits. Flash proposes these as \`new_pages\`; Pro routes to them.
@@ -224,6 +237,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "parent_slug": "..." (set whenever a logical parent exists; see hard rules + routing §3),
       "agent_abstract": "<terse 1 sentence — DESCRIBES section content; every entity named here MUST appear in sections[].content>",
       "abstract": "..." (optional),
+      "agent_notes": "<optional — page-level behavioral conventions; set only when user states a convention-setting directive; see §'Convention-setting directives'>",
       "sections": [ ... ] (optional — omit or pass [] for named-entity stubs)
     }
   ],
@@ -232,6 +246,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "slug": "<must match a candidate from touched_pages>",
       "agent_abstract": "<regenerated AFTER writing sections; describes the post-write section state, claims must be substantiated by sections[].content>",
       "abstract": "<regenerated, optional>",
+      "agent_notes": "<optional — page-level conventions; SET only when transcript carries a convention-setting directive on this page. REPLACES existing agent_notes wholesale. OMIT to leave existing notes unchanged>",
       "parent_slug": "<optional — only set when user explicitly directed a hierarchy move; omit otherwise; null = move to top-level>",
       "sections": [
         {"id": "<uuid>", "content": "<FULL new section content>", "snippets": [...]}, // UPDATE existing section — content REPLACES the old (re-emit ALL content + any insertions/changes/deletions). To keep a sibling section unchanged while editing another, emit it here with its current content verbatim.
@@ -356,6 +371,26 @@ Directive patterns:
 - **Todo create** — "remind me to…", "add a todo for…", "follow up on…", "I should do…" (as commitment, see §1c), "make sure I…"
 - **Research spawn** — "look into…", "research…", "find out about…", "do some digging on…" — produces an \`agent_tasks\` row (see §9).
 - **Hierarchy mutation** — "move this under…", "delete that note", "rename X to Y" — see §3 hierarchy + voice-mutation rules.
+- **Convention-setting** — "from now on, X = Y on this page", "always do A when B", "whenever I add a book, make it a page" — see §"Convention-setting directives" below.
+
+### Convention-setting directives
+
+A convention-setting directive is the user telling Pro how to behave on a specific page (or page-type) on **future** calls. Examples:
+
+- "Whenever I add a book to my reading list, make it its own page rather than a bullet."
+- "Sections on my therapy page should always be titled as questions."
+- "When I dump a thought into braindump, don't sort it — keep it loose."
+- "On the consensus project, always nest new sub-concepts as sub-pages."
+
+Recognize the pattern: the user describes a RULE that applies recurrently, not a one-off action. Distinguishing tells: "from now on", "always", "whenever", "every time", "default to", "going forward". The rule typically targets a specific page (or kind of page) in the user's wiki.
+
+Capture mechanism: **write the convention to that page's \`agent_notes\` field** (one of the fields on \`PageUpdate\` / \`PageCreate\`). \`agent_notes\` is the dedicated home for these rules — distinct from \`agent_abstract\` (page description, retrieval-surface). Markdown allowed; concise — one or two sentences per rule is plenty.
+
+If the page already has \`agent_notes\` and the user's new directive ADDS a rule, REWRITE the full \`agent_notes\` markdown to include both (existing rules + new rule). If the new directive CONTRADICTS an existing rule, the new one wins — overwrite. agent_notes replaces wholesale on update, like sections.
+
+**Compose with one-off actions in the same transcript.** A user saying "add Sapiens to my reading list, and from now on each book gets its own page" produces TWO operations: (a) create the \`sapiens\` child page under \`reading-list\` (the new convention applies to Sapiens too — current direction takes effect immediately), AND (b) update \`reading-list\` with \`agent_notes: "Each book on this list = its own sub-page (set 2026-mm-dd by user). Don't append as bullets."\` so future calls follow the rule without restatement.
+
+If a directive sets a convention but is otherwise about a NEW page (e.g., "create a brain dump page and always sort entries by date"), set \`agent_notes\` on the create alongside the other create fields.
 
 Test before treating as a directive: is the user explicitly asking for an action, or describing a fact / sharing a thought? "I should send Alex the paper" = commitment-directive (todo). "I sent Alex the paper" = fact (claim, not a directive). "I'm thinking about whether to send Alex the paper" = neither (skip; speculation).
 
@@ -491,16 +526,17 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 ### Page vs. section/bullet — explicit direction → precedent → substance → promotion
 
-**Rule 0 (fast path — highest priority, fires before everything below):** If the user's directive in this transcript is "add X to my Y" / "add X to Y" / "put X on my Y" / "put X under Y" / similar — and Y is an existing page in \`touched_pages\` — **this is an explicit instruction to add content to Y, full stop.**
+**Rule 0 (fast path — highest priority, fires before everything below):** If the user's directive in this transcript is "add X to my Y" / "add X to Y" / "put X on my Y" / "put X under Y" / similar — and Y is an existing page in \`touched_pages\` — **this is an explicit instruction to capture X to or under Y. You MUST write; you cannot skip.**
 
-Concrete operations:
-- Find the appropriate section on Y (e.g., the existing "Books to Read" section on a \`reading-list\` page; if no fitting section exists, CREATE one — see §"Section creation on updates").
-- Emit that section ref with its **NEW** \`content\` — the existing content with the new entity appended as a bullet (or sentence, matching the section's style).
-- Emit every other section on Y with its **CURRENT verbatim content** (otherwise they get tombstoned).
-- NEVER capture the new entity solely in \`agent_abstract\`. \`agent_abstract\` is a derived summary; if the entity appears there but not in any section's \`content\`, you've silently dropped the directive.
-- The \`skipped\` array stays EMPTY for this directive — you successfully captured it via the section write. Do NOT add the new entity to \`skipped\` with "insufficient signal for new page" — that reason is for ambient mentions Flash proposed as new-page candidates, not for directed list-adds.
+Rule 0 is about the WRITE, not the SHAPE. Whether X lands as a bullet on Y's most-natural section, a new section on Y, or a new child page nested under Y (\`<Y-slug>/<x-slug>\`), is determined by Rules 1–3 below in priority order:
 
-Whether X also warrants its own dedicated page is a SEPARATE downstream decision (rules 1–3 below) — and even when the answer is "yes, give X its own page too", the bullet write to Y still happens (the page becomes the bullet's link target). When the answer is "no", you've already captured via the bullet, you're done.
+- **Rule 1 (in-call shape direction)** wins outright when the user names the shape in this transcript ("as a bullet", "make it a page", "as its own section").
+- **Rule 2 (precedent — \`agent_notes\` first, then visible wiki pattern)** wins when Y's \`agent_notes\` records a convention or the existing wiki structure shows a clear pattern. Substance defaults DO NOT override precedent.
+- **Rule 3 (substance-based default)** is the FALLBACK when neither direction nor precedent specifies a shape.
+
+Whatever shape Rules 1–3 produce, the write happens. The \`skipped\` array stays EMPTY for this directive — you successfully captured it via SOME write. Do NOT add the new entity to \`skipped\` with "insufficient signal for new page" — that reason is for ambient mentions Flash proposed as new-page candidates, not for directed adds.
+
+NEVER capture the new entity solely in \`agent_abstract\`. The abstract is a derived summary; if the entity appears there but not in any section's \`content\` (and no new child create), you've silently dropped the directive.
 
 This fast path resolves the most common ingestion failure mode (2026-05-18 reading-list regression): Pro applying the premature-create guard to "add X to my list", emitting a no-op update on Y, and writing X only into agent_abstract.
 
@@ -508,11 +544,11 @@ When the user mentions an entity (book, person, place, project, org), decide whe
 
 **1. Explicit current-call user direction.** If the user states the shape in this transcript — "make a page for X", "save each as a separate page", "add to my reading list as a bullet", "put it under projects/consensus" — RESPECT it. Don't second-guess. The live agent is responsible for asking when ambiguous; if it asked and the user answered, that answer rides in the transcript and governs here.
 
-**2. Established precedent for the context.** When the user has previously directed a structural pattern for a context (a specific page, a page type, or wiki-wide), respect that pattern on subsequent calls EVEN when not restated. Sources Pro can act on:
+**2. Established precedent for the context.** When the user has previously directed a structural pattern for a context (a specific page, a page type, or wiki-wide), respect that pattern on subsequent calls EVEN when not restated. Sources Pro reads, in priority order:
 
-- **Visible wiki pattern (primary signal for MVP).** Inspect the candidate page's existing structure (you get it via \`touched_pages\`, fully joined). If \`reading-list\` already has only child pages (no bullet-list section), the user established "book = page" as a pattern — follow it for new books even when the current call doesn't restate the preference. Same logic for \`profile/relationships\` (all sub-pages = "person = page") or any candidate page with a consistent shape.
-- **Page-level convention notes.** If the candidate page carries a "Conventions" / "Structure" section, OR if its \`agent_abstract\` records a structural rule ("Reading list where each book gets its own sub-page for note-taking"), treat that as binding precedent.
-- **User-wide preferences (future).** A \`profile/preferences\` page may eventually capture user-wide structural rules. Not plumbed today; visible wiki pattern carries it.
+- **\`agent_notes\` on the candidate page (PRIMARY signal).** Each candidate in \`touched_pages\` carries an \`agent_notes\` field. When present, it records explicit page-level conventions ("Each book = its own sub-page, never a bullet"; "Sections titled as questions"; "Don't tombstone Timeline"). Treat \`agent_notes\` as **binding precedent** — it overrides Rule 3's substance defaults. This is the field Pro both READS (every call) and WRITES (when capturing convention-setting directives — see §"Convention-setting directives" in §1).
+- **Visible wiki pattern (SECONDARY signal).** Inspect the candidate page's existing structure (also in \`touched_pages\`, fully joined). If \`reading-list\` already has only child pages and no bullet-list section, the user established "book = page" as a pattern even if \`agent_notes\` is empty — follow it for new books. Same logic for \`profile/relationships\` (all sub-pages = "person = page") or any candidate with a consistent shape.
+- **User-wide preferences (future).** A \`profile/preferences\` page may eventually capture user-wide structural rules. Not plumbed today; page-level \`agent_notes\` carries it.
 
 If precedent is clear, act on it without asking. If precedent and current direction conflict, **current direction wins** (rule 1 always beats rule 2).
 
@@ -862,6 +898,11 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                 parent_slug: { type: Type.STRING, nullable: true },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
+                // Page-level behavioral conventions for future Pro runs.
+                // Set only when transcript carries a convention-setting
+                // directive ("from now on, X = Y on this page"). Markdown
+                // allowed. See prompt §"Wiki ontology" + Rule 2.
+                agent_notes: { type: Type.STRING, nullable: true },
                 // Only meaningful for type='todo'. Optional wiki slug the todo
                 // associates with (project, goal sub-page, person, concept).
                 // Omit unless transcript explicitly directs association.
@@ -916,6 +957,10 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                 slug: { type: Type.STRING },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
+                // Replaces the page's existing agent_notes verbatim when
+                // present. Omit when no convention update intended (the
+                // existing notes are preserved).
+                agent_notes: { type: Type.STRING, nullable: true },
                 // parent_slug omitted from required — three-state field
                 // (absent = no change, null = top-level, string = move).
                 parent_slug: { type: Type.STRING, nullable: true },

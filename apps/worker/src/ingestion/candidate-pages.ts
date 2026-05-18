@@ -18,6 +18,10 @@ export interface CandidatePage {
   parent_slug: string | null;
   agent_abstract: string;
   abstract: string | null;
+  // Page-level behavioral conventions for Pro (see wiki_pages.agent_notes
+  // schema comment). Primary "binding precedent" signal in Pro's routing
+  // §"Page vs. section/bullet" Rule 2.
+  agent_notes: string | null;
   sections: FullSection[];
 }
 
@@ -92,6 +96,7 @@ export async function fetchCandidatePages(
       : null,
     agent_abstract: p.agentAbstract,
     abstract: p.abstract,
+    agent_notes: p.agentNotes,
     sections: sectionsByPage.get(p.id) ?? [],
   }));
 }
