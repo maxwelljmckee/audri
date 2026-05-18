@@ -996,45 +996,24 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
 // ingestion_status='failed' so the user's pending banner offers retry.
 const PRO_RETRY_DELAYS_MS = [2_000, 5_000, 15_000];
 
-// Synthetic response shape compatible with parse-gemini-json's expected
-// input. We accumulate streamed chunks into this shape so the rest of
-// the pipeline (parser, usage capture) doesn't care that we streamed.
-interface AccumulatedProResponse {
-  text: string;
-  usageMetadata: UsageMetadata | undefined;
-  candidates: Array<{ finishReason?: string }> | undefined;
-}
-
-// Streaming swap (v0.3.0 item #67): use generateContentStream instead of
-// generateContent. Headers + first chunk arrive within seconds of the
-// model starting to generate, even on long fan-outs that take minutes to
-// complete — bypasses undici's headers timeout entirely. Caller accumulates
-// chunks into a synthetic response object so downstream parsing is
-// unchanged. structuredOutput (responseSchema) works with streaming per
-// the @google/genai SDK contract — each chunk carries an incremental
-// portion of the final JSON string, finalized on the last chunk.
-// Wall-clock budget for a single Pro fan-out attempt (a fresh signal is
-// minted per retry so each attempt gets the full budget). 5 min covers
-// the legitimate long-context cases comfortably while killing runaway
-// streams. Override via env when chunking work lands and individual
-// chunks need a longer or shorter cap. See uploads/fan-out.ts for the
-// shared rationale (2026-05-15 Plato dogfood incident).
+// TEMPORARY REVERT (2026-05-18): swapped streaming back to non-streaming
+// generateContent to isolate whether 17580e5's streaming change is the
+// cause of the recurring 5-min wallclock aborts observed on simple
+// "add X to my reading list" transcripts. Pre-streaming behavior:
+// single fetch, AbortSignal-bounded, full response in one shot. If this
+// resolves the hangs we'll keep non-streaming; if not, restore
+// generateContentStream and look elsewhere.
 const PRO_FANOUT_WALLCLOCK_MS = Number(process.env.INGESTION_FANOUT_TIMEOUT_MS ?? 5 * 60_000);
 
 async function callProWithRetry(
   // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai params shape
   params: any,
-): Promise<AccumulatedProResponse> {
+  // biome-ignore lint/suspicious/noExplicitAny: matches @google/genai response shape
+): Promise<any> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= PRO_RETRY_DELAYS_MS.length; attempt++) {
     try {
       const startedAt = Date.now();
-      let firstChunkAt: number | undefined;
-      // Fresh AbortSignal per attempt — retries get a full budget, not
-      // a leftover sliver of the previous attempt's clock. SDK aborts the
-      // request client-side when the signal fires; Google still bills any
-      // tokens already produced (acceptable — we're aborting because the
-      // stream is unreasonably slow, not because we want to refuse the work).
       const paramsWithTimeout = {
         ...params,
         config: {
@@ -1042,47 +1021,18 @@ async function callProWithRetry(
           abortSignal: AbortSignal.timeout(PRO_FANOUT_WALLCLOCK_MS),
         },
       };
-      const stream = await getGeminiClient().models.generateContentStream(paramsWithTimeout);
-
-      let accumulated = '';
-      let lastUsage: UsageMetadata | undefined;
-      let lastCandidates: Array<{ finishReason?: string }> | undefined;
-      let chunkCount = 0;
-
-      for await (const chunk of stream) {
-        chunkCount += 1;
-        if (firstChunkAt === undefined) firstChunkAt = Date.now();
-        const chunkText = chunk.text;
-        if (chunkText) accumulated += chunkText;
-        // usageMetadata lands on the final chunk per the SDK contract; we
-        // last-wins to capture it whenever it appears (defensive against
-        // it being on an intermediate chunk too).
-        if (chunk.usageMetadata) lastUsage = chunk.usageMetadata;
-        if (chunk.candidates) lastCandidates = chunk.candidates;
-      }
-
+      const resp = await getGeminiClient().models.generateContent(paramsWithTimeout);
       const totalMs = Date.now() - startedAt;
-      const ttfcMs = firstChunkAt !== undefined ? firstChunkAt - startedAt : null;
       logger.info(
         {
           attempt: attempt + 1,
-          chunkCount,
           totalMs,
-          // Time-to-first-chunk — sanity-checks the streaming win. Should
-          // be seconds, not minutes. If it ever creeps toward the 15-min
-          // headers-timeout ceiling we've lost the streaming benefit.
-          ttfcMs,
-          accumulatedLength: accumulated.length,
-          finishReason: lastCandidates?.[0]?.finishReason,
+          accumulatedLength: (resp.text ?? '').length,
+          finishReason: resp.candidates?.[0]?.finishReason,
         },
-        'pro fan-out: stream complete',
+        'pro fan-out: response complete (non-streaming)',
       );
-
-      return {
-        text: accumulated,
-        usageMetadata: lastUsage,
-        candidates: lastCandidates,
-      };
+      return resp;
     } catch (err) {
       lastErr = err;
       if (!isTransientFetchError(err)) throw err;
