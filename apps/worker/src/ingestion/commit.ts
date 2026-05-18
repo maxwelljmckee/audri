@@ -198,6 +198,20 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
     'commit: pro fan-out output',
   );
 
+  // Persist the redacted Pro response BEFORE running guards so failed
+  // runs leave an audit trail. The commit-side transaction below also
+  // writes proFanOutResponse on success — that's a redundant write on
+  // the happy path, but cheap; the value is making `partial`/`failed`
+  // rows debuggable without log diving. Non-transactional with the
+  // commit body on purpose: we want the audit row even if commit aborts.
+  const redactedFanOutForAudit = redactJsonPii(fanOut);
+  await db
+    .update(callTranscripts)
+    .set({
+      proFanOutResponse: sql`${JSON.stringify(redactedFanOutForAudit)}::jsonb`,
+    })
+    .where(eq(callTranscripts.id, transcriptId));
+
   // Pre-flight: detect no-op updates where Pro emits an update with
   // `sections` present but every ref is KEEP-AS-IS ({id} / {id, title},
   // no content). Canonical "add X to my Y" silent-drop: the directive's
