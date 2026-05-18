@@ -474,9 +474,22 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 4. **No candidate fits → skip.** Do NOT invent entities outside Flash's plan. Skip with reason: "no matching candidate".
 
-5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page". **NOTE:** this guard does NOT apply when the user explicitly directed a save ("add X to my list", "make a page for Y") — directives bypass it. The guard is for ambient mentions, not directed writes.
+5. **Premature-create guard.** Even when Flash proposed a new page, you may decide there's insufficient signal to merit creating it (single passing mention, no substantive claim attached). Drop from creates; add a skipped entry: reason: "insufficient signal for new page". **CRITICAL CARVE-OUT — this guard does NOT apply to directed-list-adds.** "Add X to my list", "put X on my Y", "add X to my reading list" are NOT page-creation candidates being evaluated for sufficiency — they are EXPLICIT bullet writes onto an existing list page. For directives like these: **skip the premature-create guard entirely; jump straight to §"Page vs. section/bullet" Rule 1 (explicit direction) and write the bullet.** Putting the new entity in \`skipped\` with reason "insufficient signal for new page" is a CATEGORY ERROR — the user wasn't asking you to evaluate whether X deserves its own page. They asked you to add X to Y.
 
 ### Page vs. section/bullet — explicit direction → precedent → substance → promotion
+
+**Rule 0 (fast path — highest priority, fires before everything below):** If the user's directive in this transcript is "add X to my Y" / "add X to Y" / "put X on my Y" / "put X under Y" / similar — and Y is an existing page in \`touched_pages\` — **this is an explicit instruction to add content to Y, full stop.**
+
+Concrete operations:
+- Find the appropriate section on Y (e.g., the existing "Books to Read" section on a \`reading-list\` page; if no fitting section exists, CREATE one — see §"Section creation on updates").
+- Re-emit that section's \`content\` with the new entity appended as a bullet (or as a sentence, depending on the section's style).
+- The update's \`sections\` array MUST carry the section ref with \`content\` populated — \`{id}\`-only KEEP-AS-IS for the target section is wrong; it's a no-op write.
+- NEVER capture the new entity solely in \`agent_abstract\`. \`agent_abstract\` is a derived summary; capturing X there while every section is KEEP-AS-IS = silent drop. The commit-side guard hard-fails this combination.
+- The \`skipped\` array stays EMPTY for this directive — you successfully captured it via the section write. Do NOT add the new entity to \`skipped\` with "insufficient signal for new page" — that reason is for ambient mentions Flash proposed as new-page candidates, not for directed list-adds.
+
+Whether X also warrants its own dedicated page is a SEPARATE downstream decision (rules 1–3 below) — and even when the answer is "yes, give X its own page too", the bullet write to Y still happens (the page becomes the bullet's link target). When the answer is "no", you've already captured via the bullet, you're done.
+
+This fast path resolves the most common ingestion failure mode (2026-05-18 reading-list regression): Pro applying the premature-create guard to "add X to my list", emitting a no-op update on Y, and writing X only into agent_abstract.
 
 When the user mentions an entity (book, person, place, project, org), decide whether to capture as a new page, a new section, or a bullet within an existing section. The rules apply in priority order — **first match wins**:
 
