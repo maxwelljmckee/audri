@@ -220,12 +220,18 @@ export async function lookupEnrichment(opts: LookupOpts): Promise<EnrichmentLook
 }
 
 // Detect whether a page's agent_notes carries an enrichment-directing rule.
-// Coarse: looks for "lookup" / "look up" / "fetch" / "search" / "include"
-// patterns combined with field-naming language. False positives just mean
-// we fire a lookup that may not be needed; false negatives mean we skip
-// enrichment that was requested. Bias toward firing (cheap).
+// Triggers on the presence of any lookup/search verb. Earlier version required
+// a search-verb AND a write-verb in the same sentence; that missed rules
+// written across multiple sentences ("perform a background search to find
+// supporting information. ... Then include this on the new page."), which
+// was the dogfood failure on 2026-05-18.
+//
+// False positives (a rule mentions a search verb but doesn't actually want
+// external enrichment, e.g. "search for duplicates before adding") just
+// yield one unused Flash + grounding call — cheap, no data harm. False
+// negatives silently fail the user's directive. Bias toward firing.
 const ENRICHMENT_TRIGGER_PATTERN =
-  /\b(look[- ]?up|fetch|search|find|retriev(?:e|ing)|pull)\b[^.]{0,160}\b(include|add|append|insert|store)\b/i;
+  /\b(look[- ]?up|fetch(?:ing)?|search(?:ing)?|find(?:ing)?|retriev(?:e|ing|al)?|pull(?:ing)?|gather(?:ing)?|research(?:ing)?)\b/i;
 
 export function agentNotesDirectsEnrichment(agentNotes: string | null | undefined): boolean {
   if (!agentNotes) return false;
