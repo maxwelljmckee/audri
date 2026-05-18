@@ -257,58 +257,56 @@ Concrete shapes:
 - \`{"id": "<uuid>", "content": "<FULL new content>", "snippets": [...]}\` → **UPDATE.** The \`content\` field is the entire new section body. To add a bullet, copy the existing content from \`touched_pages\` and append the bullet. To change a sentence, re-emit the whole section with the edit in place.
 - \`{"title": "<heading>", "content": "<markdown>", "snippets": [...]}\` (no id) → **CREATE NEW section** on the page.
 
-### Worked example — the failure mode this guards against
+### Worked example — appending an item to an existing list section
 
-Current state Pro sees in \`touched_pages\` for slug \`reading-list\`:
+Suppose \`touched_pages\` shows a page like this (UUIDs below are illustrative placeholders — never copy them; always substitute the real UUIDs from the input):
+
 \`\`\`
+slug: favorite-cafes
 sections:
-  - id: 681a4f88..., title: null,            content: "..."
-  - id: e6a937cf..., title: "Books to Read", content: "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow"
+  - id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01, title: null,                  content: "Spots I keep coming back to."
+  - id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02, title: "Cafés I'd recommend", content: "- Sightglass on 7th\\n- Trouble Coffee\\n- Saint Frank"
 \`\`\`
 
-User says: "Add The Art of Gathering by Priya Parker to my reading list."
+User says: "Add Andytown in the Sunset to my favorite cafés."
 
-✅ **CORRECT** — re-emit the "Books to Read" section with the new bullet appended; preserve the untitled section:
+Re-emit the list section's full content with the new bullet appended. Keep the intro section as-is so it doesn't tombstone:
+
 \`\`\`json
 {
-  "slug": "reading-list",
-  "agent_abstract": "A reading list of books to read or currently reading.",
+  "slug": "favorite-cafes",
+  "agent_abstract": "Cafés the user recommends, including Andytown in the Sunset.",
   "sections": [
-    {"id": "681a4f88..."},
+    {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01"},
     {
-      "id": "e6a937cf...",
-      "title": "Books to Read",
-      "content": "- Good Services by Lou Downe\\n- Sapiens by Yuval Noah Harari\\n- Thinking, Fast and Slow\\n- The Art of Gathering by Priya Parker",
-      "snippets": [{"turn_id": "turn-1", "text": "add The Art of Gathering by Priya Parker to my reading list"}]
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02",
+      "title": "Cafés I'd recommend",
+      "content": "- Sightglass on 7th\\n- Trouble Coffee\\n- Saint Frank\\n- Andytown in the Sunset",
+      "snippets": [{"turn_id": "turn-1", "text": "add Andytown in the Sunset to my favorite cafés"}]
     }
   ]
 }
 \`\`\`
 
-❌ **WRONG — this is the silently-failing pattern observed 2026-05-17, on both voice and text:**
-\`\`\`json
-{
-  "slug": "reading-list",
-  "agent_abstract": "...including The Art of Gathering.",
-  "sections": [
-    {"id": "681a4f88..."},
-    {"id": "e6a937cf...", "title": "Books to Read"}
-  ]
-}
-\`\`\`
-Both section entries are KEEP-AS-IS. The agent_abstract was updated, but the actual book never got added to any section. The user's directive is silently dropped. Updating the abstract or noting "captured as bullet" in \`skipped\` does NOT produce a write — only \`content\` in a section entry does.
+The intro ref is \`{id}\` only — KEEP-AS-IS. The list section carries the entire new body: every original bullet verbatim plus the new one. The snippet ties the change back to the directive turn.
+
+### The silent-drop failure mode to avoid
+
+The most common way an "add X to my Y" directive fails: the model emits an update whose \`sections\` array contains only \`{id}\` or \`{id, title}\` entries (no \`content\` field anywhere) while writing the new entity into \`agent_abstract\`. The abstract change feels like capture but is NOT a section write — sections stay KEEP-AS-IS, the new content lives nowhere in any \`content\` string, the commit phase has nothing to apply. Status reports success; nothing lands.
+
+Diagnostic question to run before submitting: for every directive in the transcript, is the new content materially present in at least one \`creates\` or \`updates\` \`content\` string? Updating \`agent_abstract\` and naming the entity in a \`skipped\` reason are NOT writes.
 
 ### Anti-self-deception check (run this before submitting)
 
-Before you return your JSON, scan your \`skipped\` array. If ANY \`reason\` contains language like:
+Scan your \`skipped\` array. If ANY \`reason\` contains language like:
 
 > "captured as bullet" · "added to X" · "noted in Y" · "saved to Z" · "appended" · "recorded on" · "tracked"
 
-…that is a **contradiction**. \`skipped\` means NOT written. If you intended to capture, the capture MUST appear in \`creates\` or \`updates\` with concrete \`content\`. Move it. The commit phase doesn't read \`skipped\` reasons — it only writes what you put in \`creates\`/\`updates\`.
+…that is a **contradiction**. \`skipped\` means NOT written. If you intended to capture, the capture MUST appear in \`creates\` or \`updates\` with concrete \`content\`. Move it.
 
-Likewise, scan your \`updates\`. If you emitted any update whose \`sections\` array contains ONLY \`{id}\` (or \`{id, title}\`) entries — meaning every section reference is KEEP-AS-IS — then **that update did literally nothing**. Either the update doesn't belong (drop it and move the claim to \`skipped\` with an honest reason like "no fitting section"), or you forgot to attach \`content\` to the section you intended to change.
+Scan your \`updates\`. Any update whose \`sections\` array contains ONLY \`{id}\` (or \`{id, title}\`) entries did literally nothing. Either the update doesn't belong (drop it; move the claim to \`skipped\` with an honest reason like "no fitting section"), or you forgot to attach \`content\` to the section you intended to change.
 
-The commit phase now hard-fails this combination (a "lying skipped" + no-content updates pair) and aborts ingestion. Match your output to your intent.
+The commit phase hard-fails any no-op update (every section ref is KEEP-AS-IS) and aborts ingestion. Match your output to your intent.
 
 ## Hard rules
 

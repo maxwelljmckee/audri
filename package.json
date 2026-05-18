@@ -14,6 +14,7 @@
     "check": "biome check .",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel --if-present run dev",
     "dev:server": "pnpm --filter @audri/server dev",
     "dev:worker": "pnpm --filter @audri/worker dev",
     "db:generate": "pnpm --filter @audri/server db:generate",

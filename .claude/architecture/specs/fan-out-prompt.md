@@ -316,58 +316,48 @@ No `id` — the backend assigns one. Title strongly encouraged (see §"Section c
 
 ---
 
-**Worked example — adding a book to a reading list:**
+**Worked example — appending an item to an existing list section:**
 
-Current `reading-list` state in `touched_pages`:
+Suppose `touched_pages` shows a page like this (UUIDs below are illustrative placeholders — Pro must substitute the real UUIDs from input):
 
 ```
+slug: favorite-cafes
 sections:
-  - id: 681a4f88-..., title: null,            content: "..."
-  - id: e6a937cf-..., title: "Books to Read", content: "- Good Services by Lou Downe\n- Sapiens by Yuval Noah Harari\n- Thinking, Fast and Slow"
+  - id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01, title: null,                  content: "Spots I keep coming back to."
+  - id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02, title: "Cafés I'd recommend", content: "- Sightglass on 7th\n- Trouble Coffee\n- Saint Frank"
 ```
 
-User says: "Add The Art of Gathering by Priya Parker to my reading list."
+User says: "Add Andytown in the Sunset to my favorite cafés."
 
-✅ CORRECT:
+CORRECT:
 
 ```json
 {
-  "slug": "reading-list",
-  "agent_abstract": "A reading list of books to read or currently reading.",
+  "slug": "favorite-cafes",
+  "agent_abstract": "Cafés the user recommends, including Andytown in the Sunset.",
   "sections": [
-    { "id": "681a4f88-..." },
+    { "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01" },
     {
-      "id": "e6a937cf-...",
-      "title": "Books to Read",
-      "content": "- Good Services by Lou Downe\n- Sapiens by Yuval Noah Harari\n- Thinking, Fast and Slow\n- The Art of Gathering by Priya Parker",
-      "snippets": [{ "turn_id": "turn-1", "text": "add The Art of Gathering by Priya Parker to my reading list" }]
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02",
+      "title": "Cafés I'd recommend",
+      "content": "- Sightglass on 7th\n- Trouble Coffee\n- Saint Frank\n- Andytown in the Sunset",
+      "snippets": [{ "turn_id": "turn-1", "text": "add Andytown in the Sunset to my favorite cafés" }]
     }
   ]
 }
 ```
 
-The first section is kept-as-is via `{id}`. The "Books to Read" section is fully re-emitted with all original bullets plus the new one. Snippets tie the change to the transcript turn that licensed it.
+The intro section is kept-as-is via `{id}`. The list section is fully re-emitted with all original bullets plus the new one. Snippets tie the change to the transcript turn that licensed it.
 
-❌ WRONG (the 2026-05-17 regression shape):
+**History note (worked-example sanitization, 2026-05-18).** The original cb1ed85 worked example used the real `reading-list` page and the user's actual section UUIDs, alongside the literal phrase "Add The Art of Gathering by Priya Parker to my reading list" — a test transcript the user ran repeatedly. The example also displayed a ❌ "wrong shape" JSON block keyed on those same UUIDs. Pro pattern-matched on the in-prompt antipattern: copied the JSON shape, lifted the real UUIDs from `touched_pages` (which matched the prompt's prefixes), emitted KEEP-AS-IS section refs, and silently dropped the directive — eight repro runs across 2026-05-16/17. Fix: synthetic domain (`favorite-cafes`), clearly-placeholder UUIDs (`aaaa...`), and the ❌ shape converted to prose so there is no JSON-shaped antipattern in the prompt for the model to copy.
 
-```json
-{
-  "slug": "reading-list",
-  "agent_abstract": "...",
-  "sections": [
-    { "id": "681a4f88-..." },
-    { "id": "e6a937cf-...", "title": "Books to Read" }
-  ]
-}
-```
-
-Both shapes are KEEP-AS-IS. Nothing changes. The directive is silently dropped, often paired with a misleading `skipped: ["Captured as bullet on reading-list per existing page pattern"]` — claiming work that didn't happen, which is the worst failure mode.
+**Silent-drop failure mode (prose-only):** the most common "add X to my Y" failure is an update whose `sections` array is entirely KEEP-AS-IS (`{id}` or `{id, title}` only, no `content` field anywhere) while `agent_abstract` is rewritten to name the new entity. The abstract change feels like capture but is NOT a section write — sections are untouched, the new content lives nowhere in any `content` field, the commit phase has nothing to apply. Status reports success; nothing lands. Defended by the commit-side `detectNoOpUpdateFailure` guard (see below) which hard-fails ingestion on any update whose `sections` array is uniformly KEEP-AS-IS.
 
 **Rule of thumb:** if you intend ANY change to a section's content, you MUST include `content` with the FULL new body. `{id}` alone means "this section is unchanged and I'm only listing it to prevent tombstoning."
 
 **Anti-self-deception check (added 2026-05-17 after recurrence on both voice + text paths).** Before submitting the JSON, Pro must scan its own `skipped` array. If any `reason` contains verbs that assert capture — "captured as bullet", "added to", "noted in", "saved to", "appended", "recorded on", "tracked" — that's a **contradiction** with the schema: `skipped` means NOT written. Either the claim was actually written (in which case it belongs in `creates` or `updates` with concrete `content`, NOT `skipped`) or it wasn't (in which case the reason should reflect that honestly, e.g. "no fitting section without restructuring"). The commit phase doesn't read `skipped` reasons — it only writes what's in `creates` and `updates`.
 
-The system prompt embeds this check at the top (§"Section update mechanics") so the model sees it before routing decisions. The commit phase (`apps/worker/src/ingestion/commit.ts` → `detectLyingSkippedFailure`) also hard-fails when it sees the lying-skipped pattern paired with no-content updates — converts the silent zero-write into a `partial` ingestion that surfaces the retry banner. Both layers exist because the prose-only rule kept getting overridden by the model's prior; needed structural enforcement to back it up.
+The system prompt embeds this check at the top (§"Section update mechanics") so the model sees it before routing decisions. The commit phase (`apps/worker/src/ingestion/commit.ts` → `detectNoOpUpdateFailure`) hard-fails any no-op update — converts the silent zero-write into a `partial` ingestion that surfaces the retry banner. Loosened from the original cb1ed85 form (which required a lying-skipped reason AND a no-op update); the no-op alone is now sufficient because the silent-drop reproduced 8+ times with an empty `skipped` array. Both layers exist because the prose-only rule kept getting overridden by the model's prior; structural enforcement backs it up.
 
 #### Multi-target phrasing
 
