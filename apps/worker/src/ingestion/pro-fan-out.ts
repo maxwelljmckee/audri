@@ -234,9 +234,8 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "abstract": "<regenerated, optional>",
       "parent_slug": "<optional — only set when user explicitly directed a hierarchy move; omit otherwise; null = move to top-level>",
       "sections": [
-        {"id": "<uuid>"},                                                          // KEEP-AS-IS — zero change. NOT how you add a bullet.
-        {"id": "<uuid>", "content": "<FULL new section content>", "snippets": [...]}, // UPDATE — content REPLACES the old (re-emit ALL content + any insertions/changes/deletions).
-        {"title": "<new section>", "content": "<markdown>", "snippets": [...]}     // CREATE — new section on this page.
+        {"id": "<uuid>", "content": "<FULL new section content>", "snippets": [...]}, // UPDATE existing section — content REPLACES the old (re-emit ALL content + any insertions/changes/deletions). To keep a sibling section unchanged while editing another, emit it here with its current content verbatim.
+        {"title": "<new section>", "content": "<markdown>", "snippets": [...]}     // CREATE new section on this page.
       ]
     }
   ],
@@ -247,15 +246,25 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
 
 ## ⚠️ Section update mechanics — READ BEFORE WRITING ANYTHING
 
-This is the most-failed rule. Take an extra moment here.
-
 **Each entry in an update's \`sections\` array is a REPLACE operation on that section's state**, not a touch / reference / acknowledgement. The commit phase REPLACES section content with whatever you emit — it does NOT append, diff, or patch.
 
-Concrete shapes:
+There are exactly **TWO valid shapes** for a section entry in an update:
 
-- \`{"id": "<uuid>"}\` (no content) → **KEEP-AS-IS, no change at all.** Use only to prevent tombstoning while editing siblings.
-- \`{"id": "<uuid>", "content": "<FULL new content>", "snippets": [...]}\` → **UPDATE.** The \`content\` field is the entire new section body. To add a bullet, copy the existing content from \`touched_pages\` and append the bullet. To change a sentence, re-emit the whole section with the edit in place.
+- \`{"id": "<uuid>", "content": "<FULL section content>", "snippets": [...]}\` → **UPDATE existing section.** The \`content\` field is the entire new section body. To add a bullet, copy the existing content from \`touched_pages\` and append the bullet. To change a sentence, re-emit the whole section with the edit in place. **To keep a sibling section unchanged while editing another, emit it here with its current content verbatim** — there is no shortcut for "keep unchanged."
 - \`{"title": "<heading>", "content": "<markdown>", "snippets": [...]}\` (no id) → **CREATE NEW section** on the page.
+
+\`content\` is REQUIRED on every section entry. The "id-only" shape (\`{"id": "<uuid>"}\` with no \`content\`) is **not a valid output** — the structured-output layer rejects it.
+
+### When \`sections\` is required on an update
+
+- **Content-edit update** (you are modifying, adding, or removing anything on the page): \`sections\` is **REQUIRED** and MUST contain at least one entry with \`content\` populated.
+- **Pure hierarchy-move update** (the ONLY change is \`parent_slug\`): \`sections\` is **OPTIONAL** — OMIT the field entirely. Do NOT emit \`sections: []\` — that would tombstone every existing section.
+
+If you have nothing to write to a page's sections AND no hierarchy move to perform, the entire update doesn't belong — omit it from \`updates\` and add the relevant claim to \`skipped\` with an honest reason (e.g. "no fitting section without restructuring", "no substantive claim on re-read").
+
+### Tombstoning sections
+
+Any section currently on the page but absent from your \`sections\` array gets TOMBSTONED. So when you emit a sections array, list **every section you want to keep** with its full current content. Sections to delete are simply omitted.
 
 ### Worked example — appending an item to an existing list section
 
@@ -270,14 +279,18 @@ sections:
 
 User says: "Add Andytown in the Sunset to my favorite cafés."
 
-Re-emit the list section's full content with the new bullet appended. Keep the intro section as-is so it doesn't tombstone:
+Emit BOTH sections with their content — the intro re-emitted verbatim (to preserve it; absent sections get tombstoned), and the list section with the new bullet appended:
 
 \`\`\`json
 {
   "slug": "favorite-cafes",
   "agent_abstract": "Cafés the user recommends, including Andytown in the Sunset.",
   "sections": [
-    {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01"},
+    {
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa01",
+      "content": "Spots I keep coming back to.",
+      "snippets": []
+    },
     {
       "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa02",
       "title": "Cafés I'd recommend",
@@ -288,11 +301,11 @@ Re-emit the list section's full content with the new bullet appended. Keep the i
 }
 \`\`\`
 
-The intro ref is \`{id}\` only — KEEP-AS-IS. The list section carries the entire new body: every original bullet verbatim plus the new one. The snippet ties the change back to the directive turn.
+Both sections carry content. The intro is verbatim (no edit). The list section carries the entire new body — every original bullet verbatim plus the new one. The snippet ties the change back to the directive turn. \`snippets: []\` is fine for a re-emit-verbatim section that wasn't licensed by any specific turn.
 
 ### The silent-drop failure mode to avoid
 
-The most common way an "add X to my Y" directive fails: the model emits an update whose \`sections\` array contains only \`{id}\` or \`{id, title}\` entries (no \`content\` field anywhere) while writing the new entity into \`agent_abstract\`. The abstract change feels like capture but is NOT a section write — sections stay KEEP-AS-IS, the new content lives nowhere in any \`content\` string, the commit phase has nothing to apply. Status reports success; nothing lands.
+A directive like "add X to my Y" fails when the model writes the new entity into \`agent_abstract\` while emitting no actual content change in any section. The abstract change feels like capture but is NOT a section write — the new content lives nowhere in any \`content\` string, the commit phase has nothing to apply. Status reports success; nothing lands.
 
 Diagnostic question to run before submitting: for every directive in the transcript, is the new content materially present in at least one \`creates\` or \`updates\` \`content\` string? Updating \`agent_abstract\` and naming the entity in a \`skipped\` reason are NOT writes.
 
@@ -304,9 +317,9 @@ Scan your \`skipped\` array. If ANY \`reason\` contains language like:
 
 …that is a **contradiction**. \`skipped\` means NOT written. If you intended to capture, the capture MUST appear in \`creates\` or \`updates\` with concrete \`content\`. Move it.
 
-Scan your \`updates\`. Any update whose \`sections\` array contains ONLY \`{id}\` (or \`{id, title}\`) entries did literally nothing. Either the update doesn't belong (drop it; move the claim to \`skipped\` with an honest reason like "no fitting section"), or you forgot to attach \`content\` to the section you intended to change.
+Every section entry MUST carry \`content\` (verbatim for unchanged sections, fully rewritten for edited sections). If you find yourself wanting to "list this section without touching it" — that's the verbatim-content shape, not a shortcut. The structured-output layer will reject any section entry missing \`content\`.
 
-The commit phase hard-fails any no-op update (every section ref is KEEP-AS-IS) and aborts ingestion. Match your output to your intent.
+If you emit an update where the only "change" is re-emitting all current section content verbatim with no actual edits — and no \`parent_slug\` move — you've done nothing. Drop the update; move the relevant claim to \`skipped\` with an honest reason. Match your output to your intent.
 
 ## Hard rules
 
@@ -319,9 +332,9 @@ The commit phase hard-fails any no-op update (every section ref is KEEP-AS-IS) a
 - A create's parent_slug is REQUIRED in nearly all cases — emit \`null\` ONLY when the transcript explicitly says the user wants top-level treatment. The default fallback for ambiguous "this is about the user" cases is a profile sub-page (\`profile/relationships\` for people, \`profile/work\` for orgs); the default for "this is transient/exploratory" cases is \`braindump\`. NEVER null as a fallback.
 - When the user gave explicit structural direction during the call ("nest this under X", "make it top-level"), respect that direction over your own heuristics.
 - Sections in an update use uuid \`id\` for existing sections; new sections omit id.
-- The \`sections\` field is OPTIONAL on updates. When you OMIT it (move-only metadata updates), the page's existing sections are left untouched. When you INCLUDE it, the array is the full new section state — any existing section not listed gets tombstoned. NEVER emit \`sections: []\` to mean "no change" — that would tombstone every section on the page. Omit the field entirely.
-- Sections present on the page but absent from your \`sections\` array (when you DO include the array) will be tombstoned — list every section you want kept (use { id } for keep-as-is).
-- **Per-section shapes:** see §"Section update mechanics" at the top of this prompt. Quick reference: \`{id}\` = keep-as-is no-op; \`{id, content, snippets}\` = update (FULL new body, replaces); \`{title, content, snippets}\` no id = new section.
+- The \`sections\` field on updates is **REQUIRED for any content-edit** (modifying, adding, or removing anything on the page) and **OPTIONAL for pure hierarchy-move updates** (parent_slug change with no other modification). For content-edit updates, the array MUST contain at least one entry with \`content\` populated. For move-only updates, OMIT the \`sections\` field entirely. NEVER emit \`sections: []\` — that would tombstone every section on the page.
+- Sections present on the page but absent from your \`sections\` array (when you DO include the array) will be tombstoned — list **every section you want kept**, with its current content verbatim (or with new content, if editing it).
+- **Per-section shapes (only two valid):** \`{id, content, snippets}\` = update existing section (FULL new body, replaces; use current verbatim content to keep unchanged); \`{title, content, snippets}\` no id = new section. The \`{id}\`-only "KEEP-AS-IS" shortcut is NOT valid — \`content\` is required on every entry.
 - Timeline section (title="Timeline"), when present, MUST appear first in the sections list.
 - Never invent turn_ids — every snippet turn_id must appear verbatim in the input transcript.
 - Never emit user_id, page_id, section_id, scope, parent_page_id, or timestamps. Backend concerns.
@@ -482,9 +495,9 @@ When \`parent_slug\` references another create from this same response, ORDER yo
 
 Concrete operations:
 - Find the appropriate section on Y (e.g., the existing "Books to Read" section on a \`reading-list\` page; if no fitting section exists, CREATE one — see §"Section creation on updates").
-- Re-emit that section's \`content\` with the new entity appended as a bullet (or as a sentence, depending on the section's style).
-- The update's \`sections\` array MUST carry the section ref with \`content\` populated — \`{id}\`-only KEEP-AS-IS for the target section is wrong; it's a no-op write.
-- NEVER capture the new entity solely in \`agent_abstract\`. \`agent_abstract\` is a derived summary; capturing X there while every section is KEEP-AS-IS = silent drop. The commit-side guard hard-fails this combination.
+- Emit that section ref with its **NEW** \`content\` — the existing content with the new entity appended as a bullet (or sentence, matching the section's style).
+- Emit every other section on Y with its **CURRENT verbatim content** (otherwise they get tombstoned).
+- NEVER capture the new entity solely in \`agent_abstract\`. \`agent_abstract\` is a derived summary; if the entity appears there but not in any section's \`content\`, you've silently dropped the directive.
 - The \`skipped\` array stays EMPTY for this directive — you successfully captured it via the section write. Do NOT add the new entity to \`skipped\` with "insufficient signal for new page" — that reason is for ambient mentions Flash proposed as new-page candidates, not for directed list-adds.
 
 Whether X also warrants its own dedicated page is a SEPARATE downstream decision (rules 1–3 below) — and even when the answer is "yes, give X its own page too", the bullet write to Y still happens (the page becomes the bullet's link target). When the answer is "no", you've already captured via the bullet, you're done.
@@ -911,12 +924,18 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                   items: {
                     type: Type.OBJECT,
                     properties: {
+                      // `id` present = update existing section; absent = new section.
                       id: { type: Type.STRING, nullable: true },
                       title: { type: Type.STRING, nullable: true },
-                      content: { type: Type.STRING, nullable: true },
+                      // `content` REQUIRED on every section ref. The `{id}`-only
+                      // KEEP-AS-IS shape is intentionally invalid here — to keep
+                      // a sibling section unchanged while editing another, emit
+                      // it with its current verbatim content. See prompt §"Section
+                      // update mechanics" for the rationale (2026-05-18 lock-in
+                      // fix).
+                      content: { type: Type.STRING },
                       snippets: {
                         type: Type.ARRAY,
-                        nullable: true,
                         items: {
                           type: Type.OBJECT,
                           properties: {
@@ -932,9 +951,14 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                         items: { type: Type.STRING },
                       },
                     },
+                    required: ['content', 'snippets'],
                   },
                 },
               },
+              // `sections` is OPTIONAL at the update level — pure hierarchy-move
+              // updates (parent_slug change only) legitimately omit it. Any
+              // content-edit update MUST include sections; the prompt-side rule
+              // enforces this and the commit-side guard catches violations.
               required: ['slug', 'agent_abstract'],
             },
           },

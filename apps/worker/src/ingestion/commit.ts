@@ -75,33 +75,38 @@ function isMalformedTitle(title: string): boolean {
 const LYING_VERB_PATTERN =
   /\b(captur(?:e|ed|ing)|add(?:ed|ing)|appen(?:ded|ding)|not(?:ed|ing)|record(?:ed|ing)|sav(?:ed|ing)|track(?:ed|ing)|wr(?:ote|itten))\b/i;
 
-// Returns true when a section ref carries no content payload — either a
-// pure keep-as-is ({id}) or a title-only update ({id, title}). Both are
-// no-content shapes that produce no section_history write. Used by the
-// pre-flight check to detect updates that emitted nothing actionable.
+// Returns true when a section ref carries no content payload. Used by
+// the pre-flight check as a defense-in-depth backstop — the structured-
+// output schema (responseSchema in pro-fan-out.ts) now requires `content`
+// on every section ref in an update, so this case shouldn't appear in
+// healthy output, but the guard catches any path that bypasses the
+// schema enforcement.
 function sectionRefHasContent(section: { content?: string | null }): boolean {
   return typeof section.content === 'string' && section.content.length > 0;
 }
 
-// Pre-flight no-op update detection. A `sections` array consisting
-// entirely of no-content KEEP-AS-IS refs ({id} or {id, title}) describes
-// a literal no-op — yet Pro emitted the update intentionally, meaning
-// it BELIEVED it was writing something. Canonical shape: agent_abstract
-// gets a mention of the new entity, sections stay KEEP-AS-IS, the
-// directive's new content lives nowhere actionable. Status reports
-// success; nothing lands.
+// Pre-flight no-op update detection. Defense-in-depth backstop for the
+// case where Pro emits an update with `sections` present but every ref
+// lacks `content` — historically the canonical "add X to Y" silent-drop
+// (agent_abstract names the new entity, sections stay KEEP-AS-IS, the
+// commit applies nothing).
 //
-// First version of this guard (cb1ed85, 2026-05-17) required BOTH a
-// lying-skipped reason AND a no-op update. That missed the most common
-// shape: empty `skipped` array, just a no-op update with the entity
-// named in agent_abstract. The Art-of-Gathering reading-list regression
-// reproduced 8+ times under that guard. Loosened to fire on the no-op
-// alone — the update's existence is the evidence of intent; the
-// model's `skipped` reasoning is unreliable.
+// 2026-05-18: the prompt + responseSchema were rewritten to make the
+// no-content ref shape invalid — `content` is now a required field on
+// every section entry in an update. So this guard fires only on schema
+// bypass paths (defensive). The diff-check guard (`content === current
+// verbatim`) was considered and explicitly REJECTED — the structural
+// fix is to require content presence + trust Pro to actually edit it,
+// rather than server-side diffing.
+//
+// History: first version (cb1ed85, 2026-05-17) required BOTH a lying-
+// skipped reason AND a no-op update; loosened to fire on the no-op
+// alone after the Art-of-Gathering reading-list regression reproduced
+// 8+ times under the AND-gated guard.
 //
 // Edge case excluded: a move-only update (sections omitted entirely,
 // parent_slug present) is legitimate metadata and not a no-op. We only
-// fire when `sections` IS present but uniformly KEEP-AS-IS.
+// fire when `sections` IS present but uniformly no-content.
 function detectNoOpUpdateFailure(fanOut: ProFanOutResult): void {
   const noOpSlugs: string[] = [];
   for (const u of fanOut.updates) {
