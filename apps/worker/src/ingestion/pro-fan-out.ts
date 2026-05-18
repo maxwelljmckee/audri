@@ -135,7 +135,7 @@ You operate strictly on user-scope pages. Agent-scope (the assistant's private n
 - A page has metadata { slug, title, type, parent_slug, agent_abstract, abstract } and an ordered list of sections.
 - A section has { id (uuid), title, content (markdown), sort_order }.
 - Sections are h2-granular. Subheadings + lists belong inside section content as markdown.
-- agent_abstract: required, ~1 sentence, machine-consumed (used in indexes + preloads). Always regenerated when you write to a page.
+- agent_abstract: required on every create + update, ~1 sentence, machine-consumed (used in indexes + preloads). It is a **derived summary OF section content** — describes what is in the page's sections *after* your writes, never a substitute for writing content. **Hard constraint:** every entity, claim, or fact named in agent_abstract MUST appear verbatim in at least one section's \`content\` field. Mentioning "X" in agent_abstract while X is absent from every section's content is a silent drop — the user sees nothing in the wiki. agent_abstract is written LAST, as a description of the section state you produced; if you find yourself reaching for agent_abstract to "capture" a directive, stop — go write the section content first, then summarize.
 - abstract: optional human-readable lead paragraph; regenerated when present.
 - Page types (user-scope): person, concept, project, place, org, source, event, note, profile, todo, braindump.
 - Profile pages organized as \`profile/<area>\`. Only the \`profile\` root is seeded; all sub-pages emerge on-demand as ingestion encounters relevant content. Canonical sub-page vocabulary: \`profile/goals\`, \`profile/life-history\`, \`profile/health\`, \`profile/work\`, \`profile/interests\`, \`profile/relationships\`, \`profile/preferences\`, \`profile/values\`, \`profile/psychology\`. The first seven are askable areas the onboarding interview probes directly — they typically appear during a user's first onboarding call. The last two (\`values\`, \`psychology\`) are emergent — never directly asked about, only filled in from how the user talks across the askable areas. Non-canonical sub-pages (e.g. \`profile/finances\`, \`profile/spirituality\`) may also be created when content clearly warrants and no canonical sub-page fits. Flash proposes these as \`new_pages\`; Pro routes to them.
@@ -203,7 +203,7 @@ What this example does NOT include — patterns to avoid (anti-examples):
 # Input
 
 You receive:
-1. **Transcript** — turn-tagged conversation. User turns are the primary source; assistant turns are a secondary source (see §"Agent turns capturable when user intent is clear").
+1. **Transcript** — turn-tagged conversation. User turns are the primary source; assistant turns are a secondary source (see §"Agent turns capturable when user intent is clear"). **The assistant has no write tools** — only search/lookup. When the transcript shows the assistant saying "I'll add X" / "Done, I added X" / "I've noted that" / "Got it, saved" / etc., those are **assignments to you**, not evidence of completed work. The wiki state at end-of-call is exactly what existed at start-of-call; nothing has been written yet. Whether the assistant verbally confirmed the action or not, your output is the only path to actually executing it.
 2. **Candidate touched_pages** — fully-joined JSON for each existing page that may need updating. Includes metadata + all sections.
 3. **Candidate new_pages** — proposed creates from Flash with { proposed_slug, proposed_title, type, proposed_parent_slug }. You decide which to actually create. Flash's proposed_parent_slug is a HINT — default to it; you may silently override (just like proposed_type) when transcript content makes a different choice clearer.
 4. **(Optional) grounding_sources** — web URLs the live agent cited via googleSearch during the call. Use for \`cited_urls\` attribution. See §"Source citations."
@@ -222,7 +222,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
       "title": "...",
       "type": "person|concept|project|...",
       "parent_slug": "..." (set whenever a logical parent exists; see hard rules + routing §3),
-      "agent_abstract": "<terse 1 sentence>",
+      "agent_abstract": "<terse 1 sentence — DESCRIBES section content; every entity named here MUST appear in sections[].content>",
       "abstract": "..." (optional),
       "sections": [ ... ] (optional — omit or pass [] for named-entity stubs)
     }
@@ -230,7 +230,7 @@ Return ONLY a single JSON object — no preamble, no markdown fences:
   "updates": [
     {
       "slug": "<must match a candidate from touched_pages>",
-      "agent_abstract": "<regenerated>",
+      "agent_abstract": "<regenerated AFTER writing sections; describes the post-write section state, claims must be substantiated by sections[].content>",
       "abstract": "<regenerated, optional>",
       "parent_slug": "<optional — only set when user explicitly directed a hierarchy move; omit otherwise; null = move to top-level>",
       "sections": [
@@ -310,7 +310,7 @@ The commit phase hard-fails any no-op update (every section ref is KEEP-AS-IS) a
 
 ## Hard rules
 
-- agent_abstract REQUIRED on every create + update.
+- agent_abstract REQUIRED on every create + update — but written **as a derived summary OF section content**, never as a substitute for writing content. See §"Wiki ontology" for the full constraint: every entity / claim / fact named in agent_abstract MUST appear verbatim in at least one section's \`content\`. **Write agent_abstract LAST**, after the sections that substantiate it. If you find the new entity only in agent_abstract and not in any section's \`content\`, you have silently dropped the user's directive.
 - abstract optional — omit the field entirely rather than emit "".
 - sections on creates: OPTIONAL. Omit entirely (or pass \`[]\`) for the rare case where the user explicitly directed an empty-bucket stub page ("create an empty page for X — I'll fill it in later"). DO NOT invent placeholder sections like "Overview: Added to the reading list" to fill quota — empty is correct when the user asked for an empty bucket. Otherwise, prefer the substance-based promotion heuristic (capture as bullet/section on an existing page); see §"Page vs. section/bullet" in routing.
 - An update's slug MUST match a candidate from touched_pages — never invent.
