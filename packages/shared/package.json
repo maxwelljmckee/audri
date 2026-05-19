@@ -45,6 +45,11 @@
       "types": "./dist/automations/index.d.ts",
       "import": "./dist/automations/index.js",
       "default": "./dist/automations/index.js"
+    },
+    "./knobs": {
+      "types": "./dist/knobs/index.d.ts",
+      "import": "./dist/knobs/index.js",
+      "default": "./dist/knobs/index.js"
     }
   },
   "files": ["dist"],

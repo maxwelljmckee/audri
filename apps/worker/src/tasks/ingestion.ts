@@ -36,6 +36,7 @@ import {
   retrieveCandidates,
 } from '../ingestion/flash-candidate-retrieval.js';
 import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
+import { resolveRumiKnobs } from '../ingestion/rumi-knobs.js';
 import { runSettingsSpecialist } from '../ingestion/settings-specialist.js';
 import { classifyTranscript } from '../ingestion/traffic-director.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
@@ -425,6 +426,19 @@ async function runUserScopePipeline(
     log(`enrichment lookups complete: ${Object.keys(enrichmentLookups).length} succeeded`);
   }
 
+  // Resolve Rumi knobs. user_agent_settings.overrides merged over global
+  // defaults (concise/structured/etc.). For model_intelligence='adaptive',
+  // the complexity classifier picks Flash or Pro per-transcript based on
+  // word count + candidate-set size; the resolved effectiveModel flows
+  // into runFanOut. See apps/worker/src/ingestion/rumi-knobs.ts.
+  const candidateCount =
+    candidates.touched_pages.length + candidates.new_pages.length;
+  const rumiKnobs = await resolveRumiKnobs({
+    userId: p.userId,
+    transcript,
+    candidateCount,
+  });
+
   const fanOutReturn = await runFanOut({
     transcript,
     newPages: candidates.new_pages,
@@ -434,6 +448,11 @@ async function runUserScopePipeline(
     enrichmentLookups:
       Object.keys(enrichmentLookups).length > 0 ? enrichmentLookups : undefined,
     manualRetry: p.manualRetry === true,
+    knobs: {
+      effectiveModel: rumiKnobs.effectiveModel,
+      apiConfig: rumiKnobs.apiConfig,
+      writingStylePromptInjection: rumiKnobs.writingStylePromptInjection,
+    },
   });
   const fanOut = fanOutReturn.result;
   await recordInferenceUsage({
@@ -441,7 +460,10 @@ async function runUserScopePipeline(
     agentId: p.agentId,
     callTranscriptId: p.transcriptId,
     eventKind: 'ingestion',
-    model: PRO_FAN_OUT_MODEL,
+    // Record the actual model that ran (adaptive may have collapsed
+    // to either Flash or Pro). PRO_FAN_OUT_MODEL retained as a fallback
+    // for the rare case where knob resolution failed (defensive).
+    model: rumiKnobs.effectiveModel || PRO_FAN_OUT_MODEL,
     usage: fanOutReturn.usage,
   });
   log(

@@ -97,6 +97,7 @@ The full Agents-tile work (creation UX, persona customization, agent-level confi
 | Name | Priority | Effort | Type | Description |
 |---|---|---|---|---|
 | Mid-session agent switching | P3 | S | Feature | "Actually, talk to the Health Coach about this." Probably forced call-end + new call. Source: §15b. |
+| **Vibe-oriented agent knobs** (tone, warmth, formality, etc.) | P2 | M | Feature | v0.4.0 ships three Rumi knobs on the cost / intelligence / speed axis (writing_style, model_intelligence, model_reasoning) plus `user_custom_rules` for any free-form behavioral customization. Vibes-style preferences ("be warmer", "more formal", "address me by name") currently route through `user_custom_rules` as agent-scope rules. Backlog item: if dogfood reveals that users repeatedly express vibes preferences that would fit a discrete knob better than a free-form rule, promote them to first-class knobs. Likely candidates from v0.4.0 design discussion: **tone** (warm / measured / playful / direct), **formality** (casual / neutral / formal), **density** (terse / balanced / expansive — overlaps with Rumi's writing_style but applies at Audri / Live Agent level). Source: 2026-05-19 customization workshop. |
 
 ### Knowledge ingestion expansion
 

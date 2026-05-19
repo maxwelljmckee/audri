@@ -945,6 +945,21 @@ export interface ProFanOutInput {
   // can re-read the transcript more aggressively. See specs/fan-out-prompt.md
   // (manual-retry section, pending v0.3.x prompt rewrite).
   manualRetry?: boolean;
+  // Rumi knob overrides for this user. See apps/worker/src/ingestion/rumi-knobs.ts.
+  // When omitted, runFanOut uses PRO_MODEL + default behavior (no writing-
+  // style injection). Callers should resolve knobs once per ingestion and
+  // pass them in.
+  knobs?: {
+    // Concrete model name to call. 'gemini-2.5-flash' or 'gemini-3.1-pro-preview'.
+    effectiveModel: string;
+    // Merged api_config from intelligence + reasoning knobs. Already
+    // sanitized (e.g., thinking_config stripped for Flash). Merged into
+    // generateContent config.
+    apiConfig?: Record<string, unknown>;
+    // Writing-style prompt injection text. Appended after the static
+    // system prompt. Empty string when default style or unset.
+    writingStylePromptInjection?: string;
+  };
 }
 
 export interface RunFanOutReturn {
@@ -986,11 +1001,24 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
 
   const userMessage = `# Call timestamp\n${input.callTimestamp.toISOString()}\n\n${manualRetryBlock}${groundingBlock}${enrichmentBlock}# new_pages (proposed by Flash)\n${JSON.stringify(input.newPages, null, 2)}\n\n# touched_pages (fully joined)\n${JSON.stringify(input.touchedPages, null, 2)}\n\n# Transcript\n\n${flat}`;
 
+  // Apply Rumi knobs. writing_style appends to the system prompt; model +
+  // api_config (model_intelligence + model_reasoning) flow into the call
+  // config. When knobs are absent (caller didn't resolve them), default to
+  // PRO_MODEL + no style injection — preserves pre-knob behavior for any
+  // call site that hasn't migrated yet.
+  const modelForCall = input.knobs?.effectiveModel ?? PRO_MODEL;
+  const knobApiConfig = input.knobs?.apiConfig ?? {};
+  const writingStyleAppend = input.knobs?.writingStylePromptInjection
+    ? `\n\n# Writing style (user preference)\n\n${input.knobs.writingStylePromptInjection}`
+    : '';
+  const systemInstructionText = `${SYSTEM_PROMPT}${writingStyleAppend}`;
+
   const resp = await callProWithRetry({
-    model: PRO_MODEL,
+    model: modelForCall,
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     config: {
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      systemInstruction: { parts: [{ text: systemInstructionText }] },
+      ...knobApiConfig,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
