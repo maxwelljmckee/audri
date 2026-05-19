@@ -1,6 +1,8 @@
 # SPEC — Customization Framework + Sprint Scope Lockdown
 
-Status: **decisions locked 2026-05-18** — sprint scope + customization architecture resolved in Socratic session following the v0.3.0 dogfood pass. **NL customization architecture locked 2026-05-19** (Open Question B closed; see dedicated section below). **Scribe surface locked 2026-05-19 → Option B** (knobs surface under Notes Settings). **Events sizing deferred to mid-sprint.** KnobSpec shape held for the next dedicated workshop.
+Status: **decisions locked 2026-05-18** — sprint scope + customization architecture resolved in Socratic session following the v0.3.0 dogfood pass. **NL customization architecture locked 2026-05-19** (Open Question B closed; see dedicated section below). **Rumi (ingestion agent) surface locked 2026-05-19 → Option B** (knobs surface under Notes Settings). **Events sizing deferred to mid-sprint.** KnobSpec shape locked 2026-05-19.
+
+**Naming note (2026-05-19):** the ingestion agent's internal name was workshopped during the KnobSpec session. Working name was "Rumi" (a placeholder during exploration); locked name is **Rumi** — chosen for fuzzy cultural reference (the 13th-century Sufi poet evokes deep wisdom + lyrical phrasing, fitting for an agent that rewrites notes) without being so well-defined culturally that there's no room to reinvent. The same heuristic — *strong but not over-defined cultural anchor* — should guide future agent names (Shakespeare, Plato would be too anchored; Audri/Rumi sit in the right zone).
 
 Two intertwined deliverables captured here:
 
@@ -49,7 +51,7 @@ In order:
 
 0. **Quick wins** (ingestion traffic director — see § Quick Wins below)
 1. **Prompt decomposition / recomposition** (foundational refactor)
-2. **Agent-level tunable knobs** (Audri, Scribe, Dreams partial)
+2. **Agent-level tunable knobs** (Audri, Rumi, Dreams partial)
 3. **NL customization layers** (overlay on knobs)
 4. **Todo specialist** (agent maturity for the Todos surface)
 5. **Events end-to-end** — second sprint; sizing dictates split (see Open Questions)
@@ -114,7 +116,7 @@ Knobs ship with a global default. Users override per their preference. Storage s
 #### 2. Agent types in scope for v0.4.0 knobs
 
 - **`type='live'` (Audri + future Live Agents)** — knobs on conversational style, verbosity, retrieval-eagerness, reasoning depth (mirrors Gemini Live API `reasoning_effort` config).
-- **`type='ingestion'` (Scribe + future ingestion agents)** — knobs on output style (concise / faithful / structured / embellished). Builds on `project_style_knob_backlog` + agent_notes work; replaces today's hardcoded ingestion behavior.
+- **`type='ingestion'` (Rumi + future ingestion agents)** — knobs on output style (concise / faithful / structured / embellished). Builds on `project_style_knob_backlog` + agent_notes work; replaces today's hardcoded ingestion behavior.
 - **Dreams** — no general "agent power" knob (reasoning depth is structurally tiered as Light / REM / Deep). Future knobs (proposal-frequency, intervention-aggression) — out of v0.4.0 scope.
 
 #### 3. NL → knob distillation drives the proactive loop
@@ -155,7 +157,7 @@ Each layer has exactly one injection point and one source of truth.
 
 #### Implementation discipline
 
-1. **Build for one agent end-to-end first.** Live Agent goes first (most prompt surfaces, hardest semantics). Refactor it cleanly, prove the seam holds, *then* port Scribe and Dreams. Designing across all three in abstract produces a generic abstraction that fits none of them.
+1. **Build for one agent end-to-end first.** Live Agent goes first (most prompt surfaces, hardest semantics). Refactor it cleanly, prove the seam holds, *then* port Rumi and Dreams. Designing across all three in abstract produces a generic abstraction that fits none of them.
 2. **Behavioral test before refactor.** Capture 3-5 real input/output pairs from current Live Agent covering: capture turn, lookup turn, agent_notes-directed enrichment, refusal/clarify. Replay post-refactor. Equivalent outputs ≈ no semantic drift.
 3. **Budget honestly.** This is the most invisible-progress work in the sprint. Plan it as a full week; the rest accelerates after, and silent prompt drift across every agent is the worst failure class.
 
@@ -284,7 +286,7 @@ Non-AI preferences (mic sensitivity, future theme picker, notification toggles) 
 
 UI prefs extend the existing **`user_settings` table** (already used for `onboarding_complete`, etc.) for cloud-synced values, or live in AsyncStorage for genuinely ephemeral ones (last-viewed timestamps, etc.). No new `user_preferences` table.
 
-#### 11. agent_notes column scrapped + re-dogfooded; Scribe becomes a real agent row
+#### 11. agent_notes column scrapped + re-dogfooded; Rumi becomes a real agent row
 
 Three coupled changes:
 
@@ -292,14 +294,14 @@ Three coupled changes:
 
 **B. Add `agents.type` enum column.** New `agent_type` enum (`'live' | 'ingestion'` initially; extends later as `dream`, `todo`, etc. land). Column is NOT NULL after backfill. Existing default-Assistant rows backfill to `type='live'`.
 
-**C. Seed Scribe (`type='ingestion'`) agent row per user.** New rows seeded at signup; backfill migration creates one for the existing user. Internal name `'Scribe'` (placeholder — final naming pending; could be Nemo, Penna, or stay Scribe). The row exists as substrate for: (a) `user_agent_settings` knob storage keyed to this `agent_id`; (b) page-scoped + agent-scoped `user_custom_rules` rows pointing at this row when Scribe-specific. Per Open Question A → Option B, the row does NOT surface in the Agents tile UI.
+**C. Seed Rumi (`type='ingestion'`) agent row per user.** New rows seeded at signup; backfill migration creates one for the existing user. Internal name `'Rumi'` (locked 2026-05-19 — see naming-rationale note at top of spec). The row exists as substrate for: (a) `user_agent_settings` knob storage keyed to this `agent_id`; (b) page-scoped + agent-scoped `user_custom_rules` rows pointing at this row when Rumi-specific. Per Open Question A → Option B, the row does NOT surface in the Agents tile UI.
 
 **Full migration sequence:**
 
 1. Add `agent_type` enum + `agents.type` column (NOT NULL default backfilled).
 2. Backfill existing Assistant rows → `type='live'`.
 3. Seed an `type='ingestion'` agent row per existing user (single user — Max).
-4. Update signup flow to seed both `live` (Audri) and `ingestion` (Scribe) agent rows on user creation.
+4. Update signup flow to seed both `live` (Audri) and `ingestion` (Rumi) agent rows on user creation.
 5. Add `user_custom_rules` table + RLS + realtime publication.
 6. Add `user_agent_settings` table (knob overrides) + RLS.
 7. Drop `wiki_pages.agent_notes` column.
@@ -308,11 +310,11 @@ Three coupled changes:
 10. Update Live Agent `fetch_page` + preload to read from new table.
 11. Re-run the book-reading-list dogfood flow (yesterday's test case) against the new path.
 
-**Ingestion-prompt-storage decision deferred.** Today the ingestion prompt is hardcoded in `pro-fan-out.ts`. With Scribe as an agent row, an argument exists for moving the prompt into `agents.persona_prompt`. **Deferred to the Track A prompt decomposition work** — the prompt-decomposition seam (layer naming) will determine where Scribe's prompt content lives. For v0.4.0 the row exists for knob/rule binding; the prompt stays where it lives today.
+**Ingestion-prompt-storage decision deferred.** Today the ingestion prompt is hardcoded in `pro-fan-out.ts`. With Rumi as an agent row, an argument exists for moving the prompt into `agents.persona_prompt`. **Deferred to the Track A prompt decomposition work** — the prompt-decomposition seam (layer naming) will determine where Rumi's prompt content lives. For v0.4.0 the row exists for knob/rule binding; the prompt stays where it lives today.
 
 ### Locked KnobSpec v2 shape
 
-Refined through example-driven workshop 2026-05-19 (Scribe Writing Style + Audri Reasoning Depth examples). For v0.4.0:
+Refined through example-driven workshop 2026-05-19 (Rumi Writing Style + Audri Reasoning Depth examples). For v0.4.0:
 
 ```typescript
 type KnobSpec = {
@@ -349,7 +351,6 @@ type KnobValueSpec = {
 - **Specific knob enumerations** for `live` and `ingestion` agent types — drafted at implementation time once the prompt-decomposition seam lands.
 - **Settings specialist prompt** — drafted at implementation time.
 - **App Map rendering format** — concrete JSON shape drafted at implementation time.
-- **Final internal name for the ingestion agent** — Scribe / Nemo / Penna / other. Cosmetic; lands as a one-line change in the seed migration.
 
 ---
 
@@ -363,13 +364,13 @@ Onboarding is moved to the END of v0.4.0, after all scope is finalized and exerc
 
 These are NOT punts — they're flagged for explicit follow-up discussion before implementation:
 
-### ~~A. Scribe's user-facing surface~~ — LOCKED 2026-05-19: Option B
+### ~~A. Rumi's user-facing surface~~ — LOCKED 2026-05-19: Option B
 
-**Decision:** Scribe stays an **internal name**; its knobs and settings surface inside **Notes Settings** (per-plugin settings cog), not as a first-class agent in the Agents tile.
+**Decision:** Rumi stays an **internal name**; its knobs and settings surface inside **Notes Settings** (per-plugin settings cog), not as a first-class agent in the Agents tile.
 
-**Reasoning:** exposing Scribe as a named agent would compound the user's learning curve and inflate the visible agent inventory before users have a strong mental model of what each agent does. Simplicity wins for the launch; the "Scribe as full persona" idea is deferred as a candidate A/B experiment for later, once users have a baseline relationship with Audri + (eventually) custom agents.
+**Reasoning:** exposing Rumi as a named agent would compound the user's learning curve and inflate the visible agent inventory before users have a strong mental model of what each agent does. Simplicity wins for the launch; the "Rumi as full persona" idea is deferred as a candidate A/B experiment for later, once users have a baseline relationship with Audri + (eventually) custom agents.
 
-**Implementation implication:** the Track D Agents tile work in v0.4.0 does NOT include a Scribe entry. Scribe's knob UI lands inside the Notes plugin's settings-cog drawer (Track B per-plugin settings cog → Notes-specific drawer contents).
+**Implementation implication:** the Track D Agents tile work in v0.4.0 does NOT include a Rumi entry. Rumi's knob UI lands inside the Notes plugin's settings-cog drawer (Track B per-plugin settings cog → Notes-specific drawer contents).
 
 ### ~~B. Full NL customization architecture~~ — LOCKED 2026-05-19
 
