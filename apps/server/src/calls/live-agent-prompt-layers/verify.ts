@@ -129,6 +129,41 @@ const SCENARIOS: Scenario[] = [
       callType: 'onboarding',
     },
   },
+  {
+    name: 'generic-audio-with-custom-rules',
+    args: {
+      agentName: 'Audri',
+      personaPrompt: SAMPLE_PERSONA,
+      userPromptNotes: SAMPLE_USER_NOTES,
+      callType: 'generic',
+      modality: 'audio',
+      preloadBlock: SAMPLE_PRELOAD_BLOCK,
+      customRules: {
+        app: [
+          'Always cite sources when giving factual information.',
+          'Never use emojis unless I explicitly use one first.',
+        ],
+        agent: [
+          'Default to terse responses; expand only when I ask for depth.',
+        ],
+      },
+    },
+  },
+  {
+    name: 'generic-audio-with-app-rules-only',
+    args: {
+      agentName: 'Audri',
+      personaPrompt: SAMPLE_PERSONA,
+      userPromptNotes: SAMPLE_USER_NOTES,
+      callType: 'generic',
+      modality: 'audio',
+      preloadBlock: SAMPLE_PRELOAD_BLOCK,
+      customRules: {
+        app: ['Always cite sources when giving factual information.'],
+        agent: [],
+      },
+    },
+  },
 ];
 
 function firstDifferenceIndex(a: string, b: string): number | null {

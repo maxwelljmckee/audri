@@ -20,6 +20,7 @@
 import {
   buildBringSomething,
   buildConventionSetting,
+  buildCustomRules,
   buildInterviewShape,
   buildModalityOverride,
   buildNotesStructure,
@@ -44,6 +45,13 @@ export interface ComposeLiveAgentPromptArgs {
   callType: 'generic' | 'onboarding';
   preloadBlock?: string;
   modality?: 'audio' | 'text';
+  // App + agent scoped user_custom_rules rendered into the Behavioral layer.
+  // Page-scope rules ride along inline with their pages in `preloadBlock`.
+  // Omit or pass empty arrays when no rules are set — the segment vanishes.
+  customRules?: {
+    app: string[];
+    agent: string[];
+  };
 }
 
 export function composeLiveAgentPrompt(args: ComposeLiveAgentPromptArgs): string {
@@ -61,10 +69,14 @@ function composeGeneric(args: ComposeLiveAgentPromptArgs): string {
     modality: args.modality,
   });
 
-  // Scaffolding-internal segments — these get joined with single newlines
-  // into the "scaffolding" block, matching the pre-refactor structure
-  // exactly. blank string segments (from disabled layers in this call
-  // type) get filtered out below.
+  // Scaffolding-internal segments. Custom rules (when present) inject
+  // RIGHT AFTER principles — user-set rules take precedence over the
+  // default behavioral guidance below, and the LLM reads top-down.
+  const customRulesSegment = buildCustomRules({
+    agentName: args.agentName,
+    appRules: args.customRules?.app ?? [],
+    agentRules: args.customRules?.agent ?? [],
+  });
   const scaffolding = [
     buildWho({ agentName: args.agentName, callType: args.callType }),
     '',
@@ -73,6 +85,7 @@ function composeGeneric(args: ComposeLiveAgentPromptArgs): string {
     buildReadingTheMoment({ callType: args.callType }),
     '',
     buildPrinciples({ callType: args.callType }),
+    ...(customRulesSegment ? ['', customRulesSegment] : []),
     '',
     buildBringSomething({ callType: args.callType }),
     '',

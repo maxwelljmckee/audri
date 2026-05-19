@@ -26,6 +26,7 @@ import {
   agents,
   callTranscripts,
   todos,
+  userCustomRules,
   wikiPages,
   wikiSections,
 } from '@audri/shared/db';
@@ -124,6 +125,15 @@ interface PreloadData {
   incompleteCall: IncompleteCall | null;
   openItems: OpenItem[];
   inflightTodos: InflightTodo[];
+  // User customization rules in non-page scopes. Page-scope rules ride
+  // along inline with their pages via `agentNotes` on PageWithSections /
+  // RecentPage / WikiStructureNode. See specs/customization-framework.md
+  // § "NL customization architecture" + tradeoffs.md for the layered
+  // injection contract.
+  customRules: {
+    app: string[];
+    agent: string[];
+  };
 }
 
 export async function loadGenericCallContext(
@@ -138,6 +148,7 @@ export async function loadGenericCallContext(
     incompleteCall,
     openItems,
     inflightTodos,
+    customRules,
   ] = await Promise.all([
     fetchPagesByPrefix(userId, 'user', 'profile'),
     fetchPagesByPrefix(userId, 'agent', 'assistant'),
@@ -146,6 +157,7 @@ export async function loadGenericCallContext(
     fetchMostRecentIncompleteCall(userId),
     fetchPendingOpenItems(userId, agentId),
     fetchInflightTodos(userId),
+    fetchCustomRulesNonPage(userId, agentId),
   ]);
 
   return {
@@ -156,7 +168,39 @@ export async function loadGenericCallContext(
     incompleteCall,
     openItems,
     inflightTodos,
+    customRules,
   };
+}
+
+// Fetch app + agent scoped custom rules. Page-scope rules are joined inline
+// with their pages in fetchPagesByPrefix / fetchRecentPages / fetchWikiStructure.
+// Returns ordered by created_at ASC so older rules render first (preserving
+// user's authoring order).
+async function fetchCustomRulesNonPage(
+  userId: string,
+  agentId: string,
+): Promise<{ app: string[]; agent: string[] }> {
+  const rows = await db
+    .select({
+      scope: userCustomRules.scope,
+      content: userCustomRules.content,
+    })
+    .from(userCustomRules)
+    .where(
+      and(
+        eq(userCustomRules.userId, userId),
+        eq(userCustomRules.isActive, true),
+        sql`(${userCustomRules.scope} = 'app' OR (${userCustomRules.scope} = 'agent' AND ${userCustomRules.agentId} = ${agentId}))`,
+      ),
+    )
+    .orderBy(userCustomRules.createdAt);
+  const app: string[] = [];
+  const agent: string[] = [];
+  for (const r of rows) {
+    if (r.scope === 'app') app.push(r.content);
+    else if (r.scope === 'agent') agent.push(r.content);
+  }
+  return { app, agent };
 }
 
 async function fetchPagesByPrefix(
@@ -172,10 +216,13 @@ async function fetchPagesByPrefix(
       title: wikiPages.title,
       agentAbstract: wikiPages.agentAbstract,
       abstract: wikiPages.abstract,
-      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
-      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
-      // new read-path lands. See specs/customization-framework.md § LD11.
-      agentNotes: sql<string | null>`NULL`,
+      // Page-scoped custom rules. Multi-rule pages concatenate with blank-line
+      // separators. NULL when no active rules exist (matches the prior
+      // wiki_pages.agent_notes column shape for downstream rendering).
+      // See specs/customization-framework.md § "NL customization architecture" LD8.
+      agentNotes: sql<
+        string | null
+      >`(SELECT string_agg(content, E'\n\n') FROM user_custom_rules WHERE scope = 'page' AND wiki_page_id = ${wikiPages.id} AND is_active = true)`,
     })
     .from(wikiPages)
     .where(
@@ -247,10 +294,13 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: wikiPages.title,
       type: wikiPages.type,
       agentAbstract: wikiPages.agentAbstract,
-      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
-      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
-      // new read-path lands. See specs/customization-framework.md § LD11.
-      agentNotes: sql<string | null>`NULL`,
+      // Page-scoped custom rules. Multi-rule pages concatenate with blank-line
+      // separators. NULL when no active rules exist (matches the prior
+      // wiki_pages.agent_notes column shape for downstream rendering).
+      // See specs/customization-framework.md § "NL customization architecture" LD8.
+      agentNotes: sql<
+        string | null
+      >`(SELECT string_agg(content, E'\n\n') FROM user_custom_rules WHERE scope = 'page' AND wiki_page_id = ${wikiPages.id} AND is_active = true)`,
     })
     .from(wikiPages)
     .where(
@@ -305,10 +355,13 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
       scope: wikiPages.scope,
       updatedAt: wikiPages.updatedAt,
       agentAbstract: wikiPages.agentAbstract,
-      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
-      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
-      // new read-path lands. See specs/customization-framework.md § LD11.
-      agentNotes: sql<string | null>`NULL`,
+      // Page-scoped custom rules. Multi-rule pages concatenate with blank-line
+      // separators. NULL when no active rules exist (matches the prior
+      // wiki_pages.agent_notes column shape for downstream rendering).
+      // See specs/customization-framework.md § "NL customization architecture" LD8.
+      agentNotes: sql<
+        string | null
+      >`(SELECT string_agg(content, E'\n\n') FROM user_custom_rules WHERE scope = 'page' AND wiki_page_id = ${wikiPages.id} AND is_active = true)`,
     })
     .from(wikiPages)
     .where(

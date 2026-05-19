@@ -1,7 +1,17 @@
 // Fully-joined page representation that Pro fan-out reads — page metadata +
 // ordered sections. Per specs/fan-out-prompt.md input contract.
 
-import { and, asc, db, eq, inArray, isNull, wikiPages, wikiSections } from '@audri/shared/db';
+import {
+  and,
+  asc,
+  db,
+  eq,
+  inArray,
+  isNull,
+  userCustomRules,
+  wikiPages,
+  wikiSections,
+} from '@audri/shared/db';
 
 export interface FullSection {
   id: string;
@@ -86,6 +96,31 @@ export async function fetchCandidatePages(
     sectionsByPage.set(s.pageId, list);
   }
 
+  // Fetch active page-scoped custom rules for these pages. Multi-rule pages
+  // get rule contents concatenated with blank-line separators, preserving
+  // authoring order. NULL when no active rules.
+  const ruleRows = await db
+    .select({
+      pageId: userCustomRules.wikiPageId,
+      content: userCustomRules.content,
+    })
+    .from(userCustomRules)
+    .where(
+      and(
+        eq(userCustomRules.scope, 'page'),
+        eq(userCustomRules.isActive, true),
+        inArray(userCustomRules.wikiPageId, pageIds),
+      ),
+    )
+    .orderBy(userCustomRules.createdAt);
+  const rulesByPage = new Map<string, string[]>();
+  for (const r of ruleRows) {
+    if (!r.pageId) continue;
+    const list = rulesByPage.get(r.pageId) ?? [];
+    list.push(r.content);
+    rulesByPage.set(r.pageId, list);
+  }
+
   return pages.map((p) => ({
     id: p.id,
     slug: p.slug,
@@ -96,10 +131,7 @@ export async function fetchCandidatePages(
       : null,
     agent_abstract: p.agentAbstract,
     abstract: p.abstract,
-    // TODO(v0.4.0): replace with user_custom_rules join (scope='page'). The
-    // wiki_pages.agent_notes column was dropped 2026-05-19; stubbed to null
-    // until the new read-path lands. See specs/customization-framework.md § LD11.
-    agent_notes: null,
+    agent_notes: rulesByPage.has(p.id) ? rulesByPage.get(p.id)!.join('\n\n') : null,
     sections: sectionsByPage.get(p.id) ?? [],
   }));
 }

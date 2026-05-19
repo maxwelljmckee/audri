@@ -58,10 +58,9 @@ export class CallsService {
     const sessionId = randomUUID();
     // Generic calls preload profile + agent notes + recent activity. Onboarding
     // intentionally starts cold — the user hasn't given the model anything yet.
-    const preloadBlock =
-      callType === 'generic'
-        ? renderPreloadBlock(await loadGenericCallContext(userId, agent.id))
-        : '';
+    const callContext =
+      callType === 'generic' ? await loadGenericCallContext(userId, agent.id) : null;
+    const preloadBlock = callContext ? renderPreloadBlock(callContext) : '';
 
     const systemInstruction = composeSystemPrompt({
       agentName: agent.name,
@@ -70,6 +69,7 @@ export class CallsService {
       callType,
       preloadBlock,
       modality: 'audio',
+      customRules: callContext?.customRules,
     });
 
     // Mint an ephemeral token bound to the Live config. Persona stays

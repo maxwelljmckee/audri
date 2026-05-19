@@ -177,7 +177,8 @@ export class ChatService {
       .limit(1);
     if (!agent) throw new NotFoundException(`agent not found for session: ${sessionId}`);
 
-    const preloadBlock = renderPreloadBlock(await loadGenericCallContext(userId, agent.id));
+    const callContext = await loadGenericCallContext(userId, agent.id);
+    const preloadBlock = renderPreloadBlock(callContext);
     const systemInstruction = composeSystemPrompt({
       agentName: agent.name,
       personaPrompt: agent.personaPrompt,
@@ -185,6 +186,7 @@ export class ChatService {
       callType: 'generic',
       preloadBlock,
       modality: 'text',
+      customRules: callContext.customRules,
     });
 
     // Convert client history (user/agent) into Gemini Content (user/model).
