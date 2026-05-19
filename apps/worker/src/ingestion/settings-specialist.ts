@@ -4,28 +4,31 @@
 // lookup; see `project_pre_pro_pipeline_pattern` memory).
 //
 // Flow:
-//   1. Heuristic detector scans user turns for recurring-rule phrasing
-//      ("from now on", "always", "going forward", "default to", etc.).
-//      Cheap regex; no inference. Bias toward firing — false positive =
-//      one wasted Flash call, false negative = silent loss of the user's
-//      intent.
-//   2. If detector matches: Flash inference with structured output
-//      extracts each rule into { scope, target_slug?, content }.
-//   3. Commit step resolves page targets to wiki_page_ids (using the
-//      Flash candidate retrieval's touched/new pages map) and inserts
-//      `user_custom_rules` rows.
+//   1. Heuristic detector scans user turns for rule-set / rule-update /
+//      rule-delete phrasing. Cheap regex; no inference. Bias toward firing —
+//      false positive = one wasted Flash call, false negative = silent
+//      loss of the user's intent.
+//   2. If detector matches: fetch the user's existing active rules (with
+//      IDs + page slugs for page-scope rules) and pass them into a Flash
+//      inference with structured output. Flash emits OPERATIONS — insert
+//      (new rule), update (rewrite an existing rule's content), or delete
+//      (soft-delete via is_active=false). Operations may reference
+//      existing rules by their internal UUID; Flash resolves the user's
+//      verbal reference ("forget about the terseness rule") to the right
+//      target_rule_id.
+//   3. Commit step applies each operation. Inserts resolve page slugs
+//      to wiki_page_ids; updates rewrite content; deletes flip is_active.
+//      All operations in a single transaction.
 //
 // Settings specialist is the SOLE write path for `user_custom_rules` from
-// transcripts. Pro fan-out's old agent_notes capture clauses are dead —
-// agent_notes removed from responseSchema in the same commit that
-// introduced this module. Pro stays narrow (notes-only).
+// transcripts. Pro fan-out's old agent_notes capture clauses are dead.
 //
-// Architectural note: this is a deterministic-trigger + bounded-LLM
-// helper, not an agentic loop. Detector → single Flash call → commit.
-// No iteration, no tool use. Per spec § 5 settings specialist contract +
-// § 6 pre-Pro helper pattern.
+// Architectural note: deterministic-trigger + bounded-LLM helper, not an
+// agentic loop. Detector → single Flash call → commit. No iteration, no
+// tool use. Per spec § 5 settings specialist contract + § 6 pre-Pro
+// helper pattern.
 
-import { and, db, eq, isNull, userCustomRules, wikiPages } from '@audri/shared/db';
+import { and, db, eq, inArray, isNull, userCustomRules, wikiPages } from '@audri/shared/db';
 import { getGeminiClient } from '@audri/shared/gemini';
 import { recordInferenceUsage } from '@audri/shared/usage';
 import { Type } from '@google/genai';
@@ -43,14 +46,20 @@ const EXTRACTION_TIMEOUT_MS = Number(
 // Heuristic detector. Scans USER turns only (the agent's own turns may
 // contain "from now on" while explaining capabilities; ignoring those
 // avoids false-positive detection). Bias toward firing — a Flash call
-// costs ~$0.001 and short-circuits when extraction returns [].
+// costs ~$0.001 and short-circuits when extraction returns no operations.
 //
-// Phrases caught (case-insensitive, word-boundary): "from now on",
-// "always" (when paired with a verb), "going forward", "from here on
-// out", "whenever", "every time", "default to", "by default", "going
-// to be", "I want you to" (forward-looking instruction shape).
+// Triggers two families of intent:
+//   - INSERT / new rule: "from now on", "always", "going forward",
+//     "default to", "whenever", "by default", "never", "i want you to"
+//   - UPDATE / DELETE: "forget", "no longer", "stop doing", "drop the
+//     rule", "remove the rule", "change my X rule", "update my X rule",
+//     "instead of"
+//
+// "instead of" catches contradiction phrasing ("instead of being terse
+// on this page, be expansive") — important for the rewrite-or-scope-down
+// flow per spec § "Handling rule updates / deletes".
 const SETTINGS_TRIGGER_PATTERN =
-  /\b(from now on|going forward|from here on|whenever|every time|default to|by default|going to be|always (do|don'?t|use|favor|prefer|cite|include|skip|ask|confirm|check|search|look)|i want you to|never)\b/i;
+  /\b(from now on|going forward|from here on|whenever|every time|default to|by default|going to be|always (do|don'?t|use|favor|prefer|cite|include|skip|ask|confirm|check|search|look)|i want you to|never|forget|no longer|stop (doing|always)|drop the|remove the|change (my|the) rule|update (my|the) rule|instead of)\b/i;
 
 export function detectsSettingsDirectivesHeuristic(
   transcript: IngestionTranscriptTurn[],
@@ -62,14 +71,25 @@ export function detectsSettingsDirectivesHeuristic(
   return false;
 }
 
-export interface ExtractedRule {
-  scope: 'app' | 'agent' | 'page';
+// Operation emitted by Flash. Field semantics depend on `operation`:
+//   - insert: scope + content required; target_slug required when scope='page'
+//   - update: target_rule_id + new_content required
+//   - delete: target_rule_id required
+// All other fields ignored on a given operation type.
+export interface ExtractedOperation {
+  operation: 'insert' | 'update' | 'delete';
+  // INSERT fields
+  scope?: 'app' | 'agent' | 'page';
   target_slug?: string | null;
-  content: string;
+  content?: string;
+  // UPDATE / DELETE fields
+  target_rule_id?: string;
+  // UPDATE fields
+  new_content?: string;
 }
 
 interface ExtractionResult {
-  rules: ExtractedRule[];
+  operations: ExtractedOperation[];
 }
 
 export interface SettingsSpecialistInput {
@@ -79,85 +99,193 @@ export interface SettingsSpecialistInput {
   // Full transcript, all roles. Specialist scans user turns for rule
   // directives and reads agent turns for confirmation context.
   transcript: IngestionTranscriptTurn[];
-  // Candidate slugs to advertise to Flash for scope='page' resolution.
-  // Specialist looks up wiki_page_ids server-side via a separate query —
-  // page IDs intentionally NOT exposed to the model. Worker can pass any
-  // candidate slug set; typically the full wiki-index slug list, or the
-  // Flash retrieval candidate set if narrower precision is needed.
+  // Candidate slugs Flash can use for scope='page' target resolution on
+  // INSERTs. Specialist looks up wiki_page_ids server-side before insert.
+  // Page IDs intentionally NOT exposed to the model.
   candidatePageSlugs: string[];
 }
 
 export interface SettingsSpecialistResult {
-  rulesCreated: number;
-  // Rules detected by Flash but dropped at commit time (e.g., scope='page'
-  // with unresolvable target_slug). Logged for telemetry.
-  rulesDropped: number;
+  rulesInserted: number;
+  rulesUpdated: number;
+  rulesDeleted: number;
+  operationsDropped: number;
+}
+
+// Existing rule row as Flash sees it. ID is exposed to the model so it
+// can emit target_rule_id on UPDATE / DELETE operations; UUIDs are opaque.
+// Page slug joined so Flash can reason about "which reading-list rule".
+interface ExistingRuleForFlash {
+  id: string;
+  scope: 'app' | 'agent' | 'page';
+  page_slug?: string | null;
+  content: string;
 }
 
 function buildSystemPrompt(): string {
-  return `You are a settings-rule extractor. Given a voice transcript between a user and a personal-assistant agent, extract any recurring rules the USER set for how their agents should behave.
+  return `You are a settings-rule extractor. Given a voice transcript between a user and a personal-assistant agent — plus the user's current active rules — extract any OPERATIONS the USER directed on their customization rules.
 
-# Rule scopes
+# Operation types
 
-- **app** — applies across every agent the user has. Examples: "Always cite your sources." "Never use emojis unless I use one first." "When you give me facts, include the year."
-- **agent** — applies to the specific agent the user is talking to. Examples: "When you research, default to one-paragraph summaries." "Don't ask me to confirm before adding todos." (The agent is the recipient of these rules by virtue of being addressed.)
-- **page** — applies to a specific wiki page the user owns. Examples: "On my reading list, look up the author and year when I add a book." "For my Consensus project, always link new sections back to the goals doc." A page-scope rule MUST identify a wiki page by name; the extracted \`target_slug\` must be a slug from the provided page list.
+- **insert** — user states a new recurring rule that doesn't conflict with existing ones, or chooses to add a more specific rule alongside an existing broader one ("be terse generally, but on Consensus be expansive" — the second clause is an insert at narrower scope).
+- **update** — user rewrites the content of an existing rule. Use this when the user wants to KEEP the rule at its current scope but change its content ("change my reading-list rule to also include the premise"). Requires target_rule_id.
+- **delete** — user explicitly wants an existing rule gone. Triggers: "forget", "no longer", "stop doing", "drop the rule", "remove the rule". Requires target_rule_id.
 
-# What counts as a rule
+# Rule scopes (for inserts)
 
-A directive that establishes recurring future behavior. Trigger phrases include "from now on", "always", "going forward", "whenever", "every time", "default to", "by default", "from here on out".
+- **app** — applies across every agent the user has. Examples: "Always cite your sources." "Never use emojis unless I use one first."
+- **agent** — applies to the specific agent the user is talking to. Examples: "Default to terse responses." "Don't ask me to confirm before adding todos."
+- **page** — applies to a specific wiki page. MUST identify the page by name; extracted target_slug must match one of the provided candidate slugs.
 
-# What does NOT count as a rule
+# What counts as a directive
+
+A directive that establishes / modifies / removes recurring future behavior. Trigger phrases include "from now on", "always", "going forward", "whenever", "default to", "from here on out" (insert family); "forget", "no longer", "stop doing", "drop the rule", "instead of" (update / delete family).
+
+# What does NOT count
 
 - **One-off actions.** "Remind me to call mom" is a todo, not a rule.
-- **Past-tense / present-tense observations.** "I always wake up at 6" is the user describing themselves, not setting a rule for the agent.
-- **The agent's own forward-looking statements.** Only USER directives count — if the agent says "I'll always do X going forward," that's the agent's commitment, not a user rule.
+- **Past-tense / present-tense observations.** "I always wake up at 6" is the user describing themselves.
+- **The agent's own forward-looking statements.** Only USER directives count.
 - **In-call instructions for THIS call only.** "Just for this conversation, be more terse" is not a recurring rule.
 
 # Output contract
 
-Emit one entry per distinct rule. If the user states no rules, emit \`{ "rules": [] }\` — empty is fine and the most common case.
+Emit one entry per distinct operation. If the user states no directives, emit \`{ "operations": [] }\` — empty is fine and the most common case.
 
-Fields:
-- \`scope\`: 'app' | 'agent' | 'page'
-- \`target_slug\`: string (required when scope='page'; must match one of the candidate slugs provided); null otherwise.
-- \`content\`: a clean, concise statement of the rule in third-person imperative ("Always cite sources when giving facts." not "you should always cite sources when giving me facts"). 1–2 sentences max. Past-tense user phrasing should be reframed as standing instruction.
+Field semantics by operation type:
+- **insert:** \`scope\` ('app' | 'agent' | 'page'), \`content\` (clean third-person imperative). \`target_slug\` required when scope='page' and must match a candidate slug. Other fields null.
+- **update:** \`target_rule_id\` (the UUID of an existing rule in the user's current rules), \`new_content\`. Other fields null. Scope is preserved.
+- **delete:** \`target_rule_id\`. Other fields null.
+
+# Matching the user's verbal reference to a rule ID
+
+When the user references an existing rule for update or delete, you'll see the current rules in the input. Match the user's verbal reference ("my terseness rule", "the reading-list lookup rule") to the most semantically appropriate rule and emit its \`id\` as \`target_rule_id\`. If the reference is ambiguous between two rules or doesn't clearly match any, drop the operation rather than guess wrong.
+
+# Contradiction handling
+
+The Live Agent ALREADY handled the in-call contradiction-resolution conversation with the user — by the time you see this transcript, the user's chosen resolution is captured in their words. Your job is to extract the chosen resolution as the right operation:
+- User said "yes, replace it" / "actually let me rewrite that" → \`update\` on the existing rule.
+- User said "keep the broad one, add the more specific" → \`insert\` at narrower scope (existing rule stays untouched).
+- User said "forget the existing rule" → \`delete\`.
+- User added a contradicting rule without acknowledging the existing one → trust the user's directive as an \`insert\`; the read-time precedence (page > agent > app) handles the conflict.
 
 # Examples
 
-User says: "Hey from now on, always cite sources when you tell me something factual."
-→ \`{ scope: "app", content: "Always cite sources when stating factual information." }\`
+User says: "From now on always cite sources when stating facts."
+→ \`{ operations: [{ operation: "insert", scope: "app", content: "Always cite sources when stating factual information." }] }\`
 
-User says: "On my reading list page, whenever I add a book, please look up the author and the year."
-→ \`{ scope: "page", target_slug: "reading-list", content: "When adding a book to this list, look up the author and the publication year and include them on the new page." }\`
+User says: "Change my reading-list rule to also include the premise."
+(Existing rule with id="abc-123" content="When adding a book, look up author + year.")
+→ \`{ operations: [{ operation: "update", target_rule_id: "abc-123", new_content: "When adding a book, look up author, year, and a one-sentence premise." }] }\`
 
-User says: "When you do research for me, always include a one-line summary at the top."
-→ \`{ scope: "agent", content: "When producing research outputs, lead with a one-line summary at the top." }\`
+User says: "Forget about the terseness rule."
+(Existing rule with id="def-456" scope="agent" content="Default to terse responses.")
+→ \`{ operations: [{ operation: "delete", target_rule_id: "def-456" }] }\`
 
-User says: "Remind me to call mom this weekend."
-→ \`{ rules: [] }\` (one-off todo, not a recurring rule)
+User says: "Keep my agent-wide terseness, but on Consensus give me expansive explanations."
+(Existing agent-scope terseness rule remains untouched.)
+→ \`{ operations: [{ operation: "insert", scope: "page", target_slug: "consensus", content: "When discussing this project, prefer expansive explanations over the default terse register." }] }\`
 
-User says: "I just want to think out loud for a sec." (no rule content)
-→ \`{ rules: [] }\`
+User says: "Just take a note about that." (no rule content)
+→ \`{ operations: [] }\`
 
-Multiple distinct rules in one transcript → multiple entries in the rules array.
-
-Be conservative: when a directive is ambiguous between "one-off" and "recurring," prefer to skip rather than create a false-positive rule.`;
+Be conservative — when uncertain whether a directive is a rule operation vs a one-off action, prefer to skip.`;
 }
 
-function buildUserMessage(opts: SettingsSpecialistInput): string {
-  const transcriptText = opts.transcript
-    .map((t) => `[${t.role}] ${t.text}`)
-    .join('\n');
-  return `# Candidate page slugs (use these for scope='page' target_slug)
-${opts.candidatePageSlugs.length === 0 ? '(none)' : opts.candidatePageSlugs.map((s) => `- ${s}`).join('\n')}
+function buildUserMessage(
+  opts: SettingsSpecialistInput,
+  existingRules: ExistingRuleForFlash[],
+): string {
+  const transcriptText = opts.transcript.map((t) => `[${t.role}] ${t.text}`).join('\n');
+  const candidatesBlock =
+    opts.candidatePageSlugs.length === 0
+      ? '(none)'
+      : opts.candidatePageSlugs.map((s) => `- ${s}`).join('\n');
+  const rulesBlock =
+    existingRules.length === 0
+      ? '(none — user has no active rules yet)'
+      : existingRules
+          .map((r) => {
+            const scopeNote =
+              r.scope === 'page' && r.page_slug ? `page='${r.page_slug}'` : r.scope;
+            return `- id=${r.id} (${scopeNote}): ${r.content}`;
+          })
+          .join('\n');
+  return `# Candidate page slugs (use these for scope='page' target_slug on inserts)
+${candidatesBlock}
+
+# Current active rules (reference these by id for update / delete operations)
+${rulesBlock}
 
 # Transcript
 ${transcriptText}`;
 }
 
-// Resolve slugs → wiki_page_ids server-side. Filters to non-tombstoned,
-// non-archived user-scope pages. Returns a map keyed by slug.
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    operations: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          operation: { type: Type.STRING, enum: ['insert', 'update', 'delete'] },
+          scope: { type: Type.STRING, enum: ['app', 'agent', 'page'], nullable: true },
+          target_slug: { type: Type.STRING, nullable: true },
+          content: { type: Type.STRING, nullable: true },
+          target_rule_id: { type: Type.STRING, nullable: true },
+          new_content: { type: Type.STRING, nullable: true },
+        },
+        required: ['operation'],
+      },
+    },
+  },
+  required: ['operations'],
+};
+
+async function fetchExistingRules(
+  userId: string,
+  agentId: string,
+): Promise<ExistingRuleForFlash[]> {
+  // Pull every active rule the agent could be modifying:
+  //   - all app-scope rules for this user
+  //   - agent-scope rules tied to THIS agent (not other agents the user has)
+  //   - all page-scope rules for this user, joined with page slug
+  // Plugin-scope rules excluded (reserved enum value; not wired).
+  const rows = await db
+    .select({
+      id: userCustomRules.id,
+      scope: userCustomRules.scope,
+      agentId: userCustomRules.agentId,
+      wikiPageId: userCustomRules.wikiPageId,
+      pageSlug: wikiPages.slug,
+      content: userCustomRules.content,
+    })
+    .from(userCustomRules)
+    .leftJoin(wikiPages, eq(userCustomRules.wikiPageId, wikiPages.id))
+    .where(
+      and(
+        eq(userCustomRules.userId, userId),
+        eq(userCustomRules.isActive, true),
+      ),
+    );
+
+  const filtered: ExistingRuleForFlash[] = [];
+  for (const r of rows) {
+    // Skip agent-scope rules tied to OTHER agents (not addressable from this call).
+    if (r.scope === 'agent' && r.agentId !== agentId) continue;
+    // Skip plugin-scope (reserved; not wired in v0.4.0).
+    if (r.scope !== 'app' && r.scope !== 'agent' && r.scope !== 'page') continue;
+    filtered.push({
+      id: r.id,
+      scope: r.scope,
+      page_slug: r.scope === 'page' ? r.pageSlug : null,
+      content: r.content,
+    });
+  }
+  return filtered;
+}
+
 async function fetchSlugIdMap(
   userId: string,
   slugs: string[],
@@ -172,49 +300,41 @@ async function fetchSlugIdMap(
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
         isNull(wikiPages.archivedAt),
+        inArray(wikiPages.slug, slugs),
       ),
     );
-  const slugSet = new Set(slugs);
   const map = new Map<string, string>();
-  for (const r of rows) {
-    if (slugSet.has(r.slug)) map.set(r.slug, r.id);
-  }
+  for (const r of rows) map.set(r.slug, r.id);
   return map;
 }
-
-const RESPONSE_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    rules: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          scope: { type: Type.STRING, enum: ['app', 'agent', 'page'] },
-          target_slug: { type: Type.STRING, nullable: true },
-          content: { type: Type.STRING },
-        },
-        required: ['scope', 'content'],
-      },
-    },
-  },
-  required: ['rules'],
-};
 
 export async function runSettingsSpecialist(
   opts: SettingsSpecialistInput,
 ): Promise<SettingsSpecialistResult> {
   const startedAt = Date.now();
+  const emptyResult: SettingsSpecialistResult = {
+    rulesInserted: 0,
+    rulesUpdated: 0,
+    rulesDeleted: 0,
+    operationsDropped: 0,
+  };
 
   if (!detectsSettingsDirectivesHeuristic(opts.transcript)) {
-    return { rulesCreated: 0, rulesDropped: 0 };
+    return emptyResult;
   }
+
+  // Fetch existing rules in parallel with the inference call setup (small
+  // win; could parallelize further with the transcript scan above if it
+  // ever matters).
+  const existingRules = await fetchExistingRules(opts.userId, opts.agentId);
 
   let extracted: ExtractionResult;
   try {
     const resp = await getGeminiClient().models.generateContent({
       model: FLASH_MODEL,
-      contents: [{ role: 'user', parts: [{ text: buildUserMessage(opts) }] }],
+      contents: [
+        { role: 'user', parts: [{ text: buildUserMessage(opts, existingRules) }] },
+      ],
       config: {
         systemInstruction: { parts: [{ text: buildSystemPrompt() }] },
         abortSignal: AbortSignal.timeout(EXTRACTION_TIMEOUT_MS),
@@ -223,9 +343,6 @@ export async function runSettingsSpecialist(
       },
     });
 
-    // Best-effort usage recording. Same kind as enrichment-lookup
-    // ('tool_lookup') for now — the table-level analytics split happens
-    // later via event_kind/extras taxonomy if needed.
     void recordInferenceUsage({
       userId: opts.userId,
       agentId: opts.agentId,
@@ -240,15 +357,15 @@ export async function runSettingsSpecialist(
       );
     });
 
-    const text = resp.text ?? '{"rules":[]}';
+    const text = resp.text ?? '{"operations":[]}';
     try {
       extracted = JSON.parse(text) as ExtractionResult;
     } catch {
       logger.warn(
         { textLength: text.length, callTranscriptId: opts.callTranscriptId },
-        'settings-specialist: JSON parse failed; treating as no rules',
+        'settings-specialist: JSON parse failed; treating as no operations',
       );
-      return { rulesCreated: 0, rulesDropped: 0 };
+      return emptyResult;
     }
   } catch (err) {
     logger.warn(
@@ -259,117 +376,181 @@ export async function runSettingsSpecialist(
       },
       'settings-specialist: Flash extraction failed; ingestion continues',
     );
-    return { rulesCreated: 0, rulesDropped: 0 };
+    return emptyResult;
   }
 
-  if (!extracted.rules || extracted.rules.length === 0) {
+  if (!extracted.operations || extracted.operations.length === 0) {
     logger.info(
       { callTranscriptId: opts.callTranscriptId, totalMs: Date.now() - startedAt },
-      'settings-specialist: heuristic fired but Flash found no rules',
+      'settings-specialist: heuristic fired but Flash found no operations',
     );
-    return { rulesCreated: 0, rulesDropped: 0 };
+    return emptyResult;
   }
 
-  // Resolve page-scope target_slugs to wiki_page_ids. Drop rules whose
-  // target isn't in the resolved map — those are slugs Flash hallucinated
-  // or that aren't yet committed to the wiki (we don't try to look them
-  // up server-side; rule authoring requires the target to exist).
-  const pageSlugsNeeded = extracted.rules
-    .filter((r) => r.scope === 'page' && r.target_slug)
-    .map((r) => r.target_slug as string);
-  const pageSlugToId = await fetchSlugIdMap(opts.userId, pageSlugsNeeded);
-
-  const toInsert: Array<{
+  // Sort operations into insert / update / delete buckets, validating each
+  // operation's required fields. Operations missing their required fields
+  // drop with a warning.
+  const inserts: Array<{
     scope: 'app' | 'agent' | 'page';
     agentId: string | null;
     wikiPageId: string | null;
     content: string;
   }> = [];
+  const updates: Array<{ id: string; newContent: string }> = [];
+  const deletes: string[] = [];
   let dropped = 0;
-  for (const rule of extracted.rules) {
-    if (rule.scope === 'app') {
-      toInsert.push({
-        scope: 'app',
-        agentId: null,
-        wikiPageId: null,
-        content: rule.content,
-      });
-    } else if (rule.scope === 'agent') {
-      toInsert.push({
-        scope: 'agent',
-        agentId: opts.agentId,
-        wikiPageId: null,
-        content: rule.content,
-      });
-    } else if (rule.scope === 'page') {
-      const slug = rule.target_slug ?? '';
-      const wikiPageId = pageSlugToId.get(slug);
-      if (!wikiPageId) {
+
+  // For inserts at scope='page', collect slugs upfront and resolve in one query.
+  const pageSlugsNeeded = new Set<string>();
+  for (const op of extracted.operations) {
+    if (op.operation === 'insert' && op.scope === 'page' && op.target_slug) {
+      pageSlugsNeeded.add(op.target_slug);
+    }
+  }
+  const pageSlugToId = await fetchSlugIdMap(opts.userId, Array.from(pageSlugsNeeded));
+
+  // Existing rule IDs to validate update / delete target references.
+  const existingRuleIds = new Set(existingRules.map((r) => r.id));
+
+  for (const op of extracted.operations) {
+    if (op.operation === 'insert') {
+      if (!op.scope || !op.content) {
         logger.warn(
-          {
-            callTranscriptId: opts.callTranscriptId,
-            target_slug: slug,
-            ruleContent: rule.content,
-          },
-          'settings-specialist: page-scope rule target not in candidates — dropped',
+          { op, callTranscriptId: opts.callTranscriptId },
+          'settings-specialist: insert missing scope or content — dropped',
         );
         dropped++;
         continue;
       }
-      toInsert.push({
-        scope: 'page',
-        agentId: null,
-        wikiPageId,
-        content: rule.content,
-      });
-    } else {
-      logger.warn(
-        { scope: rule.scope, callTranscriptId: opts.callTranscriptId },
-        'settings-specialist: unknown scope — dropped',
-      );
-      dropped++;
+      if (op.scope === 'app') {
+        inserts.push({ scope: 'app', agentId: null, wikiPageId: null, content: op.content });
+      } else if (op.scope === 'agent') {
+        inserts.push({
+          scope: 'agent',
+          agentId: opts.agentId,
+          wikiPageId: null,
+          content: op.content,
+        });
+      } else if (op.scope === 'page') {
+        const slug = op.target_slug ?? '';
+        const wikiPageId = pageSlugToId.get(slug);
+        if (!wikiPageId) {
+          logger.warn(
+            { op, slug, callTranscriptId: opts.callTranscriptId },
+            'settings-specialist: insert page target not found — dropped',
+          );
+          dropped++;
+          continue;
+        }
+        inserts.push({ scope: 'page', agentId: null, wikiPageId, content: op.content });
+      } else {
+        logger.warn({ op }, 'settings-specialist: insert unknown scope — dropped');
+        dropped++;
+      }
+    } else if (op.operation === 'update') {
+      if (!op.target_rule_id || !op.new_content) {
+        logger.warn(
+          { op, callTranscriptId: opts.callTranscriptId },
+          'settings-specialist: update missing target_rule_id or new_content — dropped',
+        );
+        dropped++;
+        continue;
+      }
+      if (!existingRuleIds.has(op.target_rule_id)) {
+        logger.warn(
+          { op, callTranscriptId: opts.callTranscriptId },
+          'settings-specialist: update target_rule_id not in user rules — dropped',
+        );
+        dropped++;
+        continue;
+      }
+      updates.push({ id: op.target_rule_id, newContent: op.new_content });
+    } else if (op.operation === 'delete') {
+      if (!op.target_rule_id) {
+        logger.warn(
+          { op, callTranscriptId: opts.callTranscriptId },
+          'settings-specialist: delete missing target_rule_id — dropped',
+        );
+        dropped++;
+        continue;
+      }
+      if (!existingRuleIds.has(op.target_rule_id)) {
+        logger.warn(
+          { op, callTranscriptId: opts.callTranscriptId },
+          'settings-specialist: delete target_rule_id not in user rules — dropped',
+        );
+        dropped++;
+        continue;
+      }
+      deletes.push(op.target_rule_id);
     }
   }
 
-  if (toInsert.length === 0) {
+  if (inserts.length === 0 && updates.length === 0 && deletes.length === 0) {
     logger.info(
       { dropped, callTranscriptId: opts.callTranscriptId },
-      'settings-specialist: all extracted rules dropped; no inserts',
+      'settings-specialist: all operations dropped; nothing committed',
     );
-    return { rulesCreated: 0, rulesDropped: dropped };
+    return { ...emptyResult, operationsDropped: dropped };
   }
 
+  // Apply in one transaction. Order: deletes first (clears the field for
+  // contradicting rules), then updates, then inserts (so cross-scope
+  // restructures land coherently in a single commit).
   try {
-    await db.insert(userCustomRules).values(
-      toInsert.map((r) => ({
-        userId: opts.userId,
-        scope: r.scope,
-        agentId: r.agentId,
-        wikiPageId: r.wikiPageId,
-        content: r.content,
-        source: 'user_set' as const,
-      })),
-    );
+    await db.transaction(async (tx) => {
+      if (deletes.length > 0) {
+        await tx
+          .update(userCustomRules)
+          .set({ isActive: false, updatedAt: new Date() })
+          .where(inArray(userCustomRules.id, deletes));
+      }
+      for (const u of updates) {
+        await tx
+          .update(userCustomRules)
+          .set({ content: u.newContent, updatedAt: new Date() })
+          .where(eq(userCustomRules.id, u.id));
+      }
+      if (inserts.length > 0) {
+        await tx.insert(userCustomRules).values(
+          inserts.map((r) => ({
+            userId: opts.userId,
+            scope: r.scope,
+            agentId: r.agentId,
+            wikiPageId: r.wikiPageId,
+            content: r.content,
+            source: 'user_set' as const,
+          })),
+        );
+      }
+    });
   } catch (err) {
     logger.error(
       {
         err: err instanceof Error ? err.message : String(err),
-        rulesAttempted: toInsert.length,
+        inserts: inserts.length,
+        updates: updates.length,
+        deletes: deletes.length,
         callTranscriptId: opts.callTranscriptId,
       },
-      'settings-specialist: insert failed — rules NOT committed',
+      'settings-specialist: transaction failed — operations NOT committed',
     );
-    return { rulesCreated: 0, rulesDropped: dropped };
+    return { ...emptyResult, operationsDropped: dropped };
   }
 
+  const result: SettingsSpecialistResult = {
+    rulesInserted: inserts.length,
+    rulesUpdated: updates.length,
+    rulesDeleted: deletes.length,
+    operationsDropped: dropped,
+  };
   logger.info(
     {
       callTranscriptId: opts.callTranscriptId,
-      rulesCreated: toInsert.length,
-      rulesDropped: dropped,
+      ...result,
       totalMs: Date.now() - startedAt,
     },
     'settings-specialist: complete',
   );
-  return { rulesCreated: toInsert.length, rulesDropped: dropped };
+  return result;
 }

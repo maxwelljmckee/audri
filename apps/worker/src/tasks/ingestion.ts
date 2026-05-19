@@ -338,7 +338,7 @@ async function runUserScopePipeline(
       { err: err instanceof Error ? err.message : String(err), transcriptId: p.transcriptId },
       'settings-specialist: threw at top level (non-fatal to ingestion)',
     );
-    return { rulesCreated: 0, rulesDropped: 0 };
+    return { rulesInserted: 0, rulesUpdated: 0, rulesDeleted: 0, operationsDropped: 0 };
   });
 
   const flashRetrievalResult = await retrieveCandidates(transcript, wikiIndex);
@@ -368,14 +368,18 @@ async function runUserScopePipeline(
     log('flash dumped call — no fan-out', { reason: candidates.dump.reason });
     const settingsResult = await settingsSpecialistPromise;
     log('settings-specialist (post-dump)', { ...settingsResult });
-    return { wrote: settingsResult.rulesCreated > 0 };
+    const settingsWrote =
+      settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+    return { wrote: settingsWrote };
   }
 
   if (candidates.touched_pages.length === 0 && candidates.new_pages.length === 0) {
     log('noteworthiness gate failed — no fan-out');
     const settingsResult = await settingsSpecialistPromise;
     log('settings-specialist (post-no-fan-out)', { ...settingsResult });
-    return { wrote: settingsResult.rulesCreated > 0 };
+    const settingsWrote =
+      settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+    return { wrote: settingsWrote };
   }
 
   const touchedSlugs = candidates.touched_pages.map((tp) => tp.slug);
@@ -473,7 +477,9 @@ async function runUserScopePipeline(
       commitResult.sectionsMerged +
       commitResult.tasksCreated >
     0;
-  const wrote = wroteWiki || settingsResult.rulesCreated > 0;
+  const settingsWrote =
+    settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+  const wrote = wroteWiki || settingsWrote;
   return { wrote };
 }
 
