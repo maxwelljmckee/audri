@@ -179,12 +179,13 @@ Onboarding is moved to the END of v0.4.0, after all scope is finalized and exerc
 
 These are NOT punts — they're flagged for explicit follow-up discussion before implementation:
 
-### A. Scribe's user-facing surface (Option A vs B)
+### ~~A. Scribe's user-facing surface~~ — LOCKED 2026-05-19: Option B
 
-- **Option A**: Scribe is exposed as a named agent in the Agents tile alongside Audri. User sees Scribe as a first-class entity with its own knobs and settings.
-- **Option B**: Scribe is unnamed to the user; its knobs and settings live inside the Notes tile under "Notes settings." Internal naming only.
+**Decision:** Scribe stays an **internal name**; its knobs and settings surface inside **Notes Settings** (per-plugin settings cog), not as a first-class agent in the Agents tile.
 
-Trade-off: Option A treats the ingestion agent as a real collaborator (matches "agents" framing of the app); Option B reduces user cognitive load and keeps the agent inventory small. To be decided.
+**Reasoning:** exposing Scribe as a named agent would compound the user's learning curve and inflate the visible agent inventory before users have a strong mental model of what each agent does. Simplicity wins for the launch; the "Scribe as full persona" idea is deferred as a candidate A/B experiment for later, once users have a baseline relationship with Audri + (eventually) custom agents.
+
+**Implementation implication:** the Track D Agents tile work in v0.4.0 does NOT include a Scribe entry. Scribe's knob UI lands inside the Notes plugin's settings-cog drawer (Track B per-plugin settings cog → Notes-specific drawer contents).
 
 ### B. Full NL customization architecture
 
@@ -192,7 +193,7 @@ Question 6 from the workshop ("agent_notes migration story") and a clear view of
 
 ### C. Events sizing — one sprint or two
 
-Events end-to-end = ICS subscription ingestion + per-event entity model + linking events to existing wiki pages ("dinner with Alex" → Alex page) + UI surface + briefing/notification integration. Comparable in scope to the entire Todos plugin. Provisional plan is a second sprint dedicated to Events; verify when v0.4.0 mid-sprint planning lands.
+Events end-to-end = ICS subscription ingestion + per-event entity model + linking events to existing wiki pages ("dinner with Alex" → Alex page) + UI surface + briefing/notification integration. Comparable in scope to the entire Todos plugin. **Decision deferred to mid-sprint (2026-05-19):** revisit when we reach Track E in execution — Tracks A–D will inform whether Events fits inside v0.4.0 or warrants its own v0.4.1 carve-out.
 
 ### D. Pro fan-out fork into Notes + Task Dispatch (DEFERRED → backlog)
 
