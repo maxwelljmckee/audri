@@ -17,7 +17,6 @@ import {
   desc,
   eq,
   inArray,
-  isNotNull,
   isNull,
   or,
   sql,
@@ -34,10 +33,6 @@ import {
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
 const INCOMPLETE_CALL_LOOKBACK_HOURS = 24;
-// Cap on depth-2 children per top-level page in the structural snapshot.
-// Keeps token budget bounded as the user's wiki grows; deeper exploration
-// happens via Flash candidate retrieval at ingestion time, not at call start.
-const STRUCTURE_CHILDREN_PER_PARENT_LIMIT = 12;
 // Per-call cap on agent_open_items injected into the prompt. Composer reads
 // top-K pending for this persona, ranked by priority then recency. Saturation
 // guard — bumped/tuned once we have field signal on delivery feel. Stage 2
@@ -100,26 +95,22 @@ interface InflightTodo {
   dueDate: Date | null;
 }
 
-// Structural snapshot of the wiki — top-level pages + their immediate children
-// (depth 2). Powers the Live Agent's ability to reason about "where does this
-// new thing fit" — see specs/conversational-routing.md (Autonomy principle
-// extended to structural ambiguity) and the system-prompt's wiki-structure
-// section. Distinct from `recentPages` which surfaces *active* areas; this
-// surfaces *shape*.
+// Structural snapshot of the wiki — full recursive tree of every non-tombstoned,
+// non-archived user-scope page. Powers the Live Agent's ability to reason about
+// "where does this new thing fit" + reach for pages by slug directly without
+// having to search blindly. Distinct from `recentPages` which surfaces *active*
+// areas; this surfaces *shape*. Pre-2026-05-19 this was capped at depth 2
+// (top-level + immediate children); expanded to full depth after dogfood feedback
+// that Live Agent couldn't locate deeply-nested pages by name. **Scalability
+// tradeoff:** see `.claude/architecture/tradeoffs.md` § "Full wiki tree in Live
+// Agent preload" — fine at current user scale, revisit at ~500+ pages.
 interface WikiStructureNode {
   slug: string;
   title: string;
   type: string;
   agentAbstract: string;
   agentNotes: string | null;
-  children: Array<{
-    slug: string;
-    title: string;
-    type: string;
-    agentAbstract: string;
-    agentNotes: string | null;
-  }>;
-  childrenTruncated: boolean;
+  children: WikiStructureNode[];
 }
 
 interface PreloadData {
@@ -242,44 +233,24 @@ async function fetchPagesByPrefix(
 // keyed by parent id. Capped per-parent so wide categories (e.g. a
 // many-projects user) don't blow the token budget.
 async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> {
-  const tops = await db
+  // Single query for every live (non-tombstoned, non-archived) user-scope page.
+  // Tree assembly happens client-side from parent_page_id pointers. Was a
+  // 2-query depth-capped fetch pre-2026-05-19; expanded to full tree after
+  // dogfood revealed Live Agent couldn't locate deeply-nested pages by name.
+  // See `tradeoffs.md` § "Full wiki tree in Live Agent preload" for the
+  // scalability ceiling + revisit triggers.
+  const rows = await db
     .select({
       id: wikiPages.id,
-      slug: wikiPages.slug,
-      title: wikiPages.title,
-      type: wikiPages.type,
-      agentAbstract: wikiPages.agentAbstract,
-      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
-      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
-      // new read-path lands. See specs/customization-framework.md § LD11.
-      agentNotes: sql<string | null>`NULL`,
-    })
-    .from(wikiPages)
-    .where(
-      and(
-        eq(wikiPages.userId, userId),
-        eq(wikiPages.scope, 'user'),
-        isNull(wikiPages.tombstonedAt),
-        isNull(wikiPages.archivedAt),
-        isNull(wikiPages.parentPageId),
-      ),
-    )
-    .orderBy(wikiPages.slug);
-
-  if (tops.length === 0) return [];
-
-  const topIds = tops.map((t) => t.id);
-  const childRows = await db
-    .select({
-      slug: wikiPages.slug,
-      title: wikiPages.title,
-      type: wikiPages.type,
-      agentAbstract: wikiPages.agentAbstract,
-      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
-      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
-      // new read-path lands. See specs/customization-framework.md § LD11.
-      agentNotes: sql<string | null>`NULL`,
       parentPageId: wikiPages.parentPageId,
+      slug: wikiPages.slug,
+      title: wikiPages.title,
+      type: wikiPages.type,
+      agentAbstract: wikiPages.agentAbstract,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
     })
     .from(wikiPages)
     .where(
@@ -288,48 +259,42 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
         eq(wikiPages.scope, 'user'),
         isNull(wikiPages.tombstonedAt),
         isNull(wikiPages.archivedAt),
-        isNotNull(wikiPages.parentPageId),
-        inArray(wikiPages.parentPageId, topIds),
       ),
     )
     .orderBy(wikiPages.slug);
 
-  const childrenByParent = new Map<
-    string,
-    Array<{
-      slug: string;
-      title: string;
-      type: string;
-      agentAbstract: string;
-      agentNotes: string | null;
-    }>
-  >();
-  for (const c of childRows) {
-    if (!c.parentPageId) continue;
-    const list = childrenByParent.get(c.parentPageId) ?? [];
-    list.push({
-      slug: c.slug,
-      title: c.title,
-      type: c.type,
-      agentAbstract: c.agentAbstract,
-      agentNotes: c.agentNotes,
-    });
-    childrenByParent.set(c.parentPageId, list);
-  }
+  if (rows.length === 0) return [];
 
-  return tops.map((t) => {
-    const all = childrenByParent.get(t.id) ?? [];
-    const truncated = all.length > STRUCTURE_CHILDREN_PER_PARENT_LIMIT;
-    return {
-      slug: t.slug,
-      title: t.title,
-      type: t.type,
-      agentAbstract: t.agentAbstract,
-      agentNotes: t.agentNotes,
-      children: truncated ? all.slice(0, STRUCTURE_CHILDREN_PER_PARENT_LIMIT) : all,
-      childrenTruncated: truncated,
-    };
-  });
+  // Build a map of id → node, then link children via parent_page_id.
+  const nodeById = new Map<string, WikiStructureNode>();
+  for (const r of rows) {
+    nodeById.set(r.id, {
+      slug: r.slug,
+      title: r.title,
+      type: r.type,
+      agentAbstract: r.agentAbstract,
+      agentNotes: r.agentNotes,
+      children: [],
+    });
+  }
+  const tops: WikiStructureNode[] = [];
+  for (const r of rows) {
+    const node = nodeById.get(r.id);
+    if (!node) continue;
+    if (r.parentPageId) {
+      const parent = nodeById.get(r.parentPageId);
+      if (parent) {
+        parent.children.push(node);
+      } else {
+        // Orphan (parent tombstoned/archived) — treat as top-level so it
+        // doesn't disappear from the tree.
+        tops.push(node);
+      }
+    } else {
+      tops.push(node);
+    }
+  }
+  return tops;
 }
 
 async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
@@ -718,19 +683,21 @@ function renderOpenItems(items: OpenItem[]): string {
 }
 
 function renderWikiStructure(nodes: WikiStructureNode[]): string {
-  return nodes
-    .map((n) => {
-      const head = `- **${n.title}** \`${n.slug}\` (\`${n.type}\`) — ${n.agentAbstract}`;
-      const headNotes = n.agentNotes ? `\n  _conventions:_ ${n.agentNotes}` : '';
-      if (n.children.length === 0) return `${head}${headNotes}`;
-      const childLines = n.children.map((c) => {
-        const row = `  - ${c.title} \`${c.slug}\` (\`${c.type}\`) — ${c.agentAbstract}`;
-        return c.agentNotes ? `${row}\n    _conventions:_ ${c.agentNotes}` : row;
-      });
-      const more = n.childrenTruncated ? `  - …and more under \`${n.slug}\` (truncated)` : null;
-      return [`${head}${headNotes}`, ...childLines, ...(more ? [more] : [])].join('\n');
-    })
-    .join('\n');
+  // Recursive renderer: top-level pages get **bold** treatment + their
+  // agent_abstract; nested pages render as indented bullets with their
+  // agent_abstract too. Indentation is 2 spaces per depth level. Empty-
+  // children pages render as a single line. Full depth — no truncation.
+  function renderNode(node: WikiStructureNode, depth: number): string {
+    const indent = '  '.repeat(depth);
+    const head =
+      depth === 0
+        ? `- **${node.title}** \`${node.slug}\` (\`${node.type}\`) — ${node.agentAbstract}`
+        : `${indent}- ${node.title} \`${node.slug}\` (\`${node.type}\`) — ${node.agentAbstract}`;
+    const headNotes = node.agentNotes ? `\n${indent}  _conventions:_ ${node.agentNotes}` : '';
+    const childLines = node.children.map((c) => renderNode(c, depth + 1));
+    return [`${head}${headNotes}`, ...childLines].join('\n');
+  }
+  return nodes.map((n) => renderNode(n, 0)).join('\n');
 }
 
 function formatRelative(d: Date): string {
