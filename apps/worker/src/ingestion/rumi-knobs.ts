@@ -13,8 +13,7 @@ import { agents, and, db, eq, userAgentSettings } from '@audri/shared/db';
 import type { KnobSpec, KnobValueSpec } from '@audri/shared/knobs';
 import {
   resolveKnobValue,
-  RUMI_MODEL_INTELLIGENCE,
-  RUMI_MODEL_REASONING,
+  RUMI_INTELLIGENCE,
   RUMI_WRITING_STYLE,
 } from '@audri/shared/knobs';
 import type { IngestionTranscriptTurn } from './flash-candidate-retrieval.js';
@@ -35,11 +34,12 @@ export interface ResolvedRumiKnobs {
   // concrete Gemini model ID — 'adaptive' is collapsed to flash/pro
   // by the complexity classifier (see resolveRumiKnobs).
   effectiveModel: string;
-  // The raw model_intelligence choice (low/adaptive/high). Useful for
-  // telemetry — distinguishes "user chose Pro" from "adaptive picked Pro".
-  modelIntelligenceChoice: string;
+  // The raw intelligence choice (low/adaptive/high). Useful for
+  // telemetry — distinguishes "user chose High" from "adaptive picked High".
+  intelligenceChoice: string;
   // For api_config knobs that compose into the Gemini call config.
-  // Merged from each api_config knob's resolved value.
+  // Merged from each api_config knob's resolved value. thinking_config
+  // is stripped when effectiveModel is Flash (Flash has no reasoning_effort).
   apiConfig: Record<string, unknown>;
   // The writing_style prompt injection text. Appended to Pro fan-out's
   // system prompt at the Behavioral layer position. Empty string when
@@ -120,54 +120,54 @@ export async function resolveRumiKnobs(
     );
   }
 
-  // Resolve each knob (override → spec default).
+  // Resolve each user-facing knob (override → spec default).
   const writingStyleVal = resolveKnobValue(RUMI_WRITING_STYLE, overrides);
-  const modelIntelligenceVal = resolveKnobValue(RUMI_MODEL_INTELLIGENCE, overrides);
-  const modelReasoningVal = resolveKnobValue(RUMI_MODEL_REASONING, overrides);
+  const intelligenceVal = resolveKnobValue(RUMI_INTELLIGENCE, overrides);
 
-  // Adaptive resolution: if user chose 'adaptive', run the complexity
-  // classifier to pick Flash or Pro. Telemetry: log the classifier
-  // signal + decision for every call (including non-adaptive — useful
-  // for tuning if user ever flips to adaptive).
-  let effectiveModel: string;
+  // Adaptive resolution: when the intelligence knob's api_config.model is
+  // the 'adaptive' sentinel, run the complexity classifier to pick Flash
+  // or Pro. Otherwise use the declared model directly. Telemetry: log the
+  // classifier signal + decision for every call (including non-adaptive —
+  // useful for tuning when users flip back to adaptive).
   const complexity = classifyComplexity(opts.transcript, opts.candidateCount);
-  if (modelIntelligenceVal.value === 'adaptive') {
-    effectiveModel =
-      complexity === 'complex' ? 'gemini-3.1-pro-preview' : 'gemini-2.5-flash';
-  } else {
-    // Non-adaptive: use the api_config.model from the resolved value directly.
-    effectiveModel =
-      ((modelIntelligenceVal.api_config?.model as string | undefined) ??
-        'gemini-3.1-pro-preview');
-  }
+  const declaredModel = (intelligenceVal.api_config?.model as string | undefined) ?? '';
+  const effectiveModel: string = (() => {
+    if (declaredModel === 'adaptive') {
+      return complexity === 'complex' ? 'gemini-3.1-pro-preview' : 'gemini-2.5-flash';
+    }
+    return declaredModel || 'gemini-3.1-pro-preview';
+  })();
   logger.info(
     {
       userId: opts.userId,
-      modelIntelligenceChoice: modelIntelligenceVal.value,
+      intelligenceChoice: intelligenceVal.value,
       complexity,
       effectiveModel,
       writingStyleChoice: writingStyleVal.value,
-      reasoningChoice: modelReasoningVal.value,
     },
     'rumi-knobs: resolved',
   );
 
-  // Merge api_config from intelligence + reasoning knobs.
-  // Flash has no reasoning_effort param — when effectiveModel is Flash,
-  // strip thinking_config from the merged api_config.
-  // Flash has no reasoning_effort param — strip thinking_config when
-  // running on Flash. Destructure-and-rebuild instead of `delete` (Biome
-  // perf rule).
+  // Pull thinking_config from the intelligence knob's api_config (the
+  // combined knob carries both `model` and `thinking_config`). Drop the
+  // `model` key from the merged config — that's surfaced separately via
+  // `effectiveModel` so the caller can pass it as the top-level model
+  // arg to generateContent. Also strip `thinking_config` when running on
+  // Flash (no reasoning_effort param). Destructure rather than `delete`
+  // (Biome perf rule).
   const apiConfig: Record<string, unknown> = (() => {
-    const reasoningCfg = modelReasoningVal.api_config ?? {};
-    if (effectiveModel !== 'gemini-2.5-flash') return { ...reasoningCfg };
-    const { thinking_config: _ignored, ...rest } = reasoningCfg as Record<string, unknown>;
+    const cfg = intelligenceVal.api_config ?? {};
+    if (effectiveModel !== 'gemini-2.5-flash') {
+      const { model: _m, ...rest } = cfg as Record<string, unknown>;
+      return rest;
+    }
+    const { model: _m, thinking_config: _tc, ...rest } = cfg as Record<string, unknown>;
     return rest;
   })();
 
   return {
     effectiveModel,
-    modelIntelligenceChoice: modelIntelligenceVal.value as string,
+    intelligenceChoice: intelligenceVal.value as string,
     apiConfig,
     writingStylePromptInjection: writingStyleVal.prompt_injection ?? '',
     writingStyleChoice: writingStyleVal.value as string,

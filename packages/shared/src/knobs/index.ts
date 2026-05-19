@@ -4,9 +4,4 @@
 
 export type { AgentType, KnobSpec, KnobValueSpec } from './spec.js';
 export { resolveKnobValue, validateKnobSpec } from './spec.js';
-export {
-  RUMI_KNOBS,
-  RUMI_MODEL_INTELLIGENCE,
-  RUMI_MODEL_REASONING,
-  RUMI_WRITING_STYLE,
-} from './rumi.js';
+export { RUMI_INTELLIGENCE, RUMI_KNOBS, RUMI_WRITING_STYLE } from './rumi.js';
