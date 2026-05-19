@@ -101,17 +101,21 @@ The layering resolves the storage tension surfaced earlier in this session: knob
 
 ### Locked decisions
 
-#### 1. Knob storage shape — global default with user override
+#### 1. Knob storage shape — global default with user override; agent-scope only
 
 Knobs ship with a global default. Users override per their preference. Storage shape: per-agent JSONB on agents (defaults) + a `user_agent_settings` table (overrides) — exact schema deferred to implementation, but the conceptual contract is fixed.
 
+**Scope-narrowing (locked 2026-05-19):** knobs are **agent-scope only**. App-level and page-level customization is handled exclusively by `user_custom_rules` (see § NL customization architecture below). Cross-scope knob composition would have required conflict resolution + scope-templated mutator endpoints + multi-source knob fetches at every inference site; the architectural simplification is large and the lost capability is minimal — every app/page knob candidate we considered (preferred timezone, page-private flag, etc.) is better-served by `user_settings`, an entity column, or an NL rule.
+
+**Knobs reference agent TYPE, not agent name or ID.** New `agents.type` enum column (`'live' | 'ingestion' | ...`); KnobSpec `applies_to: AgentType[]` references the type. The user can rename their agent ("Audri" → "Steve") and the knob still applies because it's keyed to the type, not the name. Future custom-agent feature follows the same pattern.
+
 **Why:** clean defaults mean we never have a user with an empty-state agent. Overrides mean any user can customize without our codebase changing. Per-user-without-defaults would have invited the "what does this knob do when unset?" mess at every inference site.
 
-#### 2. Agents in scope for v0.4.0 knobs
+#### 2. Agent types in scope for v0.4.0 knobs
 
-- **Audri (Live Agent)** — knobs on conversational style, verbosity, retrieval-eagerness.
-- **Scribe (Ingestion Agent)** — knobs on output style (faithful / concise / embellished / embellished+context). Builds on the `style_knob_backlog` memory + today's work on agent_notes.
-- **Dreams** — no general "agent power" knob, because reasoning depth is already structurally tiered as Light / REM / Deep. Knobs that *do* apply (e.g. proposal-frequency, intervention-aggression) are in scope.
+- **`type='live'` (Audri + future Live Agents)** — knobs on conversational style, verbosity, retrieval-eagerness, reasoning depth (mirrors Gemini Live API `reasoning_effort` config).
+- **`type='ingestion'` (Scribe + future ingestion agents)** — knobs on output style (concise / faithful / structured / embellished). Builds on `project_style_knob_backlog` + agent_notes work; replaces today's hardcoded ingestion behavior.
+- **Dreams** — no general "agent power" knob (reasoning depth is structurally tiered as Light / REM / Deep). Future knobs (proposal-frequency, intervention-aggression) — out of v0.4.0 scope.
 
 #### 3. NL → knob distillation drives the proactive loop
 
@@ -242,14 +246,11 @@ Settings detection runs as a **pre-Pro helper in parallel** with Pro fan-out (sa
 
 For mixed transcripts on the standard path: settings specialist commits **out of band** — independent transaction, parallel write, no shared atomicity with Pro's commit. Different tables, no FK dependency. Worst-case failure mode (one path commits, the other doesn't) is recoverable by the user re-stating in the next call; the verbal-confirmation loop in §4 means the user already knows what they asked for.
 
-#### 7. Layered App Map — capabilities for Live Agent, capabilities + endpoints for ingestion
+#### 7. Single App Map — no layered rendering
 
-Plugin registry is the SOT. Two projection views:
+Plugin registry is the SOT. **One App Map** generated from it; both Live Agent and ingestion specialists consume the same map. The ingestion-side fields (`mutator_endpoint`, `api_config` per value) add ~3 lines per knob — not enough to warrant two rendering layers. Live Agent's prompt instructs it to ignore the backend-config fields it doesn't need.
 
-- **Live Agent view:** capability descriptions, knob enumeration (name + values + description), active rules summary. No write endpoints — Live Agent doesn't need them.
-- **Ingestion view (Pro + specialists):** capability descriptions + knob enumeration + write endpoints (API controller mappings). The settings specialist uses this view to know where to write each kind of directive.
-
-Both views generate from the same plugin registry data — no parallel SOT.
+**Updated from earlier draft (2026-05-19):** initial design called for two views (capabilities-only for Live, capabilities+endpoints for ingestion). Concrete KnobSpec examples revealed the field overlap is dominant; the extra fields don't justify duplicated rendering pipelines.
 
 #### 8. Page rule join + scoped fetches
 
@@ -283,24 +284,72 @@ Non-AI preferences (mic sensitivity, future theme picker, notification toggles) 
 
 UI prefs extend the existing **`user_settings` table** (already used for `onboarding_complete`, etc.) for cloud-synced values, or live in AsyncStorage for genuinely ephemeral ones (last-viewed timestamps, etc.). No new `user_preferences` table.
 
-#### 11. agent_notes column scrapped + re-dogfooded
+#### 11. agent_notes column scrapped + re-dogfooded; Scribe becomes a real agent row
 
-v0.3.0 shipped `wiki_pages.agent_notes` 2026-05-18 as the page-scoped NL substrate prototype. Under the new architecture it's superseded. **Migration plan (no data preservation):**
+Three coupled changes:
 
-1. Add `user_custom_rules` table + RLS + realtime publication.
-2. Drop `wiki_pages.agent_notes` column.
-3. Update `apps/worker/src/ingestion/enrichment-lookup.ts` to scan `user_custom_rules WHERE scope='page' AND wiki_page_id=? AND is_active=true` for the triggering rule on the target page.
-4. Update Pro fan-out read site (currently reads `agent_notes` directly from page row) to consume the joined-in page rules.
-5. Update Live Agent `fetch_page` + preload to read from new table.
-6. Re-run the book-reading-list dogfood flow (yesterday's test case) against the new path.
+**A. Drop `wiki_pages.agent_notes` (no data preservation).** v0.3.0 shipped this column 2026-05-18 as the page-scoped NL substrate prototype. Under the new architecture it's superseded by `user_custom_rules` scope='page'. Blast radius is one user; clobbering the day-old data is cheap and avoids designing a one-shot migration.
 
-Blast radius is one user (Max); clobbering the day-old data is cheap and avoids designing a one-shot migration.
+**B. Add `agents.type` enum column.** New `agent_type` enum (`'live' | 'ingestion'` initially; extends later as `dream`, `todo`, etc. land). Column is NOT NULL after backfill. Existing default-Assistant rows backfill to `type='live'`.
+
+**C. Seed Scribe (`type='ingestion'`) agent row per user.** New rows seeded at signup; backfill migration creates one for the existing user. Internal name `'Scribe'` (placeholder — final naming pending; could be Nemo, Penna, or stay Scribe). The row exists as substrate for: (a) `user_agent_settings` knob storage keyed to this `agent_id`; (b) page-scoped + agent-scoped `user_custom_rules` rows pointing at this row when Scribe-specific. Per Open Question A → Option B, the row does NOT surface in the Agents tile UI.
+
+**Full migration sequence:**
+
+1. Add `agent_type` enum + `agents.type` column (NOT NULL default backfilled).
+2. Backfill existing Assistant rows → `type='live'`.
+3. Seed an `type='ingestion'` agent row per existing user (single user — Max).
+4. Update signup flow to seed both `live` (Audri) and `ingestion` (Scribe) agent rows on user creation.
+5. Add `user_custom_rules` table + RLS + realtime publication.
+6. Add `user_agent_settings` table (knob overrides) + RLS.
+7. Drop `wiki_pages.agent_notes` column.
+8. Update `apps/worker/src/ingestion/enrichment-lookup.ts` to scan `user_custom_rules WHERE scope='page' AND wiki_page_id=? AND is_active=true`.
+9. Update Pro fan-out read site to consume joined-in page rules + fetched app/agent rules (where `agent_id` = the call's ingestion agent, found via `kind='ingestion'`).
+10. Update Live Agent `fetch_page` + preload to read from new table.
+11. Re-run the book-reading-list dogfood flow (yesterday's test case) against the new path.
+
+**Ingestion-prompt-storage decision deferred.** Today the ingestion prompt is hardcoded in `pro-fan-out.ts`. With Scribe as an agent row, an argument exists for moving the prompt into `agents.persona_prompt`. **Deferred to the Track A prompt decomposition work** — the prompt-decomposition seam (layer naming) will determine where Scribe's prompt content lives. For v0.4.0 the row exists for knob/rule binding; the prompt stays where it lives today.
+
+### Locked KnobSpec v2 shape
+
+Refined through example-driven workshop 2026-05-19 (Scribe Writing Style + Audri Reasoning Depth examples). For v0.4.0:
+
+```typescript
+type KnobSpec = {
+  name: string;                              // snake_case identifier
+  display_name: string;                      // UI label
+  description: string;                        // user-facing explanation
+  applies_to: AgentType[];                    // agent types (e.g., ['live'], ['ingestion'])
+  type: 'enum' | 'boolean';                   // v0.4.0: enum + boolean only; number/string deferred
+  kind: 'prompt' | 'api_config';              // how the value is consumed downstream
+  values: KnobValueSpec[];                    // per-value content
+  default: string | boolean;
+  mutator_endpoint: string;                   // PUT endpoint template with :agent_id placeholder
+  user_visible: boolean;                      // hide internal-only knobs from settings UI
+};
+
+type KnobValueSpec = {
+  value: string | boolean;
+  display_name: string;
+  description: string;
+  match_hints?: string[];                     // example user phrases that map to this value (for Live Agent fuzzy match)
+  prompt_injection?: string;                  // required when knob.kind === 'prompt'
+  api_config?: Record<string, unknown>;       // required when knob.kind === 'api_config'
+};
+```
+
+**Validation requirement (implementation):** runtime + schema-level validator enforces `kind` → value-shape coherence (prompt knobs must have `prompt_injection` on every value; api_config knobs must have `api_config`). A misconfigured knob silently no-ops without this.
+
+**Number + string types deferred.** v0.4.0 ships enum + boolean only. Number knobs add when a concrete use case appears (likely candidates: call duration soft-cap, REM recency window — see § 1 LD2 above). String knobs are deliberately out — free text belongs in `user_custom_rules`, not knobs (boundary: structured = knob; expressive = rule).
+
+**Multi-value knobs (multi-enum) deferred.** v0.4.0 prefers multiple booleans over multi-enum types for the rare cases where multi-select makes sense. Promote to multi-enum when the UI cost feels real.
 
 ### Held for dedicated workshop passes
 
-- **KnobSpec shape in plugin registry.** What does a knob declaration look like? Pending workshop.
-- **Settings specialist prompt.** Drafted at implementation time; prompt-decomposition seam from Track A determines layer boundaries.
-- **App Map layered rendering format.** JSON for ingestion view (specialist consumes structured), prose for Live Agent view (LLM consumes natural language). Concrete shapes drafted at implementation time.
+- **Specific knob enumerations** for `live` and `ingestion` agent types — drafted at implementation time once the prompt-decomposition seam lands.
+- **Settings specialist prompt** — drafted at implementation time.
+- **App Map rendering format** — concrete JSON shape drafted at implementation time.
+- **Final internal name for the ingestion agent** — Scribe / Nemo / Penna / other. Cosmetic; lands as a one-line change in the seed migration.
 
 ---
 
