@@ -1006,11 +1006,13 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                 parent_slug: { type: Type.STRING, nullable: true },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
-                // Page-level behavioral conventions for future Pro runs.
-                // Set only when transcript carries a convention-setting
-                // directive ("from now on, X = Y on this page"). Markdown
-                // allowed. See prompt §"Wiki ontology" + Rule 2.
-                agent_notes: { type: Type.STRING, nullable: true },
+                // (was `agent_notes` here — removed v0.4.0; settings specialist
+                // owns convention/rule capture into user_custom_rules now.
+                // Per `feedback_schema_beats_prompt` memory: enforcement at
+                // the schema layer prevents Pro from silently re-emitting
+                // captures via prompt-text leftovers. The Pro prose still
+                // mentions agent_notes in places — that prose is dead and
+                // gets cleaned up in a follow-up pass.)
                 // Only meaningful for type='todo'. Optional wiki slug the todo
                 // associates with (project, goal sub-page, person, concept).
                 // Omit unless transcript explicitly directs association.
@@ -1065,10 +1067,8 @@ export async function runFanOut(input: ProFanOutInput): Promise<RunFanOutReturn>
                 slug: { type: Type.STRING },
                 agent_abstract: { type: Type.STRING },
                 abstract: { type: Type.STRING, nullable: true },
-                // Replaces the page's existing agent_notes verbatim when
-                // present. Omit when no convention update intended (the
-                // existing notes are preserved).
-                agent_notes: { type: Type.STRING, nullable: true },
+                // (was `agent_notes` here — removed v0.4.0; see PageCreate
+                // schema comment above.)
                 // parent_slug omitted from required — three-state field
                 // (absent = no change, null = top-level, string = move).
                 parent_slug: { type: Type.STRING, nullable: true },

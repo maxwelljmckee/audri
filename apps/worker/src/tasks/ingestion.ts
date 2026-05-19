@@ -36,6 +36,7 @@ import {
   retrieveCandidates,
 } from '../ingestion/flash-candidate-retrieval.js';
 import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
+import { runSettingsSpecialist } from '../ingestion/settings-specialist.js';
 import { classifyTranscript } from '../ingestion/traffic-director.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
 import { logger } from '../logger.js';
@@ -319,6 +320,27 @@ async function runUserScopePipeline(
   const wikiIndex = await fetchUserWikiIndex(p.userId);
   log(`wiki index size = ${wikiIndex.length}`);
 
+  // Settings specialist runs in parallel with Flash candidate retrieval +
+  // Pro fan-out. Captures user customization directives ("from now on, X
+  // = Y") into user_custom_rules. Independent of Pro's commit path —
+  // separate transaction, separate write target (user_custom_rules vs
+  // wiki_sections). Fires regardless of whether Flash dumps the call:
+  // settings-only calls ("from now on, always cite sources" → hang up)
+  // still capture their rule. See specs/customization-framework.md § 5/6.
+  const settingsSpecialistPromise = runSettingsSpecialist({
+    userId: p.userId,
+    agentId: p.agentId,
+    callTranscriptId: p.transcriptId,
+    transcript,
+    candidatePageSlugs: wikiIndex.map((e) => e.slug),
+  }).catch((err) => {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), transcriptId: p.transcriptId },
+      'settings-specialist: threw at top level (non-fatal to ingestion)',
+    );
+    return { rulesCreated: 0, rulesDropped: 0 };
+  });
+
   const flashRetrievalResult = await retrieveCandidates(transcript, wikiIndex);
   const candidates = flashRetrievalResult.candidates;
   // Best-effort usage row for Flash candidate retrieval. Fires whether or
@@ -339,15 +361,21 @@ async function runUserScopePipeline(
   // Explicit dump from Flash — Flash decided the call is unsubstantive.
   // Skip Pro fan-out + commit. Transcript stays on call_transcripts;
   // nothing accretes onto the wiki. See the "Dumping a call" section of
-  // flash-candidate-retrieval.ts's prompt for the bar.
+  // flash-candidate-retrieval.ts's prompt for the bar. Settings specialist
+  // continues to run in the background — settings-only calls still capture
+  // their rules even when Flash dumps the call.
   if (candidates.dump) {
     log('flash dumped call — no fan-out', { reason: candidates.dump.reason });
-    return { wrote: false };
+    const settingsResult = await settingsSpecialistPromise;
+    log('settings-specialist (post-dump)', { ...settingsResult });
+    return { wrote: settingsResult.rulesCreated > 0 };
   }
 
   if (candidates.touched_pages.length === 0 && candidates.new_pages.length === 0) {
     log('noteworthiness gate failed — no fan-out');
-    return { wrote: false };
+    const settingsResult = await settingsSpecialistPromise;
+    log('settings-specialist (post-no-fan-out)', { ...settingsResult });
+    return { wrote: settingsResult.rulesCreated > 0 };
   }
 
   const touchedSlugs = candidates.touched_pages.map((tp) => tp.slug);
@@ -426,10 +454,17 @@ async function runUserScopePipeline(
   });
   log('user-scope commit complete', { ...commitResult });
 
+  // Await settings specialist before the final write-decision. Captures
+  // a settings-only contribution into `wrote` so a call that only set a
+  // rule still marks ingestion succeeded (vs zero_claims).
+  const settingsResult = await settingsSpecialistPromise;
+  log('settings-specialist complete', { ...settingsResult });
+
   // "Wrote" means the commit produced at least one real write — page,
-  // section, or task. Tombstones alone don't qualify (they're cleanup, not
-  // capture). Drives the zero_claims status decision in the caller.
-  const wrote =
+  // section, task, OR custom rule. Tombstones alone don't qualify
+  // (they're cleanup, not capture). Drives the zero_claims status
+  // decision in the caller.
+  const wroteWiki =
     commitResult.pagesCreated +
       commitResult.pagesUpdated +
       commitResult.pagesMerged +
@@ -438,6 +473,7 @@ async function runUserScopePipeline(
       commitResult.sectionsMerged +
       commitResult.tasksCreated >
     0;
+  const wrote = wroteWiki || settingsResult.rulesCreated > 0;
   return { wrote };
 }
 
