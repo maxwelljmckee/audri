@@ -121,7 +121,10 @@ export async function fetchPage(userId: string, slug: string): Promise<FetchPage
       title: wikiPages.title,
       type: wikiPages.type,
       abstract: wikiPages.abstract,
-      agentNotes: wikiPages.agentNotes,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
     })
     .from(wikiPages)
     .where(

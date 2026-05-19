@@ -11,6 +11,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { authUsers } from './_auth.js';
+import { agentTypeEnum } from './enums.js';
 
 // `root_page_id` references wiki_pages but the FK is added in the hand-edited
 // migration as DEFERRABLE INITIALLY DEFERRED to break the circular FK
@@ -23,6 +24,12 @@ export const agents = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => authUsers.id, { onDelete: 'cascade' }),
+    // Immutable classification of the agent kind ('live' = call-time
+    // conversational agent like Audri; 'ingestion' = post-call notes-writing
+    // agent like Rumi; future kinds — 'dream', 'todo', etc.). Knob declarations
+    // reference this column, NOT the mutable `name` field, so renaming an
+    // agent doesn't break knob bindings. Added v0.4.0.
+    type: agentTypeEnum('type').notNull(),
     slug: text('slug').notNull(),
     name: text('name').notNull(),
     voice: text('voice').notNull(),
@@ -36,6 +43,7 @@ export const agents = pgTable(
   (t) => ({
     userSlugUnique: uniqueIndex('agents_user_slug_idx').on(t.userId, t.slug),
     userDefaultIdx: index('agents_user_default_idx').on(t.userId, t.isDefault),
+    userTypeIdx: index('agents_user_type_idx').on(t.userId, t.type),
   }),
 );
 

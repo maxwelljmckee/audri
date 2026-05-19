@@ -96,7 +96,10 @@ export async function fetchCandidatePages(
       : null,
     agent_abstract: p.agentAbstract,
     abstract: p.abstract,
-    agent_notes: p.agentNotes,
+    // TODO(v0.4.0): replace with user_custom_rules join (scope='page'). The
+    // wiki_pages.agent_notes column was dropped 2026-05-19; stubbed to null
+    // until the new read-path lands. See specs/customization-framework.md § LD11.
+    agent_notes: null,
     sections: sectionsByPage.get(p.id) ?? [],
   }));
 }

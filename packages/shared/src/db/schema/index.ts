@@ -2,6 +2,7 @@ export * from './enums.js';
 export * from './identity.js';
 export * from './wiki.js';
 export * from './wiki-junctions.js';
+export * from './customization.js';
 export * from './calls.js';
 export * from './tasks.js';
 export * from './claims.js';

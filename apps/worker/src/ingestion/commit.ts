@@ -299,10 +299,12 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
           title: create.title,
           agentAbstract: create.agent_abstract,
           abstract: create.abstract ?? null,
-          // Optional page-level conventions. Set only when transcript
-          // carries a convention-setting directive on this new page.
-          // See pro-fan-out.ts §"Convention-setting directives".
-          agentNotes: create.agent_notes ?? null,
+          // TODO(v0.4.0): page-level conventions now land in user_custom_rules
+          // (scope='page'). The agent_notes column was dropped 2026-05-19; Pro
+          // may still emit the field (responseSchema unchanged this pass), but
+          // we no longer write it. Capture-to-rules wiring lands in the
+          // settings-specialist follow-up. See specs/customization-framework.md
+          // § LD11.
         })
         .onConflictDoNothing({
           target: [wikiPages.userId, wikiPages.scope, wikiPages.slug],
@@ -632,16 +634,16 @@ export async function commitFanOut(input: CommitInput): Promise<CommitResult> {
       }
 
       // Update page metadata (agent_abstract, abstract regenerated; parent
-      // only when move was directed AND target resolved). agent_notes is
-      // OMITTED-aware: when absent from Pro's update, leave existing notes
-      // untouched; when present (including empty string to clear), replace
-      // wholesale.
+      // only when move was directed AND target resolved).
+      // TODO(v0.4.0): convention-setting captures (formerly agent_notes
+      // writes here) now flow through the settings-specialist into
+      // user_custom_rules. Pro may still emit agent_notes in its update
+      // payload — we ignore it. See specs/customization-framework.md § LD11.
       await tx
         .update(wikiPages)
         .set({
           agentAbstract: update.agent_abstract,
           abstract: update.abstract ?? null,
-          ...(update.agent_notes !== undefined ? { agentNotes: update.agent_notes } : {}),
           ...(movePatch ?? {}),
         })
         .where(eq(wikiPages.id, candidate.id));

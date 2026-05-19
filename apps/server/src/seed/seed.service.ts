@@ -139,12 +139,32 @@ export class SeedService {
       await tx.insert(agents).values({
         id: agentId,
         userId,
+        type: 'live',
         slug: ASSISTANT_AGENT.slug,
         name: ASSISTANT_AGENT.name,
         voice: ASSISTANT_AGENT.voice,
         personaPrompt: ASSISTANT_AGENT.personaPrompt,
         rootPageId: pageIds[agentRootIdx] as string,
         isDefault: true,
+      });
+
+      // Seed Rumi — the ingestion agent. Hidden from the Agents tile (per
+      // specs/customization-framework.md Open Question A → Option B); the
+      // row exists as substrate for knob binding (user_agent_settings) and
+      // agent-scoped user_custom_rules. The operating prompt currently lives
+      // in apps/worker/src/ingestion/pro-fan-out.ts; the persona_prompt
+      // field here is a placeholder reserved for the prompt-decomposition
+      // refactor. Voice is set to a placeholder ('aoede') — ingestion agents
+      // never play TTS so the value is unread at runtime.
+      await tx.insert(agents).values({
+        userId,
+        type: 'ingestion',
+        slug: 'rumi',
+        name: 'Rumi',
+        voice: 'aoede',
+        personaPrompt:
+          'You are Rumi, the ingestion agent. You translate user voice notes into wiki content. Your operating prompt lives in apps/worker/src/ingestion/pro-fan-out.ts; this field is reserved for future per-user persona customization (see specs/customization-framework.md).',
+        isDefault: false,
       });
 
       await tx.insert(wikiPages).values(allPages);

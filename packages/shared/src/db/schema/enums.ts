@@ -2,6 +2,36 @@ import { pgEnum } from 'drizzle-orm/pg-core';
 
 export const wikiScopeEnum = pgEnum('wiki_scope', ['user', 'agent']);
 
+// Agent type — immutable classification, distinct from the mutable `name`
+// column. Knob declarations (KnobSpec.applies_to in plugin registry) reference
+// the TYPE, not the name or id, so renaming an agent ("Audri" → "Steve")
+// doesn't break knob bindings. New types added here as new agent kinds land
+// (dream, todo specialist, events specialist, etc.). Added v0.4.0 customization
+// framework. See specs/customization-framework.md §1 LD1.
+export const agentTypeEnum = pgEnum('agent_type', ['live', 'ingestion']);
+
+// Scope of a `user_custom_rules` row. Determines which inference sites read
+// the rule + which FK is required. 'plugin' is reserved as a forward-compat
+// value (not wired in v0.4.0). See specs/customization-framework.md
+// § "NL customization architecture" LD2.
+export const customRuleScopeEnum = pgEnum('custom_rule_scope', [
+  'app',
+  'agent',
+  'page',
+  'plugin',
+]);
+
+// Authorship origin of a `user_custom_rules` row. 'user_set' = directly
+// captured from a user directive (verbal via Live Agent → ingestion
+// specialist, or future direct-UI write). 'dreams_proposed' = distilled
+// from a Dream proposal that the user accepted; FK to the source dream
+// preserved in `dream_id`. See specs/customization-framework.md
+// § "NL customization architecture" LD1 + LD3.
+export const customRuleSourceEnum = pgEnum('custom_rule_source', [
+  'user_set',
+  'dreams_proposed',
+]);
+
 export const pageTypeEnum = pgEnum('page_type', [
   'person',
   'concept',

@@ -181,7 +181,10 @@ async function fetchPagesByPrefix(
       title: wikiPages.title,
       agentAbstract: wikiPages.agentAbstract,
       abstract: wikiPages.abstract,
-      agentNotes: wikiPages.agentNotes,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
     })
     .from(wikiPages)
     .where(
@@ -246,7 +249,10 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: wikiPages.title,
       type: wikiPages.type,
       agentAbstract: wikiPages.agentAbstract,
-      agentNotes: wikiPages.agentNotes,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
     })
     .from(wikiPages)
     .where(
@@ -269,7 +275,10 @@ async function fetchWikiStructure(userId: string): Promise<WikiStructureNode[]> 
       title: wikiPages.title,
       type: wikiPages.type,
       agentAbstract: wikiPages.agentAbstract,
-      agentNotes: wikiPages.agentNotes,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
       parentPageId: wikiPages.parentPageId,
     })
     .from(wikiPages)
@@ -331,7 +340,10 @@ async function fetchRecentPages(userId: string): Promise<RecentPage[]> {
       scope: wikiPages.scope,
       updatedAt: wikiPages.updatedAt,
       agentAbstract: wikiPages.agentAbstract,
-      agentNotes: wikiPages.agentNotes,
+      // TODO(v0.4.0): replace with user_custom_rules join (scope='page').
+      // wiki_pages.agent_notes was dropped 2026-05-19; stub to null until the
+      // new read-path lands. See specs/customization-framework.md § LD11.
+      agentNotes: sql<string | null>`NULL`,
     })
     .from(wikiPages)
     .where(

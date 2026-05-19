@@ -38,17 +38,10 @@ export const wikiPages = pgTable(
     title: text('title').notNull(),
     agentAbstract: text('agent_abstract').notNull(),
     abstract: text('abstract'),
-    // Page-level behavioral conventions / preferences for Pro fan-out. Distinct
-    // from agent_abstract (which is the retrieval-surface description). Pro
-    // reads this as the primary "binding precedent" signal during routing —
-    // e.g. "books on this list are sub-pages, not bullets", "always title
-    // sections as questions", "never tombstone the Timeline section." Pro can
-    // also WRITE this field when the user states a convention-setting
-    // directive in a transcript. Markdown allowed; nullable (most pages have
-    // no conventions). Server-only — not synced to mobile RxDB. See
-    // pro-fan-out.ts §"Wiki ontology" + Rule 2 in §"Page vs. section/bullet"
-    // routing. Added 2026-05-18 to resolve agent_abstract bloat tension.
-    agentNotes: text('agent_notes'),
+    // (was `agentNotes` text — dropped v0.4.0; superseded by
+    // `user_custom_rules` scope='page' rows. See specs/customization-framework.md
+    // § "NL customization architecture" LD11 + migration plan. Blast radius was
+    // one user; the 1-day-old column was clobbered rather than migrated.)
     frontmatter: jsonb('frontmatter').notNull().default(sql`'{}'::jsonb`),
     // Structured metadata for kind='person' pages — handles, socials, timezone,
     // ask-for, avoid-asking-for, privacy. JSONB rather than a sidecar table per
