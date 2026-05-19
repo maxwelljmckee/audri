@@ -21,7 +21,7 @@ import {
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AGENT_FUNCTION_DECLARATIONS } from '../agent-tools/declarations.js';
 import { loadGenericCallContext, renderPreloadBlock } from '../calls/preload.js';
-import { composeSystemPrompt } from '../calls/system-prompt.js';
+import { composeSystemPrompt } from '../calls/live-agent-prompt.js';
 import { fetchPage, fetchTranscript, searchTranscripts, searchWiki } from '../calls/tools.js';
 
 // Non-Live model. The Live preview rejects TEXT modality; the standard

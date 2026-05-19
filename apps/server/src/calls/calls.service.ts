@@ -11,7 +11,7 @@ import {
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AGENT_FUNCTION_TOOLS } from '../agent-tools/declarations.js';
 import { loadGenericCallContext, renderPreloadBlock } from './preload.js';
-import { composeSystemPrompt } from './system-prompt.js';
+import { composeSystemPrompt } from './live-agent-prompt.js';
 
 // Live (audio) tool set: shared function declarations + Gemini's native
 // googleSearch grounding. Model handles googleSearch internally; no
