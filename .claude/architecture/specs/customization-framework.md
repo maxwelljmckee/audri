@@ -1,6 +1,6 @@
 # SPEC — Customization Framework + Sprint Scope Lockdown
 
-Status: **decisions locked 2026-05-18** — sprint scope + customization architecture resolved in Socratic session following the v0.3.0 dogfood pass. NL customization details + Scribe surface flagged open below.
+Status: **decisions locked 2026-05-18** — sprint scope + customization architecture resolved in Socratic session following the v0.3.0 dogfood pass. **NL customization architecture locked 2026-05-19** (Open Question B closed; see dedicated section below). **Scribe surface locked 2026-05-19 → Option B** (knobs surface under Notes Settings). **Events sizing deferred to mid-sprint.** KnobSpec shape held for the next dedicated workshop.
 
 Two intertwined deliverables captured here:
 
@@ -157,15 +157,150 @@ Each layer has exactly one injection point and one source of truth.
 
 ---
 
-## Existing `agent_notes` migration story (open)
+## NL customization architecture (locked 2026-05-19)
 
-We shipped `wiki_pages.agent_notes` in v0.3.0 as the page-scoped NL substrate. Once the broader NL customization layer ships, page-scoped NL rules are one slice of that layer. Three possible resolutions:
+Locked through Socratic workshop 2026-05-19. The architecture below covers the NL-rules layer end-to-end: storage, scope, write paths, enforcement, and integration with the existing knob substrate. Closes Open Question B from the original spec draft.
 
-1. **Absorb** — agent_notes becomes one storage type within the unified NL system.
-2. **Coexist** — agent_notes stays as the page-scoped slice; system-level NL is a parallel store.
-3. **Refactor / rename** — preserve the data, surface it under a unified API.
+### Two-layer recap
 
-Decision deferred — gated on clearer view of the overall NL customization architecture.
+Customization runs as **typed knobs (substrate) + free-form rules (overlay)**. Knobs handle deterministic, enumerable settings injectable anywhere (prompt tokens, SQL filters, UI density). Rules handle the long tail of natural-language guidance ("always cite your sources", "on this list, include author + year") injected at LLM-inference sites only. The two coexist; rules don't preclude knob proposals (see Dream distillation in §1 LD3 above).
+
+### Locked decisions
+
+#### 1. Storage shape — dedicated `user_custom_rules` table
+
+```sql
+user_custom_rules (
+  id              uuid primary key,
+  user_id         uuid not null references auth.users,
+  scope           enum('app', 'agent', 'page', 'plugin'),  -- 'plugin' reserved, not wired in v0.4.0
+  agent_id        uuid nullable references agents,         -- required when scope='agent'
+  wiki_page_id    uuid nullable references wiki_pages,     -- required when scope='page'
+  plugin_id       text nullable,                            -- required when scope='plugin' (reserved)
+  content         text not null,                            -- markdown rule text
+  source          enum('user_set', 'dreams_proposed'),     -- authorship origin
+  dream_id        uuid nullable references dreams,         -- FK when distilled from a Dream proposal
+  is_active       boolean default true,                    -- disable-without-delete
+  created_at      timestamptz default now(),
+  updated_at      timestamptz default now()
+)
+```
+
+CHECK constraints enforce the scope→FK shape (`scope='agent' → agent_id IS NOT NULL` etc.). Indexes on `(user_id, scope)` + scoped FK partial indexes. RLS predicates per scope (page-scope inherits page RLS; agent-scope inherits agent RLS; app-scope owner-only).
+
+**Note on naming overlap:** `wiki_pages.scope` exists with values `'user' | 'agent'` (user-vs-agent partitioning) — a different concept from `user_custom_rules.scope`. The collision is conceptual not literal (different tables, different value spaces). A code comment on the column documents the distinction.
+
+#### 2. Scope hierarchy
+
+Four scopes (one reserved):
+
+| Scope | Example | When it applies |
+|---|---|---|
+| **app** | "Always cite sources." "No emojis." | Cross-cuts every agent + plugin. Read by every inference site. |
+| **agent** | "Audri should be terse." | Per-agent customization. Read by inference sites running on behalf of that agent. |
+| **page** | "On this list, always include author + year." | Per-wiki-page conventions. Read when an inference touches that page. |
+| **plugin** *(reserved)* | "In Todos, default to grouping by project." | Plugin-level defaults. Not wired in v0.4.0; enum value reserved for forward compatibility. |
+
+#### 3. Conflict resolution — concat + LLM composes
+
+All relevant rules for an inference get concatenated into the Behavioral layer of the prompt, **ordered by specificity** (page > agent > app). Header signals precedence: *"More specific rules override broader ones."* The LLM does the composition — we do NOT build a structural conflict-detection subsystem.
+
+**Drift risk** mitigated by: (a) read-only knob/rule inspection UI exposes accumulated rules per scope; (b) Dreams pattern-detection observes when rules pile up or stop being load-bearing.
+
+#### 4. Live Agent stays read-only — App Map informs, never writes
+
+Live Agent's role in customization flows:
+
+1. Reads the **App Map** (capability descriptions, including knob enumeration and existing custom rules).
+2. When the user expresses a customization intent ("be more terse"), Live Agent identifies whether it maps to a known knob value, an existing rule, or a candidate new rule.
+3. **Clarifies + confirms** the user's intent verbally, including scope ambiguity ("do you mean across all agents, just Audri, or just for this conversation?").
+4. **Never invokes a mutation tool.** Live Agent has no `set_knob` / `set_rule` write tools.
+
+The verbal confirmation lands in the transcript. The settings specialist (§5) captures it during ingestion.
+
+#### 5. Settings specialist owns the writes
+
+A new specialist handler — mirrors the Todo specialist concept and the broader "specialist tail" direction (v0.3.0 #98). Responsibilities:
+
+- Parses settings directives from the transcript (or a transcript slice).
+- For directives matching a known knob: writes the typed value to `user_agent_settings` (or analogous knob storage).
+- For directives not matching a knob: writes the rule text to `user_custom_rules` with the appropriate scope + FKs.
+- Fuzzy-match heuristic for knob-name detection — accepted; structured-output specialist resolves ambiguity.
+
+**Pro fan-out stays focused on notes ingestion.** Settings-mutation responsibility is split off entirely; no §"Settings directives" clause added to Pro's prompt. Keeps Pro narrow and prevents prompt dilution (matches the rationale for the deferred Pro-fork backlog entry).
+
+#### 6. Pre-Pro helper + fast-path routing
+
+Settings detection runs as a **pre-Pro helper in parallel** with Pro fan-out (same architectural pattern as `enrichment-lookup.ts`, locked in `project_pre_pro_pipeline_pattern` memory). The traffic director gains a fourth branch:
+
+| Branch | Path |
+|---|---|
+| **empty** | Heuristic bypass; no inference. |
+| **task-only** | Skip Pro; route directly to Todo specialist. |
+| **settings-only** | Skip Pro; route directly to settings specialist. |
+| **standard** | Pre-Pro helpers (settings detection + enrichment lookup) fire in parallel; Pro fan-out processes the rest as notes. |
+
+For mixed transcripts on the standard path: settings specialist commits **out of band** — independent transaction, parallel write, no shared atomicity with Pro's commit. Different tables, no FK dependency. Worst-case failure mode (one path commits, the other doesn't) is recoverable by the user re-stating in the next call; the verbal-confirmation loop in §4 means the user already knows what they asked for.
+
+#### 7. Layered App Map — capabilities for Live Agent, capabilities + endpoints for ingestion
+
+Plugin registry is the SOT. Two projection views:
+
+- **Live Agent view:** capability descriptions, knob enumeration (name + values + description), active rules summary. No write endpoints — Live Agent doesn't need them.
+- **Ingestion view (Pro + specialists):** capability descriptions + knob enumeration + write endpoints (API controller mappings). The settings specialist uses this view to know where to write each kind of directive.
+
+Both views generate from the same plugin registry data — no parallel SOT.
+
+#### 8. Page rule join + scoped fetches
+
+Page-scoped rules ride along **for free** via the existing Flash candidate retrieval — Flash pulls candidate pages with their associated rows; we add a join on `user_custom_rules WHERE scope='page' AND wiki_page_id IN (...)`.
+
+App + agent rules don't piggyback on candidates; fetched separately at ingestion-task start:
+
+- 1 query: `WHERE scope='app' AND user_id=? AND is_active=true`
+- 1 query: `WHERE scope='agent' AND user_id=? AND agent_id=? AND is_active=true`
+- Page rules: via Flash candidate join (free)
+
+Three rule sources, two extra queries. Negligible cost; high architectural clarity.
+
+#### 9. Scope-clarification has pedagogical value, not friction
+
+When scope is ambiguous, Live Agent explicitly asks the user. *"Do you want that to apply to the whole app, this particular agent, or just this page?"*
+
+This isn't a chatty cost — it's **gentle scaffolding that teaches users the system shape** and trains them to use scope-aware language proactively in future calls. Per Core UX principles: **Autonomy** (user choice), **Transparency** (user sees the surface), **Control** (user sets the scope). When user intent is unambiguous, Live Agent commits silently with a terse confirmation; only the genuinely-ambiguous cases trigger clarification.
+
+#### 10. UI / system preferences housed separately
+
+Non-AI preferences (mic sensitivity, future theme picker, notification toggles) have a structurally different shape:
+
+| | NL rules (`user_custom_rules`) | UI/system prefs |
+|---|---|---|
+| Shape | free-form text | typed (bool/enum/number) |
+| Scope | hierarchy | user-level only |
+| Conflict resolution | precedence-ordered | none |
+| Write path | ingestion-mediated | direct UI write |
+| Live Agent awareness | yes (App Map) | no |
+
+UI prefs extend the existing **`user_settings` table** (already used for `onboarding_complete`, etc.) for cloud-synced values, or live in AsyncStorage for genuinely ephemeral ones (last-viewed timestamps, etc.). No new `user_preferences` table.
+
+#### 11. agent_notes column scrapped + re-dogfooded
+
+v0.3.0 shipped `wiki_pages.agent_notes` 2026-05-18 as the page-scoped NL substrate prototype. Under the new architecture it's superseded. **Migration plan (no data preservation):**
+
+1. Add `user_custom_rules` table + RLS + realtime publication.
+2. Drop `wiki_pages.agent_notes` column.
+3. Update `apps/worker/src/ingestion/enrichment-lookup.ts` to scan `user_custom_rules WHERE scope='page' AND wiki_page_id=? AND is_active=true` for the triggering rule on the target page.
+4. Update Pro fan-out read site (currently reads `agent_notes` directly from page row) to consume the joined-in page rules.
+5. Update Live Agent `fetch_page` + preload to read from new table.
+6. Re-run the book-reading-list dogfood flow (yesterday's test case) against the new path.
+
+Blast radius is one user (Max); clobbering the day-old data is cheap and avoids designing a one-shot migration.
+
+### Held for dedicated workshop passes
+
+- **KnobSpec shape in plugin registry.** What does a knob declaration look like? Pending workshop.
+- **Settings specialist prompt.** Drafted at implementation time; prompt-decomposition seam from Track A determines layer boundaries.
+- **App Map layered rendering format.** JSON for ingestion view (specialist consumes structured), prose for Live Agent view (LLM consumes natural language). Concrete shapes drafted at implementation time.
 
 ---
 
@@ -187,9 +322,9 @@ These are NOT punts — they're flagged for explicit follow-up discussion before
 
 **Implementation implication:** the Track D Agents tile work in v0.4.0 does NOT include a Scribe entry. Scribe's knob UI lands inside the Notes plugin's settings-cog drawer (Track B per-plugin settings cog → Notes-specific drawer contents).
 
-### B. Full NL customization architecture
+### ~~B. Full NL customization architecture~~ — LOCKED 2026-05-19
 
-Question 6 from the workshop ("agent_notes migration story") and a clear view of the NL layer's storage / enforcement model are still open. Once NL architecture is fleshed out, we can decide how `agent_notes` fits.
+Resolved via dedicated Socratic workshop 2026-05-19. See § "NL customization architecture (locked 2026-05-19)" above for the full set of locked decisions (storage shape, scope hierarchy, write paths, enforcement surfaces, agent_notes migration plan, etc.). 11 decisions locked; 3 sub-questions held for dedicated workshop (KnobSpec shape, settings specialist prompt, App Map layered rendering format).
 
 ### C. Events sizing — one sprint or two
 
@@ -211,8 +346,9 @@ Proposal floated 2026-05-19: split the Pro fan-out into two specialized inferenc
 
 ## What this spec does NOT cover
 
-- Specific knob enumerations per agent (defined at implementation time once prompt decomposition seam is fixed).
-- Settings UI visual design.
-- NL rule storage schema (gated on Open Question B).
-- Events data model.
-- v0.4.0 sprint-doc rearrangement (follows once this spec is finalized).
+- **KnobSpec shape in plugin registry** — held for dedicated workshop (next).
+- **Specific knob enumerations per agent** — defined at implementation time once prompt decomposition seam is fixed.
+- **Settings specialist prompt** — drafted at implementation time.
+- **App Map layered rendering format** — drafted at implementation time.
+- **Settings UI visual design** — drafted at implementation time once Notes Settings drawer scaffold lands.
+- **Events data model** — separate spec when Track E execution begins.
