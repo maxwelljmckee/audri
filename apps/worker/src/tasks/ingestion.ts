@@ -38,6 +38,7 @@ import {
 import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
 import { resolveRumiKnobs } from '../ingestion/rumi-knobs.js';
 import { runSettingsSpecialist } from '../ingestion/settings-specialist.js';
+import { fetchKnobCatalog } from '@audri/shared/knobs';
 import { classifyTranscript } from '../ingestion/traffic-director.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
 import { logger } from '../logger.js';
@@ -328,18 +329,27 @@ async function runUserScopePipeline(
   // wiki_sections). Fires regardless of whether Flash dumps the call:
   // settings-only calls ("from now on, always cite sources" → hang up)
   // still capture their rule. See specs/customization-framework.md § 5/6.
+  const knobCatalog = await fetchKnobCatalog(db, p.userId);
   const settingsSpecialistPromise = runSettingsSpecialist({
     userId: p.userId,
     agentId: p.agentId,
     callTranscriptId: p.transcriptId,
     transcript,
     candidatePageSlugs: wikiIndex.map((e) => e.slug),
+    knobCatalog,
   }).catch((err) => {
     logger.warn(
       { err: err instanceof Error ? err.message : String(err), transcriptId: p.transcriptId },
       'settings-specialist: threw at top level (non-fatal to ingestion)',
     );
-    return { rulesInserted: 0, rulesUpdated: 0, rulesDeleted: 0, operationsDropped: 0 };
+    return {
+      rulesInserted: 0,
+      rulesUpdated: 0,
+      rulesDeleted: 0,
+      knobsSet: 0,
+      knobsUnset: 0,
+      operationsDropped: 0,
+    };
   });
 
   const flashRetrievalResult = await retrieveCandidates(transcript, wikiIndex);
@@ -370,7 +380,12 @@ async function runUserScopePipeline(
     const settingsResult = await settingsSpecialistPromise;
     log('settings-specialist (post-dump)', { ...settingsResult });
     const settingsWrote =
-      settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+      settingsResult.rulesInserted +
+        settingsResult.rulesUpdated +
+        settingsResult.rulesDeleted +
+        settingsResult.knobsSet +
+        settingsResult.knobsUnset >
+      0;
     return { wrote: settingsWrote };
   }
 
@@ -379,7 +394,12 @@ async function runUserScopePipeline(
     const settingsResult = await settingsSpecialistPromise;
     log('settings-specialist (post-no-fan-out)', { ...settingsResult });
     const settingsWrote =
-      settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+      settingsResult.rulesInserted +
+        settingsResult.rulesUpdated +
+        settingsResult.rulesDeleted +
+        settingsResult.knobsSet +
+        settingsResult.knobsUnset >
+      0;
     return { wrote: settingsWrote };
   }
 
@@ -500,7 +520,12 @@ async function runUserScopePipeline(
       commitResult.tasksCreated >
     0;
   const settingsWrote =
-    settingsResult.rulesInserted + settingsResult.rulesUpdated + settingsResult.rulesDeleted > 0;
+    settingsResult.rulesInserted +
+      settingsResult.rulesUpdated +
+      settingsResult.rulesDeleted +
+      settingsResult.knobsSet +
+      settingsResult.knobsUnset >
+    0;
   const wrote = wroteWiki || settingsWrote;
   return { wrote };
 }

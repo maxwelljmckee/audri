@@ -70,6 +70,7 @@ export class CallsService {
       preloadBlock,
       modality: 'audio',
       customRules: callContext?.customRules,
+      knobCatalog: callContext?.knobCatalog,
     });
 
     // Mint an ephemeral token bound to the Live config. Persona stays

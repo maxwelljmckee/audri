@@ -18,6 +18,7 @@
 // existing seam.
 
 import {
+  buildAppMap,
   buildBringSomething,
   buildCustomRules,
   buildCustomizationWorkflow,
@@ -32,6 +33,7 @@ import {
   buildTodosCommitted,
   buildToolUse,
   buildTopics,
+  type AppMapKnob,
 } from './behavioral/index.js';
 import { buildAdvertisement, buildTools } from './capability/index.js';
 import { buildPersona, buildPrinciples, buildWho } from './identity/index.js';
@@ -51,6 +53,12 @@ export interface ComposeLiveAgentPromptArgs {
     app: string[];
     agent: string[];
   };
+  // App Map knob catalog for the user's agents — see preload.ts →
+  // fetchKnobCatalog. Each entry describes one knob + its current
+  // effective value + per-value match_hints. Omit or pass empty array
+  // when the user has no agents with declared knobs — the App Map
+  // segment vanishes.
+  knobCatalog?: AppMapKnob[];
 }
 
 export function composeLiveAgentPrompt(args: ComposeLiveAgentPromptArgs): string {
@@ -68,14 +76,16 @@ function composeGeneric(args: ComposeLiveAgentPromptArgs): string {
     modality: args.modality,
   });
 
-  // Scaffolding-internal segments. Custom rules (when present) inject
-  // RIGHT AFTER principles — user-set rules take precedence over the
-  // default behavioral guidance below, and the LLM reads top-down.
+  // Scaffolding-internal segments. Custom rules + App Map (when present)
+  // inject RIGHT AFTER principles — user-set behavior + tunable settings
+  // take precedence over the default behavioral guidance below, and the
+  // LLM reads top-down.
   const customRulesSegment = buildCustomRules({
     agentName: args.agentName,
     appRules: args.customRules?.app ?? [],
     agentRules: args.customRules?.agent ?? [],
   });
+  const appMapSegment = buildAppMap({ catalog: args.knobCatalog ?? [] });
   const scaffolding = [
     buildWho({ agentName: args.agentName, callType: args.callType }),
     '',
@@ -85,6 +95,7 @@ function composeGeneric(args: ComposeLiveAgentPromptArgs): string {
     '',
     buildPrinciples({ callType: args.callType }),
     ...(customRulesSegment ? ['', customRulesSegment] : []),
+    ...(appMapSegment ? ['', appMapSegment] : []),
     '',
     buildBringSomething({ callType: args.callType }),
     '',

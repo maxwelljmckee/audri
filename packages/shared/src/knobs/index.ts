@@ -5,3 +5,5 @@
 export type { AgentType, KnobSpec, KnobValueSpec } from './spec.js';
 export { resolveKnobValue, validateKnobSpec } from './spec.js';
 export { RUMI_INTELLIGENCE, RUMI_KNOBS, RUMI_WRITING_STYLE } from './rumi.js';
+export { AGENT_KNOB_REGISTRY, knobsForAgentType } from './registry.js';
+export { fetchKnobCatalog, type KnobCatalogEntry } from './catalog.js';

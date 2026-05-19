@@ -26,10 +26,12 @@ import {
   agents,
   callTranscripts,
   todos,
+  userAgentSettings,
   userCustomRules,
   wikiPages,
   wikiSections,
 } from '@audri/shared/db';
+import { fetchKnobCatalog as fetchKnobCatalogShared } from '@audri/shared/knobs';
 
 const RECENT_PAGES_LIMIT = 8;
 const MAX_SECTION_CHARS = 1200;
@@ -134,6 +136,33 @@ interface PreloadData {
     app: string[];
     agent: string[];
   };
+  // App Map view of tunable knobs across the user's agents. Each entry
+  // describes one knob + its current effective value (override or spec
+  // default) + per-value match_hints. Live Agent reads this to recognize
+  // knob-mutation directives and fuzzy-match user phrasings to values.
+  // Empty when the user has no agents with declared knobs (early seed).
+  knobCatalog: KnobCatalogEntry[];
+}
+
+// One row in the App Map's knob catalog — flattened from KnobSpec for
+// prompt rendering. Includes the agent's user-facing name + type, the
+// knob's display details, the available values w/ match_hints, and the
+// CURRENT effective value (override merged over default).
+export interface KnobCatalogEntry {
+  agent_id: string;
+  agent_name: string;
+  agent_type: 'live' | 'ingestion';
+  knob_name: string;
+  knob_display_name: string;
+  knob_description: string;
+  current_value: string | boolean;
+  current_value_display_name: string;
+  values: Array<{
+    value: string | boolean;
+    display_name: string;
+    description: string;
+    match_hints: string[];
+  }>;
 }
 
 export async function loadGenericCallContext(
@@ -149,6 +178,7 @@ export async function loadGenericCallContext(
     openItems,
     inflightTodos,
     customRules,
+    knobCatalog,
   ] = await Promise.all([
     fetchPagesByPrefix(userId, 'user', 'profile'),
     fetchPagesByPrefix(userId, 'agent', 'assistant'),
@@ -158,6 +188,7 @@ export async function loadGenericCallContext(
     fetchPendingOpenItems(userId, agentId),
     fetchInflightTodos(userId),
     fetchCustomRulesNonPage(userId, agentId),
+    fetchKnobCatalog(userId),
   ]);
 
   return {
@@ -169,7 +200,15 @@ export async function loadGenericCallContext(
     openItems,
     inflightTodos,
     customRules,
+    knobCatalog,
   };
+}
+
+// Thin wrapper around the shared fetcher (apps/server uses the same db
+// client). Centralized in @audri/shared/knobs/catalog.ts so server +
+// worker stay in sync. See that file for full design rationale.
+async function fetchKnobCatalog(userId: string): Promise<KnobCatalogEntry[]> {
+  return fetchKnobCatalogShared(db, userId);
 }
 
 // Fetch app + agent scoped custom rules. Page-scope rules are joined inline

@@ -187,6 +187,7 @@ export class ChatService {
       preloadBlock,
       modality: 'text',
       customRules: callContext.customRules,
+      knobCatalog: callContext.knobCatalog,
     });
 
     // Convert client history (user/agent) into Gemini Content (user/model).

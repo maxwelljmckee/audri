@@ -172,6 +172,73 @@ const SCENARIOS: Scenario[] = [
       },
     },
   },
+  {
+    name: 'generic-audio-with-knob-catalog',
+    args: {
+      agentName: 'Audri',
+      personaPrompt: SAMPLE_PERSONA,
+      userPromptNotes: SAMPLE_USER_NOTES,
+      callType: 'generic',
+      modality: 'audio',
+      preloadBlock: SAMPLE_PRELOAD_BLOCK,
+      knobCatalog: [
+        {
+          agent_id: '00000000-0000-0000-0000-000000000001',
+          agent_name: 'Rumi',
+          agent_type: 'ingestion',
+          knob_name: 'writing_style',
+          knob_display_name: 'Writing Style',
+          knob_description: 'How Rumi shapes your voice notes into wiki content.',
+          current_value: 'structured',
+          current_value_display_name: 'Structured',
+          values: [
+            {
+              value: 'concise',
+              display_name: 'Concise',
+              description: 'Minimalist language; favors bulleted lists.',
+              match_hints: ['be concise', 'short', 'minimal'],
+            },
+            {
+              value: 'structured',
+              display_name: 'Structured',
+              description: 'Reframes thoughts into complete sentences.',
+              match_hints: ['structured', 'organized'],
+            },
+          ],
+        },
+        {
+          agent_id: '00000000-0000-0000-0000-000000000001',
+          agent_name: 'Rumi',
+          agent_type: 'ingestion',
+          knob_name: 'intelligence',
+          knob_display_name: 'Intelligence',
+          knob_description: 'How deeply Rumi thinks about your notes.',
+          current_value: 'adaptive',
+          current_value_display_name: 'Adaptive',
+          values: [
+            {
+              value: 'low',
+              display_name: 'Low',
+              description: 'Fast and lightweight.',
+              match_hints: ['fast', 'cheap', 'low'],
+            },
+            {
+              value: 'adaptive',
+              display_name: 'Adaptive',
+              description: 'Smart default.',
+              match_hints: ['adaptive', 'smart', 'default'],
+            },
+            {
+              value: 'high',
+              display_name: 'High',
+              description: 'Maximum thoroughness.',
+              match_hints: ['thorough', 'deep', 'high'],
+            },
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 function main(): void {
