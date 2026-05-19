@@ -36,6 +36,7 @@ import {
   retrieveCandidates,
 } from '../ingestion/flash-candidate-retrieval.js';
 import { PRO_FAN_OUT_MODEL, runFanOut } from '../ingestion/pro-fan-out.js';
+import { classifyTranscript } from '../ingestion/traffic-director.js';
 import { fetchUserWikiIndex } from '../ingestion/wiki-index.js';
 import { logger } from '../logger.js';
 import { recordInferenceUsage, recordWebSearchUsage } from '../usage/record-inference.js';
@@ -96,15 +97,46 @@ export const ingestion: Task = async (payload, helpers) => {
   }
 
   const transcript = (transcriptRow.content as IngestionTranscriptTurn[]) ?? [];
-  if (transcript.length === 0) {
-    log('empty transcript — skip');
-    // Empty transcript counts as a successful ingest (nothing to do).
+
+  // ── Traffic director ────────────────────────────────────────────────────
+  // Pre-Pro routing layer. Pure heuristic for the empty-bypass branch;
+  // task_only + settings_only branches deferred until specialists land
+  // (see apps/worker/src/ingestion/traffic-director.ts). Bias toward
+  // standard under uncertainty — false-negative on a fast-path is just
+  // wasted inference, false-positive is silent information loss.
+  const classification = classifyTranscript(
+    transcript,
+    transcriptRow.durationSeconds ?? null,
+  );
+  log('traffic-director: routing decision', {
+    route: classification.route,
+    reason: classification.reason,
+    userTurnCount: classification.userTurnCount,
+    userWordCount: classification.userWordCount,
+    agentTurnCount: classification.agentTurnCount,
+    durationSeconds: classification.durationSeconds,
+    classifierLatencyMs: classification.classifierLatencyMs,
+  });
+  capture(p.userId, 'ingestion.traffic_director', {
+    transcriptId: p.transcriptId,
+    route: classification.route,
+    reason: classification.reason,
+    userTurnCount: classification.userTurnCount,
+    userWordCount: classification.userWordCount,
+    agentTurnCount: classification.agentTurnCount,
+    durationSeconds: classification.durationSeconds,
+  });
+
+  if (classification.route === 'empty') {
+    log('empty-bypass — no downstream services fired');
     await db
       .update(callTranscripts)
       .set({ ingestionStatus: 'succeeded', ingestionError: null })
       .where(eq(callTranscripts.id, p.transcriptId));
     return;
   }
+  // task_only + settings_only paths fall through to standard below until
+  // their specialists land — classifier currently never returns those.
 
   // Hard spending-cap pre-flight. Belt-and-suspenders with the server's
   // /end gate (the enqueue site) — covers the case where the user
