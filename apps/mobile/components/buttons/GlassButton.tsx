@@ -49,6 +49,13 @@ export interface GlassButtonProps extends Omit<PressableProps, 'style' | 'childr
   blurIntensity?: number;
   /** Blur tint scheme used by the BlurView fallback. Default 'dark'. */
   blurTint?: 'light' | 'dark' | 'default';
+  /** Force the BlurView fallback even on iOS 26+ where Liquid Glass is
+   *  available. Use only at call sites where Liquid Glass is known to
+   *  misrender — currently the CallFab satellites, whose `MotiView`
+   *  transform wrapper + Modal presentation layer together break
+   *  `UIVisualEffectView`'s backdrop snapshot on iOS 26. Revisit when
+   *  `expo-glass-effect` or iOS resolves the interaction. */
+  forceFallback?: boolean;
   children: React.ReactNode;
 }
 
@@ -59,12 +66,14 @@ export function GlassButton({
   tintColor,
   blurIntensity = 50,
   blurTint = 'dark',
+  forceFallback = false,
   disabled,
   onPress,
   onLongPress,
   children,
   ...pressableProps
 }: GlassButtonProps) {
+  const useLiquidGlass = LIQUID_GLASS_OK && !forceFallback;
   // Pull borderRadius out of the consumer's style so we can also apply it
   // to the absolute-positioned glass / blur children. iOS's native
   // BlurView paints its own rectangular bounds and ignores the parent's
@@ -115,11 +124,11 @@ export function GlassButton({
         // Liquid Glass paints natively. Only on the BlurView fallback —
         // on the Liquid Glass path GlassView produces its own edge and
         // these would stack on top, doubling the highlight.
-        !LIQUID_GLASS_OK && FALLBACK_SURFACE_STYLE,
+        !useLiquidGlass && FALLBACK_SURFACE_STYLE,
         style,
       ]}
     >
-      {LIQUID_GLASS_OK ? (
+      {useLiquidGlass ? (
         <GlassView
           style={[StyleAbsoluteFill, childRadius]}
           glassEffectStyle={glassEffectStyle}

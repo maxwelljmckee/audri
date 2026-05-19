@@ -398,7 +398,7 @@ function DetailScreen({
   if (!transcript) {
     return (
       <View style={styles.flex}>
-        <PluginBackRow label="Chat History" onPress={() => navigation.goBack()} />
+        <PluginBackRow label="Call History" onPress={() => navigation.goBack()} />
         <View style={styles.empty}>
           <Text style={styles.emptyText}>Call not found.</Text>
         </View>
@@ -410,7 +410,7 @@ function DetailScreen({
 
   return (
     <View style={styles.flex}>
-      <PluginBackRow label="Chat History" onPress={() => navigation.goBack()} />
+      <PluginBackRow label="Call History" onPress={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.detailScroll}>
         <View style={styles.detailHeader}>
           <View style={styles.kindAvatarLarge}>

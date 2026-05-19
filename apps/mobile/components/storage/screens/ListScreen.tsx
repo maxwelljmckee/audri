@@ -39,7 +39,7 @@ export function ListScreen({
     <View style={styles.flex}>
       <Pressable style={styles.addRow} onPress={() => navigation.push('AddPicker')}>
         <Ionicons name="add-circle-outline" size={22} color="#4d8fdb" />
-        <Text style={styles.addRowLabel}>Add to Storage</Text>
+        <Text style={styles.addRowLabel}>Add to Uploads</Text>
       </Pressable>
       <FlatList
         data={data ?? []}
@@ -48,7 +48,7 @@ export function ListScreen({
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>
-              No items yet. Tap "Add to Storage" to upload a file or paste a URL.
+              No items yet. Tap "Add to Uploads" to upload a file or paste a URL.
             </Text>
           </View>
         }

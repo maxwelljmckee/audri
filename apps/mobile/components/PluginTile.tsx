@@ -56,7 +56,17 @@ export function PluginTile({
           {icon}
         </GlassButton>
       </View>
-      <Text style={styles.label} numberOfLines={1}>
+      {/* Label gets an explicit width 16px wider than the tile (8px
+          overhang each side) so long names like "Automations" have
+          breathing room before ellipsizing. Stays well within the grid
+          columnGap (20px) so it can't collide with neighbor labels.
+          textAlign:center keeps the text centered within the now-wider
+          box; alignItems:center on the column wrapper centers the box
+          itself over the tile. */}
+      <Text
+        style={[styles.label, { width: widthPx + 16 }]}
+        numberOfLines={1}
+      >
         {label}
       </Text>
     </View>
@@ -73,6 +83,7 @@ const styles = StyleSheet.create({
     color: "#e8f1ff",
     fontSize: 12,
     fontWeight: "500",
+    textAlign: "center",
     textShadowColor: "rgba(0, 0, 0, 0.5)",
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,

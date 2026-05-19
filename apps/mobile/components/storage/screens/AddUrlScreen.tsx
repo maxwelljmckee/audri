@@ -44,7 +44,7 @@ export function AddUrlScreen({
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={styles.flex}
     >
-      <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+      <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
       <View style={styles.body}>
         <Text style={styles.title}>Add a URL</Text>
         <Text style={styles.hint}>
@@ -78,7 +78,7 @@ export function AddUrlScreen({
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.primaryButtonLabel}>Add to Storage</Text>
+            <Text style={styles.primaryButtonLabel}>Add to Uploads</Text>
           )}
         </Pressable>
       </View>

@@ -100,7 +100,7 @@ export function AddFileScreen({
 
   return (
     <View style={styles.flex}>
-      <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+      <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
       <View style={styles.body}>
         {stage === 'pick' && (
           <View style={styles.stage}>
@@ -111,7 +111,7 @@ export function AddFileScreen({
           <View style={styles.stage}>
             <ActivityIndicator color="#4d8fdb" />
             <Text style={styles.title}>Uploading {filename}</Text>
-            <Text style={styles.hint}>Sending the file to Storage…</Text>
+            <Text style={styles.hint}>Sending the file to Uploads…</Text>
           </View>
         )}
         {stage === 'finalizing' && (
@@ -124,7 +124,7 @@ export function AddFileScreen({
         {stage === 'done' && (
           <View style={styles.stage}>
             <Ionicons name="checkmark-circle-outline" size={40} color="#34d399" />
-            <Text style={styles.title}>Added to Storage</Text>
+            <Text style={styles.title}>Added to Uploads</Text>
           </View>
         )}
         {stage === 'cancelled' && (

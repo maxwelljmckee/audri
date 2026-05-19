@@ -12,11 +12,11 @@ export function AddPickerScreen({
 }: NativeStackScreenProps<StorageStackParamList, 'AddPicker'>) {
   return (
     <View style={styles.flex}>
-      <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+      <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
       <View style={styles.body}>
         <Text style={styles.title}>What do you want to add?</Text>
         <Text style={styles.hint}>
-          Uploads and URLs sit in Storage until you attach them to a Note.
+          Files and URLs sit here until you attach them to a Note.
         </Text>
 
         <Pressable style={styles.option} onPress={() => navigation.replace('AddFile')}>

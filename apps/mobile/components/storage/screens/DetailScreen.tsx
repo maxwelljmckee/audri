@@ -70,8 +70,8 @@ export function DetailScreen({
     Alert.alert(
       'Delete this item?',
       family === 'upload'
-        ? 'The file will be removed from Storage. Any wiki content already produced stays.'
-        : 'The URL will be removed from Storage. Any wiki content already produced stays.',
+        ? 'The file will be removed from Uploads. Any wiki content already produced stays.'
+        : 'The URL will be removed from Uploads. Any wiki content already produced stays.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -94,7 +94,7 @@ export function DetailScreen({
   if (loading && !detail) {
     return (
       <View style={styles.flex}>
-        <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+        <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
         <View style={styles.loading}>
           <ActivityIndicator color="#4d8fdb" />
         </View>
@@ -105,7 +105,7 @@ export function DetailScreen({
   if (error || !detail) {
     return (
       <View style={styles.flex}>
-        <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+        <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
         <View style={styles.empty}>
           <Text style={styles.errorText}>{error ?? 'Item not found.'}</Text>
         </View>
@@ -123,7 +123,7 @@ export function DetailScreen({
 
   return (
     <View style={styles.flex}>
-      <PluginBackRow label="Storage" onPress={() => navigation.goBack()} />
+      <PluginBackRow label="Uploads" onPress={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.body}>
         <View style={styles.headerRow}>
           <View style={styles.iconBox}>

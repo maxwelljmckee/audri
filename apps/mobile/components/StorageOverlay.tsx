@@ -7,7 +7,7 @@ import { StorageStack } from './storage/StorageNavigation';
 
 export function StorageOverlay() {
   return (
-    <PluginOverlay kind="storage" title="Storage">
+    <PluginOverlay kind="storage" title="Uploads">
       <PluginNavigationContainer>
         <StorageStack />
       </PluginNavigationContainer>

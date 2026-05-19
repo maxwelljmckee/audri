@@ -10,7 +10,7 @@ import { ChatHistoryStack } from './chatHistory/ChatHistoryNavigation';
 
 export function ChatHistoryOverlay() {
   return (
-    <PluginOverlay kind="chatHistory" title="Chat History">
+    <PluginOverlay kind="chatHistory" title="Call History">
       <PluginNavigationContainer>
         <ChatHistoryStack />
       </PluginNavigationContainer>
