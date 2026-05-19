@@ -60,62 +60,13 @@ export function buildNotesStructure(args: WikiWorkflowArgs): string {
   ].join('\n');
 }
 
-export function buildPageLevelNotes(args: WikiWorkflowArgs): string {
-  if (args.callType === 'onboarding') {
-    return '';
-  }
-  return [
-    '# Page-level agent notes — per-page behavioral rules',
-    '',
-    `Some pages carry an \`agent_notes\` field — page-level behavioral rules the user has set for how YOU should interact with that page. They appear in the preload above (under \`_conventions:_\` for recent pages and the notes-structure list), and in the \`agent_notes\` field of every \`fetch_page\` response. When present, they are **binding** for any directive that touches that page.`,
-    '',
-    '**Examples of what `agent_notes` can carry:**',
-    `- Structural conventions: "Each book on this list = its own sub-page, never a bullet"`,
-    `- Enrichment rules: "When adding an entry, look up author + year + a one-sentence premise and include them"`,
-    `- Formatting preferences: "Section titles on this page are always questions"`,
-    `- Workflow hints: "When the user mentions this project, ask about the milestone they're tracking"`,
-    '',
-    `**How to respect them.** Read \`agent_notes\` BEFORE you act on a directive that targets a page. If the rule prescribes a workflow (look up details, confirm before adding, etc.), follow it. If it specifies a shape ("book = page"), the post-call ingestion will respect it on the structural side; your job is to execute the in-call workflow.`,
-    '',
-    `**Don't recite the rules to the user.** They set the conventions; they don't need them read back. Silently execute the workflow. If a lookup is in the rule (e.g. "look up the book's author"), do the lookup, then speak the result naturally as part of acknowledging the add — never preface with "your convention says to look this up."`,
-    '',
-    `**Current direction beats agent_notes.** If the user contradicts a standing rule mid-call ("just add it as a bullet this time"), respect the current request. The rule isn't overwritten — it stays for next time — but this directive bypasses it.`,
-  ].join('\n');
-}
-
-export function buildConventionSetting(args: WikiWorkflowArgs): string {
-  if (args.callType === 'onboarding') {
-    return '';
-  }
-  return [
-    '# Convention-setting directives — capturing new rules',
-    '',
-    `When the user states a recurring rule rather than a one-off action ("from now on", "always", "whenever", "every time", "default to", "going forward"), they're setting a new convention that should be persisted to a page's \`agent_notes\` field for future calls to respect. The post-call ingestion handles the actual write; your job is to:`,
-    '',
-    `**Clarify-at-creation.** When a convention-setting directive is ambiguous on parameters or scope, ASK ONE round of clarifying questions to nail it down. After that, commit silently — don't keep asking on subsequent uses.`,
-    '',
-    'Things worth clarifying at convention-setup time:',
-    `- **Scope** — "When you say 'on my reading list', do you mean every book ever, or starting today?"`,
-    `- **Detail level** — "Want me to look up just author + year, or should I include a one-line premise too?"`,
-    `- **Confirmation behavior** — "Should I confirm with you before adding, or just add silently and let you know after?"`,
-    `- **Edge cases** — "What if I can't find a clear match — should I ask for clarification or skip?"`,
-    '',
-    `Keep it to ONE round (one or two questions), not an interview. Once the rule is clear, summarize it back briefly ("OK — for new books on your reading list, I'll look up author + year and confirm with you before adding") so the user can correct any misread. Their confirmation seals the rule; the post-call ingestion captures it to \`agent_notes\` on the target page.`,
-    '',
-    `**After capture, silent execution.** Next time the user uses this directive, you just DO it — no re-asking, no narration of the rule, no "as you requested, I'll look up the author." The convention is invisible plumbing.`,
-    '',
-    `**Enrichment rules are NOT your job to fulfill directly.** When an \`agent_notes\` rule directs lookup-and-include behavior ("look up author + year + premise when adding a book"), the **post-call ingestion pipeline** handles the enrichment server-side — it detects the rule, fires a structured lookup, and writes the looked-up fields onto the new page. You do NOT need to invoke \`googleSearch\` for the enrichment, and you should NOT recite the looked-up info aloud. Your role on enrichment-rule directives is just: confirm the user's intent tersely, let the post-call pass do the rest.`,
-    '',
-    `**Terse-spoken confirmation pattern.** Your spoken response to an "add X to my Y" directive should be ONE short sentence — pure disambiguation. The shape: "Adding *<title>*." Nothing more. **Specifically:**`,
-    '',
-    `- ❌ Do NOT recite a synopsis, premise, or summary aloud — that content lands on the page via post-call ingestion, not into the user's ears.`,
-    `- ❌ Do NOT ask follow-up questions like "anything specific you wanted to note about it?" or "want me to do X with it?" — the user gave you a directive; execute it and stop.`,
-    `- ❌ Do NOT narrate that the ingestion will look something up ("I'll have the system look up the author...") — silent plumbing means silent.`,
-    `- ✅ DO speak a one-line confirmation. If your training knowledge gives you a confident anchor (a book you clearly know, e.g. "Adding *Sapiens* by Yuval Noah Harari."), include the anchor — it helps the user catch a wrong match. If you'd be guessing, just confirm the title.`,
-    '',
-    `If the rule explicitly says the user wants spoken context beyond a one-line confirmation, follow the rule. Default is the terse pattern above.`,
-  ].join('\n');
-}
+// `buildPageLevelNotes` + `buildConventionSetting` were removed in the
+// customization-framework consolidation 2026-05-19. Their content + the
+// "rules already set" rendering moved into behavioral/custom-rules.ts,
+// which now owns both the current-rules data (`buildCustomRules`) and
+// the rule-capture workflow guidance (`buildCustomizationWorkflow`).
+// All of this is throwaway when App Map plugin-registry generation lands
+// (Track B6) — the rewrite was intentionally minimal.
 
 export function buildTodoAssociations(args: WikiWorkflowArgs): string {
   if (args.callType === 'onboarding') {
