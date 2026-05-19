@@ -44,22 +44,28 @@ const EXTRACTION_TIMEOUT_MS = Number(
 );
 
 // Heuristic detector. Scans USER turns only (the agent's own turns may
-// contain "from now on" while explaining capabilities; ignoring those
-// avoids false-positive detection). Bias toward firing — a Flash call
-// costs ~$0.001 and short-circuits when extraction returns no operations.
+// contain rule-shaped phrasing while explaining capabilities; ignoring
+// those avoids false-positive detection). Bias toward firing — a Flash
+// call costs ~$0.001 and short-circuits when extraction returns no
+// operations.
 //
-// Triggers two families of intent:
-//   - INSERT / new rule: "from now on", "always", "going forward",
-//     "default to", "whenever", "by default", "never", "i want you to"
+// Three families of intent:
+//   - INSERT / new rule (rule-shaped): "from now on", "always",
+//     "going forward", "default to", "whenever", "by default", "never",
+//     "i want you to"
 //   - UPDATE / DELETE: "forget", "no longer", "stop doing", "drop the
 //     rule", "remove the rule", "change my X rule", "update my X rule",
 //     "instead of"
-//
-// "instead of" catches contradiction phrasing ("instead of being terse
-// on this page, be expansive") — important for the rewrite-or-scope-down
-// flow per spec § "Handling rule updates / deletes".
+//   - LOOSE DIRECTIVES (impulsive preference statements): "please don't",
+//     "be more X", "be less X", "don't be so X", "stop being".
+//     Most natural rule-shaped speech doesn't use "from now on"/"always";
+//     users just state a preference in the moment. Catching these is what
+//     lets the Live Agent's proactive contradiction-detection actually
+//     fire — without them, "please don't be so verbose" wouldn't trigger
+//     the specialist at all, so any contradiction with an existing rule
+//     would silently slip past.
 const SETTINGS_TRIGGER_PATTERN =
-  /\b(from now on|going forward|from here on|whenever|every time|default to|by default|going to be|always (do|don'?t|use|favor|prefer|cite|include|skip|ask|confirm|check|search|look)|i want you to|never|forget|no longer|stop (doing|always)|drop the|remove the|change (my|the) rule|update (my|the) rule|instead of)\b/i;
+  /\b(from now on|going forward|from here on|whenever|every time|default to|by default|going to be|always (do|don'?t|use|favor|prefer|cite|include|skip|ask|confirm|check|search|look)|i want you to|never|forget|no longer|stop (doing|always|being)|drop the|remove the|change (my|the) rule|update (my|the) rule|instead of|please don'?t|be (more|less)|don'?t be so)\b/i;
 
 export function detectsSettingsDirectivesHeuristic(
   transcript: IngestionTranscriptTurn[],
@@ -163,11 +169,17 @@ When the user references an existing rule for update or delete, you'll see the c
 
 # Contradiction handling
 
-The Live Agent ALREADY handled the in-call contradiction-resolution conversation with the user — by the time you see this transcript, the user's chosen resolution is captured in their words. Your job is to extract the chosen resolution as the right operation:
-- User said "yes, replace it" / "actually let me rewrite that" → \`update\` on the existing rule.
-- User said "keep the broad one, add the more specific" → \`insert\` at narrower scope (existing rule stays untouched).
-- User said "forget the existing rule" → \`delete\`.
-- User added a contradicting rule without acknowledging the existing one → trust the user's directive as an \`insert\`; the read-time precedence (page > agent > app) handles the conflict.
+The Live Agent is prompted to PROACTIVELY surface contradictions when a user's directive conflicts with a standing rule — most users don't remember their accumulated ruleset and speak preferences impulsively. By the time you see the transcript, one of three things happened:
+
+1. **The Live Agent surfaced the contradiction and the user picked a resolution.** Look for a back-and-forth where the agent named an existing rule and the user responded. Extract their choice:
+   - User said "yes, replace it" / "actually let me rewrite that" / "refine it" → \`update\` on the existing rule with the new content.
+   - User said "keep the broad one, add the more specific" / "scope it down" / "just for [page/context]" → \`insert\` at narrower scope; existing rule stays untouched.
+   - User said "forget the existing rule" / "delete it" / "no longer needed" → \`delete\`.
+   - User said "actually just for this call" / "never mind" → emit NO operation. The contradiction was a one-call deflection.
+
+2. **The Live Agent didn't catch the contradiction (regex/judgment slip), but you can see it in the transcript.** Trust the user's directive as the source of truth. The contradiction-detection should have happened mid-call; since it didn't, the safe move is \`insert\` (add the new rule) and let read-time precedence (page > agent > app) resolve the conflict. **Do NOT silently update/delete an existing rule the user didn't explicitly address** — that violates user consent.
+
+3. **No contradiction.** Standard insert/update/delete handling per the user's directive.
 
 # Examples
 
