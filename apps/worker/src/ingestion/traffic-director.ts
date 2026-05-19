@@ -46,11 +46,13 @@ export interface TrafficClassification {
 }
 
 // Word-count threshold below which a transcript is treated as empty even
-// when user turns exist. "Hey" / "yo" / "test test" / "hi audri" all fall
-// here. Errs toward standard — anything 3+ words flows through normal
-// ingestion. Configurable for tuning once telemetry lands.
+// when user turns exist. Empirical floor from dogfood 2026-05-19: the
+// shortest plausible substantive directive ("remind me to call mom", "add
+// a todo to buy milk", "take a note about X") is ≥5 words. Anything below
+// is mic-check / accidental-open / "yeah hi audri" — bypass safely.
+// Configurable via env for tuning if telemetry shows false positives.
 const EMPTY_USER_WORD_THRESHOLD = Number(
-  process.env.INGESTION_EMPTY_USER_WORD_THRESHOLD ?? 3,
+  process.env.INGESTION_EMPTY_USER_WORD_THRESHOLD ?? 5,
 );
 
 function countWords(text: string): number {
