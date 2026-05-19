@@ -249,7 +249,7 @@ export function CallFab({
           transition={{ type: "timing", duration: 220 }}
         >
           <Text style={styles.helper} numberOfLines={1}>
-            {active ? (helperLabel ?? "Call in progress") : "Hold for Options"}
+            {active ? (helperLabel ?? "Call in progress") : "Hold for More"}
           </Text>
         </MotiView>
       </View>
